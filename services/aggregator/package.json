@@ -1,0 +1,31 @@
+{
+  "name": "@stellar-oracle/aggregator",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^12.1.0",
+    "axios": "^1.7.2",
+    "bignumber.js": "^9.1.2",
+    "cron": "^3.1.7",
+    "dotenv": "^16.4.5",
+    "ws": "^8.17.1",
+    "winston": "^3.13.1"
+  },
+  "devDependencies": {
+    "@types/cron": "^2.4.0",
+    "@types/node": "^20.14.10",
+    "@types/ws": "^8.5.10",
+    "eslint": "^9.7.0",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3",
+    "vitest": "^1.6.0"
+  }
+}

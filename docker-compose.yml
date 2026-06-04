@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  aggregator:
+    build:
+      context: ./services/aggregator
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+      - "4001:4001"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4001/health', r => {process.exit(r.statusCode !== 200)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    depends_on:
+      aggregator:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/api/v1/health', r => {process.exit(r.statusCode !== 200)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  default:
+    name: stellar-oracle-network
