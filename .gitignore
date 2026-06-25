@@ -5,3 +5,4 @@ data/
 *.log
 logs/
 target/
+.kiro/

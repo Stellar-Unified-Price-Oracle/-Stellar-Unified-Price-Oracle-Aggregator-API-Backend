@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Env, String, Vec};
 
 use crate::errors::OracleError;
-use crate::types::{DataKey, OracleSource, PriceDataPoint};
+use crate::types::{DataKey, PriceDataPoint};
 
 pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
@@ -58,14 +58,6 @@ pub fn get_source_count(env: &Env) -> u32 {
         .instance()
         .get(&DataKey::SourceCount)
         .unwrap_or(0)
-}
-
-pub fn get_all_sources(env: &Env) -> Vec<OracleSource> {
-    let mut sources: Vec<OracleSource> = Vec::new(env);
-    if let Ok(all) = env.storage().instance().get::<DataKey, Vec<(Address, bool)>>(&DataKey::AllAssets) {
-        // iterate over stored sources
-    }
-    sources
 }
 
 pub fn set_latest_price(env: &Env, asset: &String, data_point: &PriceDataPoint) {

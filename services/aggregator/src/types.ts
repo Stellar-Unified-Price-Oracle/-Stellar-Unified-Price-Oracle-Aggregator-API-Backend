@@ -1,11 +1,3 @@
-export interface PriceData {
-  asset: string;
-  price: string;
-  decimals: number;
-  source: OracleSourceName;
-  timestamp: number;
-}
-
 export interface NormalizedPrice {
   asset: string;
   price: bigint;
@@ -23,13 +15,6 @@ export interface AggregatedPrice {
   sources: OracleSourceName[];
   timestamp: number;
   confidence: number;
-}
-
-export interface HealthCheck {
-  service: string;
-  status: 'healthy' | 'degraded' | 'unhealthy';
-  sources: Record<OracleSourceName, SourceHealthStatus>;
-  lastUpdate: number;
 }
 
 export interface SourceHealthStatus {

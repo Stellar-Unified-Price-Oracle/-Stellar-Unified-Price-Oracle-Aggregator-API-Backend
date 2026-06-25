@@ -32,15 +32,6 @@ pub struct OracleSource {
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
-pub struct PriceSubmission {
-    pub asset: String,
-    pub price: i128,
-    pub decimals: u32,
-    pub timestamp: u64,
-}
-
-#[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     Admin,

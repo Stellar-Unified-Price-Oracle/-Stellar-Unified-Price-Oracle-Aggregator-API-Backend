@@ -11,8 +11,8 @@ env:
   NODE_VERSION: '20'
 
 jobs:
-  soroban-contract:
-    name: Soroban Contract
+  contract:
+    name: Contract build + tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +22,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Cache Cargo dependencies
+      - name: Cache Cargo
         uses: actions/cache@v4
         with:
           path: |
@@ -33,16 +33,16 @@ jobs:
             contracts/price-oracle/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/price-oracle/Cargo.toml') }}
 
-      - name: Build contract
+      - name: Build
         run: cargo build --release
         working-directory: contracts/price-oracle
 
-      - name: Run contract tests
+      - name: Test
         run: cargo test
         working-directory: contracts/price-oracle
 
   aggregator:
-    name: Aggregator Service
+    name: Aggregator service build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -63,14 +63,14 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
-      - name: Run tests
+      - name: Test
         run: npm test
 
       - name: Build
         run: npm run build
 
   api:
-    name: REST API
+    name: API service build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -91,7 +91,7 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
-      - name: Run tests
+      - name: Test
         run: npm test
 
       - name: Build

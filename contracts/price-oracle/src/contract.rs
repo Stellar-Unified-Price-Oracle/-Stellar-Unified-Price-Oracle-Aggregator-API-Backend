@@ -2,7 +2,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env, Vec};
 
 use crate::errors::OracleError;
 use crate::storage;
-use crate::types::{AssetPrice, OracleSource, PriceDataPoint, PriceSubmission};
+use crate::types::{AssetPrice, PriceDataPoint};
 
 #[contract]
 pub struct PriceOracleContract;
@@ -113,10 +113,6 @@ impl PriceOracleContract {
         Ok(())
     }
 
-    pub fn get_oracle_sources(env: Env) -> Vec<OracleSource> {
-        storage::get_all_sources(&env)
-    }
-
     pub fn set_trusted_asset(
         env: Env,
         admin: Address,
@@ -141,14 +137,8 @@ fn calculate_usd_price(env: &Env, asset: &String, price: i128, decimals: u32) ->
             return Some(10i128.pow(decimals));
         }
         if let Some(xlm_price) = storage::get_latest_price(env, &String::from_slice(env, b"XLM")) {
-            let base_asset_price = if asset.as_bytes().eq_ignore_ascii_case(b"XLM") {
-                price
-            } else {
-                let xlm_per_asset_numerator = price;
-                let xlm_per_asset_denominator = 10i128.pow(decimals);
-                (xlm_per_asset_numerator * xlm_price.price * 10i128.pow(decimals))
-                    / (xlm_per_asset_denominator * 10i128.pow(usdc_anchor.decimals))
-            };
+            let base_asset_price = (price * xlm_price.price * 10i128.pow(decimals))
+                / (10i128.pow(decimals) * 10i128.pow(usdc_anchor.decimals));
             return Some(base_asset_price);
         }
     }

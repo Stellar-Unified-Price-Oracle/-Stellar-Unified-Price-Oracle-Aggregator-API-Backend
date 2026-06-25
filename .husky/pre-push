@@ -1,0 +1,24 @@
+#!/bin/sh
+ROOT=$(git rev-parse --show-toplevel)
+
+echo "=== Pre-push: Building backend services ==="
+cd "$ROOT/services/aggregator" && npm run build
+if [ $? -ne 0 ]; then
+  echo "FAILED: Aggregator build"
+  exit 1
+fi
+
+cd "$ROOT/api" && npm run build
+if [ $? -ne 0 ]; then
+  echo "FAILED: API build"
+  exit 1
+fi
+
+echo "=== Pre-push: Building and testing contract ==="
+cd "$ROOT/contracts/price-oracle" && cargo test
+if [ $? -ne 0 ]; then
+  echo "FAILED: Contract tests"
+  exit 1
+fi
+
+echo "=== Pre-push: All checks passed ==="

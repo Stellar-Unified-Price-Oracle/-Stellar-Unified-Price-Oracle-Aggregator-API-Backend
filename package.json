@@ -1,0 +1,20 @@
+{
+  "name": "@stellar-oracle/monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build:aggregator": "cd services/aggregator && npm run build",
+    "build:api": "cd api && npm run build",
+    "build:backend": "npm run build:aggregator && npm run build:api",
+    "build:contract": "cd contracts/price-oracle && cargo build --release",
+    "test:aggregator": "cd services/aggregator && npm test",
+    "test:api": "cd api && npm test",
+    "test:contract": "cd contracts/price-oracle && cargo test",
+    "test:backend": "npm run test:aggregator && npm run test:api",
+    "install:all": "cd services/aggregator && npm install && cd ../../api && npm install",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.0"
+  }
+}
