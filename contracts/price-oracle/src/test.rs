@@ -2,6 +2,8 @@ use soroban_sdk::{Address, Env, String, Vec};
 
 use crate::contract::PriceOracleContract;
 use crate::contract::PriceOracleContractClient;
+use crate::proxy::ProxyContract;
+use crate::proxy::ProxyContractClient;
 use crate::errors::OracleError;
 use crate::types::AssetPrice;
 
@@ -215,4 +217,117 @@ fn test_empty_history_returns_empty() {
 
     let history = client.get_price_history(&asset, &10u32);
     assert_eq!(history.len(), 0);
+}
+
+// Proxy contract tests
+fn setup_proxy() -> (Env, ProxyContractClient<'static>, Address, Address, Address) {
+    let env = Env::default();
+    let proxy_id = env.register_contract(None, ProxyContract);
+    let proxy_client = ProxyContractClient::new(&env, &proxy_id);
+
+    let admin = Address::generate(&env);
+    let implementation = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    proxy_client.initialize(&admin, &implementation);
+    proxy_client.add_oracle_source(&admin, &oracle, &String::from_slice(&env, b"Chainlink"));
+
+    (env, proxy_client, admin, oracle, implementation)
+}
+
+#[test]
+fn test_proxy_initialization() {
+    let (env, proxy_client, admin, _oracle, implementation) = setup_proxy();
+
+    let current_impl = proxy_client.get_implementation();
+    assert_eq!(current_impl, Some(implementation));
+
+    let version = proxy_client.get_version();
+    assert_eq!(version, 1);
+}
+
+#[test]
+fn test_proxy_data_preservation_on_upgrade() {
+    let (env, proxy_client, admin, oracle, _old_impl) = setup_proxy();
+
+    // Submit prices before upgrade
+    let asset = String::from_slice(&env, b"XLM");
+    proxy_client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &env.ledger().timestamp());
+
+    // Verify data exists
+    let price = proxy_client.get_price(&asset).expect("price should exist");
+    assert_eq!(price.price, 100_000_000);
+    assert_eq!(price.decimals, 7);
+
+    // Perform upgrade
+    let new_impl = Address::generate(&env);
+    proxy_client.upgrade(&admin, &new_impl).expect("upgrade should succeed");
+
+    // Verify version incremented
+    let new_version = proxy_client.get_version();
+    assert_eq!(new_version, 2);
+
+    // Verify data is preserved after upgrade
+    let price_after = proxy_client.get_price(&asset).expect("price should still exist");
+    assert_eq!(price_after.price, 100_000_000);
+    assert_eq!(price_after.decimals, 7);
+    assert_eq!(price_after.asset, asset);
+}
+
+#[test]
+fn test_proxy_tracks_previous_implementation() {
+    let (env, proxy_client, admin, _oracle, old_impl) = setup_proxy();
+
+    let new_impl = Address::generate(&env);
+    proxy_client.upgrade(&admin, &new_impl).expect("upgrade should succeed");
+
+    let previous = proxy_client.get_previous_implementation();
+    assert_eq!(previous, Some(old_impl));
+
+    let current = proxy_client.get_implementation();
+    assert_eq!(current, Some(new_impl));
+}
+
+#[test]
+fn test_proxy_admin_change() {
+    let (env, proxy_client, admin, _oracle, _impl) = setup_proxy();
+    let new_admin = Address::generate(&env);
+
+    proxy_client.set_admin(&admin, &new_admin).expect("should change admin");
+
+    // Attempt operation with new admin should work
+    let oracle2 = Address::generate(&env);
+    let result = proxy_client.add_oracle_source(&new_admin, &oracle2, &String::from_slice(&env, b"NewSource"));
+    assert!(result.is_ok());
+
+    // Attempt operation with old admin should fail
+    let oracle3 = Address::generate(&env);
+    let result = proxy_client.try_add_oracle_source(&admin, &oracle3, &String::from_slice(&env, b"ShouldFail"));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_proxy_upgrade_requires_admin() {
+    let (env, proxy_client, _admin, oracle, _impl) = setup_proxy();
+    let new_impl = Address::generate(&env);
+
+    let result = proxy_client.try_upgrade(&oracle, &new_impl);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_proxy_multiple_upgrades_increment_version() {
+    let (env, proxy_client, admin, _oracle, _impl) = setup_proxy();
+
+    let impl2 = Address::generate(&env);
+    proxy_client.upgrade(&admin, &impl2).expect("first upgrade");
+    assert_eq!(proxy_client.get_version(), 2);
+
+    let impl3 = Address::generate(&env);
+    proxy_client.upgrade(&admin, &impl3).expect("second upgrade");
+    assert_eq!(proxy_client.get_version(), 3);
+
+    let impl4 = Address::generate(&env);
+    proxy_client.upgrade(&admin, &impl4).expect("third upgrade");
+    assert_eq!(proxy_client.get_version(), 4);
 }
