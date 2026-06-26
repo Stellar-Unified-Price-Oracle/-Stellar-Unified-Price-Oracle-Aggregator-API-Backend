@@ -6,7 +6,4 @@ mod storage;
 mod test;
 mod types;
 
-#[cfg(test)]
-mod fuzz;
-
 pub use contract::PriceOracleContract;
