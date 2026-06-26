@@ -6,14 +6,14 @@ const API_BASE = process.env.API_URL || 'http://localhost:3000/api/v1';
 const WS_URL = process.env.WS_URL || 'ws://localhost:3001';
 const AGGREGATOR_URL = process.env.AGGREGATOR_URL || 'http://localhost:4000';
 
-describe('Integration Tests: Full Data Pipeline', () => {
+describe.skipIf(!process.env.RUN_INTEGRATION_TESTS)('Integration Tests: Full Data Pipeline', () => {
   let wsConnection: WebSocket;
 
   beforeAll(async () => {
-    // Wait for services to be ready
-    await waitForService(API_BASE);
-    await waitForService(AGGREGATOR_URL);
-  });
+    // Wait for services to be ready (with shorter timeout for local testing)
+    await waitForService(API_BASE, 5);
+    await waitForService(AGGREGATOR_URL, 5);
+  }, { timeout: 30000 });
 
   afterAll(async () => {
     if (wsConnection) {

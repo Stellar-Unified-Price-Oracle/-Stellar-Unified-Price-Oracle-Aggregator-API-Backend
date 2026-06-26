@@ -1,4 +1,3 @@
-import { SorobanRpc } from '@stellar/js-stellar-sdk';
 import { config } from '../config';
 import { logger } from '../middleware/logger';
 
@@ -12,12 +11,7 @@ export interface TokenMetadata {
 
 class ContractRegistry {
   private cache: Map<string, TokenMetadata> = new Map();
-  private rpcClient: SorobanRpc.Server;
   private static readonly CONTRACT_CACHE_TTL = 3600000; // 1 hour
-
-  constructor() {
-    this.rpcClient = new SorobanRpc.Server(config.stellarRpcUrl);
-  }
 
   private isContractId(assetId: string): boolean {
     return assetId.startsWith('C') && assetId.length === 56;
@@ -44,17 +38,18 @@ class ContractRegistry {
 
   private async fetchContractMetadata(contractId: string): Promise<TokenMetadata | null> {
     try {
-      // Validate contract exists by checking ledger entries
-      const ledgerEntries = await this.rpcClient.getLedgerEntries(
-        `CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF`,
-      ).catch(() => null);
+      // In a production implementation, this would:
+      // 1. Connect to Soroban RPC at config.stellarRpcUrl
+      // 2. Invoke contract read-only methods (symbol, decimals, name)
+      // 3. Return parsed metadata
+      //
+      // For now, create a basic metadata object with derived values
+      // This allows the API to respond with contract metadata even before full implementation
 
-      // For now, create a basic metadata object
-      // In production, this would invoke the contract methods properly
       return {
         contractId,
         symbol: this.deriveSymbolFromContractId(contractId),
-        name: `Token ${contractId.substring(0, 8)}`,
+        name: `Soroban Token ${contractId.substring(0, 8)}`,
         decimals: 18,
       };
     } catch (error) {

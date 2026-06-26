@@ -33,9 +33,19 @@ export async function initializeDatabase(): Promise<void> {
   }
 
   try {
-    // Lazy load pg only if needed
-    const pg = await import('pg');
-    const { Pool } = pg;
+    // Lazy load pg only if needed (optional dependency)
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    let Pool: any;
+    try {
+      // @ts-ignore - pg is an optional dependency
+      // eslint-disable-next-line global-require
+      const pg = require('pg');
+      Pool = pg.Pool;
+    } catch (importError) {
+      logger.warn('PostgreSQL driver not installed. To enable database support, run: npm install pg');
+      dbAvailable = false;
+      return;
+    }
 
     pgPool = new Pool({
       host: config.host,
