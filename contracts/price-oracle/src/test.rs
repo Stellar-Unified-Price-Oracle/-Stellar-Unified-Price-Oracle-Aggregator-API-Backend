@@ -1,4 +1,5 @@
 use soroban_sdk::{Address, Env, String, Vec};
+use soroban_sdk::testutils::Address as TestAddress;
 
 use crate::contract::PriceOracleContract;
 use crate::contract::PriceOracleContractClient;
@@ -10,11 +11,11 @@ fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
     let contract_id = env.register_contract(None, PriceOracleContract);
     let client = PriceOracleContractClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let admin = <Address as TestAddress>::generate(&env);
+    let oracle = <Address as TestAddress>::generate(&env);
 
     client.initialize(&admin);
-    client.add_oracle_source(&admin, &oracle, &String::from_slice(&env, b"Chainlink"));
+    client.add_oracle_source(&admin, &oracle, &String::from_str(&env, "Chainlink"));
 
     (env, client, admin, oracle)
 }
@@ -23,7 +24,7 @@ fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
 fn test_initialize_and_submit() {
     let (env, client, _admin, oracle) = setup();
 
-    let asset = String::from_slice(&env, b"XLM");
+    let asset = String::from_str(&env, "XLM");
     client.submit_price(
         &oracle,
         &asset,
@@ -41,9 +42,9 @@ fn test_initialize_and_submit() {
 #[test]
 fn test_unauthorized_source_rejected() {
     let (env, client, _admin, _oracle) = setup();
-    let unauthorized = Address::generate(&env);
+    let unauthorized = <Address as TestAddress>::generate(&env);
 
-    let asset = String::from_slice(&env, b"XLM");
+    let asset = String::from_str(&env, "XLM");
     let result = client.try_submit_price(
         &unauthorized,
         &asset,
@@ -57,7 +58,7 @@ fn test_unauthorized_source_rejected() {
 #[test]
 fn test_price_history_returns_correct_window() {
     let (env, client, _admin, oracle) = setup();
-    let asset = String::from_slice(&env, b"BTC");
+    let asset = String::from_str(&env, "BTC");
 
     for i in 1..=10 {
         let price = i as i128 * 100_000_000;
@@ -75,7 +76,7 @@ fn test_price_history_returns_correct_window() {
 fn test_trusted_asset_flag() {
     let (env, client, admin, oracle) = setup();
 
-    let asset = String::from_slice(&env, b"USDC");
+    let asset = String::from_str(&env, "USDC");
     client.submit_price(&oracle, &asset, &1_000_000i128, &6u32, &env.ledger().timestamp());
     client.set_trusted_asset(&admin, &asset, &true);
 
@@ -89,7 +90,7 @@ fn test_remove_oracle_source() {
 
     client.remove_oracle_source(&admin, &oracle);
 
-    let asset = String::from_slice(&env, b"XLM");
+    let asset = String::from_str(&env, "XLM");
     let result = client.try_submit_price(
         &oracle,
         &asset,
@@ -103,10 +104,10 @@ fn test_remove_oracle_source() {
 #[test]
 fn test_multiple_assets_tracked() {
     let (env, client, _admin, oracle) = setup();
-    let assets = vec![&env, b"XLM", b"BTC", b"ETH", b"USDC", b"USDT"];
+    let assets = ["XLM", "BTC", "ETH", "USDC", "USDT"];
 
-    for asset_bytes in assets.iter() {
-        let asset = String::from_slice(&env, asset_bytes);
+    for asset_name in assets.iter() {
+        let asset = String::from_str(&env, asset_name);
         client.submit_price(&oracle, &asset, &1_000_000i128, &7u32, &env.ledger().timestamp());
     }
 
@@ -117,7 +118,7 @@ fn test_multiple_assets_tracked() {
 #[test]
 fn test_price_submission_idempotent() {
     let (env, client, _admin, oracle) = setup();
-    let asset = String::from_slice(&env, b"XLM");
+    let asset = String::from_str(&env, "XLM");
 
     client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &env.ledger().timestamp());
     client.submit_price(&oracle, &asset, &200_000_000i128, &7u32, &env.ledger().timestamp());
@@ -130,7 +131,7 @@ fn test_price_submission_idempotent() {
 fn test_query_nonexistent_asset() {
     let (env, client, _admin, _oracle) = setup();
 
-    let asset = String::from_slice(&env, b"NONEXISTENT");
+    let asset = String::from_str(&env, "NONEXISTENT");
     let price = client.get_price(&asset);
     assert!(price.is_none());
 }
@@ -141,16 +142,16 @@ fn test_admin_cannot_be_replaced_by_non_admin() {
     let contract_id = env.register_contract(None, PriceOracleContract);
     let client = PriceOracleContractClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    let impersonator = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let admin = <Address as TestAddress>::generate(&env);
+    let impersonator = <Address as TestAddress>::generate(&env);
+    let oracle = <Address as TestAddress>::generate(&env);
 
     client.initialize(&admin);
 
     let result = client.try_add_oracle_source(
         &impersonator,
         &oracle,
-        &String::from_slice(&env, b"Fail"),
+        &String::from_str(&env, "Fail"),
     );
     assert!(result.is_err());
 }
@@ -158,7 +159,7 @@ fn test_admin_cannot_be_replaced_by_non_admin() {
 #[test]
 fn test_invalid_decimals_handled() {
     let (env, client, _admin, oracle) = setup();
-    let asset = String::from_slice(&env, b"XLM");
+    let asset = String::from_str(&env, "XLM");
 
     // Submit with 0 decimals
     client.submit_price(&oracle, &asset, &100_000_000i128, &0u32, &env.ledger().timestamp());
@@ -169,23 +170,23 @@ fn test_invalid_decimals_handled() {
 #[test]
 fn test_oracle_source_management() {
     let (env, client, admin, oracle1) = setup();
-    let oracle2 = Address::generate(&env);
-    let oracle3 = Address::generate(&env);
+    let oracle2 = <Address as TestAddress>::generate(&env);
+    let oracle3 = <Address as TestAddress>::generate(&env);
 
-    client.add_oracle_source(&admin, &oracle2, &String::from_slice(&env, b"Redstone"));
-    client.add_oracle_source(&admin, &oracle3, &String::from_slice(&env, b"Band"));
+    client.add_oracle_source(&admin, &oracle2, &String::from_str(&env, "Redstone"));
+    client.add_oracle_source(&admin, &oracle3, &String::from_str(&env, "Band"));
 
-    let asset = String::from_slice(&env, b"XLM");
-    client.submit_price(&oracle1, &asset, &100n, &7u32, &env.ledger().timestamp());
-    client.submit_price(&oracle2, &asset, &101n, &7u32, &env.ledger().timestamp());
-    client.submit_price(&oracle3, &asset, &102n, &7u32, &env.ledger().timestamp());
+    let asset = String::from_str(&env, "XLM");
+    client.submit_price(&oracle1, &asset, &100i128, &7u32, &env.ledger().timestamp());
+    client.submit_price(&oracle2, &asset, &101i128, &7u32, &env.ledger().timestamp());
+    client.submit_price(&oracle3, &asset, &102i128, &7u32, &env.ledger().timestamp());
 
     let price: AssetPrice = client.get_price(&asset).expect("price exists");
     assert_eq!(price.num_sources, 3);
 
     client.remove_oracle_source(&admin, &oracle2);
 
-    let result = client.try_submit_price(&oracle2, &asset, &200n, &7u32, &env.ledger().timestamp());
+    let result = client.try_submit_price(&oracle2, &asset, &200i128, &7u32, &env.ledger().timestamp());
     assert!(result.is_err());
 }
 
@@ -195,15 +196,15 @@ fn test_source_cannot_self_authorize() {
     let contract_id = env.register_contract(None, PriceOracleContract);
     let client = PriceOracleContractClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let admin = <Address as TestAddress>::generate(&env);
+    let oracle = <Address as TestAddress>::generate(&env);
 
     client.initialize(&admin);
 
     let result = client.try_add_oracle_source(
         &oracle,
         &oracle,
-        &String::from_slice(&env, b"Rogue"),
+        &String::from_str(&env, "Rogue"),
     );
     assert!(result.is_err());
 }
@@ -211,7 +212,7 @@ fn test_source_cannot_self_authorize() {
 #[test]
 fn test_empty_history_returns_empty() {
     let (env, client, _admin, _oracle) = setup();
-    let asset = String::from_slice(&env, b"XLM");
+    let asset = String::from_str(&env, "XLM");
 
     let history = client.get_price_history(&asset, &10u32);
     assert_eq!(history.len(), 0);

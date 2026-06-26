@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
 use crate::errors::OracleError;
 use crate::storage;
@@ -50,16 +50,18 @@ impl PriceOracleContract {
         let num_sources = storage::get_source_count(&env);
         let is_trusted = storage::is_trusted_asset(&env, &asset);
 
+        let price_usd = calculate_usd_price(
+            &env,
+            &data_point.asset,
+            data_point.price,
+            data_point.decimals,
+        );
+
         Some(AssetPrice {
             asset: data_point.asset,
             price: data_point.price,
             decimals: data_point.decimals,
-            price_usd: calculate_usd_price(
-                &env,
-                &data_point.asset,
-                data_point.price,
-                data_point.decimals,
-            ),
+            price_usd,
             timestamp: data_point.timestamp,
             source: data_point.source,
             num_sources,
@@ -128,15 +130,17 @@ impl PriceOracleContract {
 }
 
 fn calculate_usd_price(env: &Env, asset: &String, price: i128, decimals: u32) -> Option<i128> {
-    if asset.as_bytes().eq_ignore_ascii_case(b"XLM") {
+    let asset_str = String::from_str(env, "XLM");
+    if asset == &asset_str {
         return Some(price);
     }
 
-    if let Some(usdc_anchor) = storage::get_latest_price(env, &String::from_slice(env, b"USDC")) {
-        if asset.as_bytes().eq_ignore_ascii_case(b"USDC") {
+    if let Some(usdc_anchor) = storage::get_latest_price(env, &String::from_str(env, "USDC")) {
+        let usdc_str = String::from_str(env, "USDC");
+        if asset == &usdc_str {
             return Some(10i128.pow(decimals));
         }
-        if let Some(xlm_price) = storage::get_latest_price(env, &String::from_slice(env, b"XLM")) {
+        if let Some(xlm_price) = storage::get_latest_price(env, &String::from_str(env, "XLM")) {
             let base_asset_price = (price * xlm_price.price * 10i128.pow(decimals))
                 / (10i128.pow(decimals) * 10i128.pow(usdc_anchor.decimals));
             return Some(base_asset_price);
