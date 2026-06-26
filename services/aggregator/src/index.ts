@@ -8,8 +8,10 @@ import { appendHistoricalPrice } from './utils/history';
 import { BaseSource } from './sources/base';
 import { WebSocketServer } from './ws-server';
 import { HealthServer } from './health-server';
+import AlertManager, { AlertThresholds } from './alert-manager';
 
 let lastAggregated: AggregatedPrice[] = [];
+const alertManager = new AlertManager(config.alerts);
 
 async function poll(): Promise<AggregatedPrice[]> {
   const sources: BaseSource[] = [
@@ -39,6 +41,9 @@ async function poll(): Promise<AggregatedPrice[]> {
       consecutiveFailures: s.health.consecutiveFailures,
     }));
     logger.info(`Aggregated ${ap.asset}: ~$${usdPrice} (sources: ${ap.sources.join(', ')}, confidence: ${(ap.confidence * 100).toFixed(0)}%)`, { health: healthStatuses });
+
+    // Check price against alert thresholds
+    await alertManager.checkPrice(ap);
   }
 
   const unhealthy = sources.filter((s) => !s.health.healthy);
@@ -63,6 +68,16 @@ async function main(): Promise<void> {
   if (!config.soroban.contractId) {
     logger.warn('No contract ID configured — running in dry-run mode');
   }
+
+  // Initialize alert thresholds for all watched assets
+  const alertThresholds: AlertThresholds[] = config.assets.map((asset) => ({
+    asset: asset.toUpperCase(),
+    deviationThresholdPercent: config.alerts.defaultDeviationThresholdPercent,
+    staleThresholdSeconds: config.alerts.defaultStaleThresholdSeconds,
+    sourceDownThreshold: config.alerts.defaultSourceDownThreshold,
+  }));
+  alertManager.setThresholds(alertThresholds);
+  logger.info('Alert manager initialized with thresholds', { alertThresholds });
 
   const wss = new WebSocketServer(config.port);
   wss.start();
