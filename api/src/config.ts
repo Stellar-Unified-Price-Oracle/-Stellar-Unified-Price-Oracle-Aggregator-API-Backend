@@ -13,4 +13,9 @@ export const config = {
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),
   rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
   cacheTtlMs: parseInt(process.env.CACHE_TTL_MS || '15000', 10),
+  database: {
+    url: process.env.DATABASE_URL || 'postgresql://oracle:oracle@localhost:5432/stellar_oracle',
+    poolMin: parseInt(process.env.DATABASE_POOL_MIN || '2', 10),
+    poolMax: parseInt(process.env.DATABASE_POOL_MAX || '10', 10),
+  },
 };
