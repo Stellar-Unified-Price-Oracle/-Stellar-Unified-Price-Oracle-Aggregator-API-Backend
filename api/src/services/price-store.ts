@@ -1,9 +1,35 @@
 import fs from 'fs';
 import path from 'path';
+import { priceRepository } from './price-repository';
+import { isDbAvailable } from './database';
 
 const DATA_DIR = path.resolve(__dirname, '../../data');
 
-export function readAssetPrices(): any[] {
+export async function readAssetPrices(): Promise<any[]> {
+  // Try database first if available
+  if (isDbAvailable()) {
+    try {
+      const assets = await priceRepository.getAllAssets();
+      const result = [];
+      for (const asset of assets) {
+        const latest = await priceRepository.getLatestPrice(asset);
+        if (latest) {
+          result.push({
+            asset: latest.asset,
+            price: latest.price,
+            decimals: latest.decimals,
+            source: latest.source,
+            timestamp: latest.timestamp,
+          });
+        }
+      }
+      return result;
+    } catch (error) {
+      // Fall through to file-based storage
+    }
+  }
+
+  // Fall back to file-based storage
   const dir = DATA_DIR;
   if (!fs.existsSync(dir)) return [];
 
@@ -30,12 +56,23 @@ export function readAssetPrices(): any[] {
   return Array.from(assets.values());
 }
 
-export function readPriceHistory(
+export async function readPriceHistory(
   asset: string,
   from?: number,
   to?: number,
   limit = 100,
-): any[] {
+): Promise<any[]> {
+  // Try database first if available
+  if (isDbAvailable()) {
+    try {
+      const history = await priceRepository.getPriceHistory(asset, from, to, limit);
+      return history;
+    } catch (error) {
+      // Fall through to file-based storage
+    }
+  }
+
+  // Fall back to file-based storage
   const filePath = path.join(DATA_DIR, `history-${asset.toLowerCase()}.json`);
   if (!fs.existsSync(filePath)) return [];
 

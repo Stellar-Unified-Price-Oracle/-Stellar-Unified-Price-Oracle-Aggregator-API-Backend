@@ -10,6 +10,7 @@ import { errorHandler, notFoundHandler } from './middleware/error';
 import { metricsMiddleware, metricsHandler } from './middleware/metrics';
 import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
+import { initializeDatabase, closeDatabase } from './services/database';
 import v1Routes from './routes/v1';
 
 const app = express();
@@ -39,25 +40,44 @@ app.get('/metrics', metricsHandler);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-const server = app.listen(config.port, () => {
-  logger.info(`REST API listening on port ${config.port}`);
-  logger.info(`Swagger docs at http://localhost:${config.port}/api/v1/docs`);
-  logger.info(`Metrics at http://localhost:${config.port}/metrics`);
-});
+async function startServer() {
+  await initializeDatabase();
 
-const wss = new PriceWebSocketServer(config.wsPort);
-wss.start();
+  const server = app.listen(config.port, () => {
+    logger.info(`REST API listening on port ${config.port}`);
+    logger.info(`Swagger docs at http://localhost:${config.port}/api/v1/docs`);
+    logger.info(`Metrics at http://localhost:${config.port}/metrics`);
+  });
 
-process.on('SIGTERM', () => {
-  logger.info('Shutting down API server...');
-  wss.stop();
-  server.close(() => process.exit(0));
-});
+  const wss = new PriceWebSocketServer(config.wsPort);
+  wss.start();
 
-process.on('SIGINT', () => {
-  logger.info('Shutting down API server...');
-  wss.stop();
-  server.close(() => process.exit(0));
-});
+  process.on('SIGTERM', () => {
+    logger.info('Shutting down API server...');
+    wss.stop();
+    server.close(async () => {
+      await closeDatabase();
+      process.exit(0);
+    });
+  });
 
-export { app, wss };
+  process.on('SIGINT', () => {
+    logger.info('Shutting down API server...');
+    wss.stop();
+    server.close(async () => {
+      await closeDatabase();
+      process.exit(0);
+    });
+  });
+
+  return { app, server, wss };
+}
+
+if (require.main === module) {
+  startServer().catch((error) => {
+    logger.error('Failed to start server:', error);
+    process.exit(1);
+  });
+}
+
+export { app };
