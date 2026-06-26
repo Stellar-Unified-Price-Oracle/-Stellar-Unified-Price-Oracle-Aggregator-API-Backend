@@ -214,7 +214,7 @@ export class PriceOracleClient {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        let errorData;
+        let errorData: any = {};
         try {
           errorData = await response.json();
         } catch {
@@ -228,7 +228,7 @@ export class PriceOracleClient {
         );
       }
 
-      return await response.json();
+      return (await response.json()) as T;
     } catch (error) {
       if (error instanceof PriceOracleError) {
         throw error;
@@ -253,17 +253,20 @@ export class PriceOracleClient {
 
     try {
       // Check if running in Node.js or browser
-      if (typeof window === 'undefined') {
+      const isNode = typeof globalThis !== 'undefined' && (globalThis as any).global !== undefined && (globalThis as any).process !== undefined;
+
+      if (isNode) {
         // Node.js environment
         try {
-          const WebSocketImport = require('ws');
-          this.ws = new WebSocketImport(this.wsUrl);
+          const WebSocketLib = require('ws');
+          this.ws = new WebSocketLib(this.wsUrl) as WebSocket;
         } catch {
           throw new Error('WebSocket not available. Install "ws" package for Node.js support.');
         }
       } else {
         // Browser environment
-        this.ws = new WebSocket(this.wsUrl);
+        const WS = (globalThis as any).WebSocket || WebSocket;
+        this.ws = new WS(this.wsUrl) as WebSocket;
       }
 
       this.setupWebSocketHandlers();

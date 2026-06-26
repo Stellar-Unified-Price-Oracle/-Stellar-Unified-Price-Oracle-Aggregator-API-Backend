@@ -42,26 +42,28 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const apiKey = extractApiKey(req);
 
   if (!apiKey) {
-    return res.status(401).json({
+    res.status(401).json({
       success: false,
       error: {
         code: 'MISSING_API_KEY',
         message: 'API key required. Use Authorization: Bearer <key> or x-api-key header',
       },
     });
+    return;
   }
 
   // Validate API key
   const validation = apiKeyManager.validateKey(apiKey);
   if (!validation.valid) {
     logger.warn(`Invalid API key attempt: ${apiKey.substring(0, 8)}...`);
-    return res.status(401).json({
+    res.status(401).json({
       success: false,
       error: {
         code: 'INVALID_API_KEY',
         message: validation.error || 'Invalid API key',
       },
     });
+    return;
   }
 
   // Check rate limit
@@ -70,7 +72,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     const resetTime = new Date(rateLimitInfo.resetTime);
     logger.warn(`Rate limit exceeded for API key: ${apiKey.substring(0, 8)}...`);
 
-    return res.status(429).json({
+    res.status(429).json({
       success: false,
       error: {
         code: 'RATE_LIMITED',
@@ -78,6 +80,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
         resetTime: resetTime.toISOString(),
       },
     });
+    return;
   }
 
   // Attach API key and rate limit info to request
@@ -103,26 +106,28 @@ export function adminAuthMiddleware(adminKeyPrefix: string) {
     const apiKey = extractApiKey(req);
 
     if (!apiKey) {
-      return res.status(401).json({
+      res.status(401).json({
         success: false,
         error: {
           code: 'MISSING_API_KEY',
           message: 'Admin API key required',
         },
       });
+      return;
     }
 
     // For now, we consider keys starting with specific prefix as admin keys
     // In production, you'd want a more robust system
     if (!apiKey.includes(adminKeyPrefix) && process.env.ADMIN_API_KEY !== apiKey) {
       logger.warn(`Unauthorized admin access attempt: ${apiKey.substring(0, 8)}...`);
-      return res.status(403).json({
+      res.status(403).json({
         success: false,
         error: {
           code: 'FORBIDDEN',
           message: 'This operation requires admin privileges',
         },
       });
+      return;
     }
 
     req.apiKey = apiKey;
@@ -147,13 +152,14 @@ export function optionalAuthMiddleware(req: Request, res: Response, next: NextFu
   const validation = apiKeyManager.validateKey(apiKey);
   if (!validation.valid) {
     logger.warn(`Invalid API key attempt: ${apiKey.substring(0, 8)}...`);
-    return res.status(401).json({
+    res.status(401).json({
       success: false,
       error: {
         code: 'INVALID_API_KEY',
         message: validation.error || 'Invalid API key',
       },
     });
+    return;
   }
 
   // Check rate limit
@@ -162,7 +168,7 @@ export function optionalAuthMiddleware(req: Request, res: Response, next: NextFu
     const resetTime = new Date(rateLimitInfo.resetTime);
     logger.warn(`Rate limit exceeded for API key: ${apiKey.substring(0, 8)}...`);
 
-    return res.status(429).json({
+    res.status(429).json({
       success: false,
       error: {
         code: 'RATE_LIMITED',
@@ -170,6 +176,7 @@ export function optionalAuthMiddleware(req: Request, res: Response, next: NextFu
         resetTime: resetTime.toISOString(),
       },
     });
+    return;
   }
 
   req.apiKey = apiKey;
