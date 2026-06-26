@@ -10,6 +10,7 @@ import { WebSocketServer } from './ws-server';
 import { HealthServer } from './health-server';
 
 let lastAggregated: AggregatedPrice[] = [];
+let aggregator: PriceAggregator;
 
 async function poll(): Promise<AggregatedPrice[]> {
   const sources: BaseSource[] = [
@@ -18,8 +19,6 @@ async function poll(): Promise<AggregatedPrice[]> {
     new BandSource(),
     new ReflectorSource(),
   ];
-
-  const aggregator = new PriceAggregator();
 
   for (const source of sources) {
     const prices = await source.fetchAll(config.assets);
@@ -64,6 +63,12 @@ async function main(): Promise<void> {
     logger.warn('No contract ID configured — running in dry-run mode');
   }
 
+  // Initialize aggregator with circuit breaker
+  aggregator = new PriceAggregator({
+    deviationThreshold: 20,
+    recoveryRequiredSuccesses: 3,
+  });
+
   const wss = new WebSocketServer(config.port);
   wss.start();
 
@@ -75,6 +80,7 @@ async function main(): Promise<void> {
       reflector: new ReflectorSource().health,
     },
     lastAggregated,
+    circuitBreakerMetrics: aggregator.getCircuitBreakerMetrics(),
     uptime: process.uptime(),
   }));
   healthServer.start();
