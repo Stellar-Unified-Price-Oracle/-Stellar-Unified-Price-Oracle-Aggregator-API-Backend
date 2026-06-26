@@ -1,11 +1,13 @@
 import { WebSocketServer as WsServer, WebSocket } from 'ws';
 import { logger } from '../middleware/logger';
+import { HybridCache } from '../services/cache';
 
 export class PriceWebSocketServer {
   private wss: WsServer | null = null;
   private port: number;
   private clients: Set<WebSocket> = new Set();
   private subscriptions: Map<WebSocket, Set<string>> = new Map();
+  private cache: HybridCache<any> | null = null;
 
   constructor(port: number) {
     this.port = port;
@@ -87,6 +89,28 @@ export class PriceWebSocketServer {
       if (!subs || subs.size === 0 || (asset && subs.has(asset))) {
         client.send(message);
       }
+    });
+
+    this.invalidateCache(asset);
+  }
+
+  setCache(cache: HybridCache<any>): void {
+    this.cache = cache;
+  }
+
+  private invalidateCache(asset?: string): void {
+    if (!this.cache) return;
+    const patterns = [
+      'prices:*',
+      'price:*',
+      'history:*',
+      'sources:*',
+      'health:*',
+    ];
+    patterns.forEach((pattern) => {
+      this.cache!.invalidate(pattern).catch((err) => {
+        logger.warn(`Cache invalidation failed for pattern ${pattern}: ${err}`);
+      });
     });
   }
 

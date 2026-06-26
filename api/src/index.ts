@@ -10,9 +10,21 @@ import { errorHandler, notFoundHandler } from './middleware/error';
 import { metricsMiddleware, metricsHandler } from './middleware/metrics';
 import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
-import v1Routes from './routes/v1';
+import v1Routes, { initializeCache } from './routes/v1';
+import { HybridCache } from './services/cache';
 
 const app = express();
+
+const cache = new HybridCache<any>(logger, {
+  redisUrl: config.redisUrl,
+  fallbackToLru: true,
+  priceTtl: config.priceCacheTtl,
+  historyTtl: config.historyCacheTtl,
+  sourcesTtl: config.sourcesCacheTtl,
+  healthTtl: config.healthCacheTtl,
+});
+
+initializeCache(cache);
 
 app.use(helmet());
 app.use(cors());
@@ -43,9 +55,15 @@ const server = app.listen(config.port, () => {
   logger.info(`REST API listening on port ${config.port}`);
   logger.info(`Swagger docs at http://localhost:${config.port}/api/v1/docs`);
   logger.info(`Metrics at http://localhost:${config.port}/metrics`);
+  if (cache.isUsingRedis()) {
+    logger.info('Redis cache is active');
+  } else {
+    logger.info('Using LRU cache fallback');
+  }
 });
 
 const wss = new PriceWebSocketServer(config.wsPort);
+wss.setCache(cache);
 wss.start();
 
 process.on('SIGTERM', () => {
