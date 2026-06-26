@@ -1,12 +1,13 @@
-use soroban_sdk::{Address, Env, String, Vec};
-use soroban_sdk::testutils::Address as TestAddress;
+#[cfg(test)]
+mod tests_impl {
+    use soroban_sdk::{Address, Env, String, Vec};
+    use soroban_sdk::testutils::Address as TestAddress;
 
-use crate::contract::PriceOracleContract;
-use crate::contract::PriceOracleContractClient;
-use crate::errors::OracleError;
-use crate::types::AssetPrice;
+    use crate::contract::PriceOracleContract;
+    use crate::contract::PriceOracleContractClient;
+    use crate::types::AssetPrice;
 
-fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
+    pub fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
     let env = Env::default();
     let contract_id = env.register_contract(None, PriceOracleContract);
     let client = PriceOracleContractClient::new(&env, &contract_id);
@@ -234,4 +235,5 @@ fn test_empty_history_returns_empty() {
 
     let history = client.get_price_history(&asset, &10u32);
     assert_eq!(history.len(), 0);
+}
 }
