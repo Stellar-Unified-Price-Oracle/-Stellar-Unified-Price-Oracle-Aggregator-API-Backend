@@ -9,11 +9,15 @@ import { requestLogger } from './middleware/request-logger';
 import { requestIdMiddleware } from './middleware/request-id';
 import { errorHandler, notFoundHandler } from './middleware/error';
 import { metricsMiddleware, metricsHandler } from './middleware/metrics';
+import { initializeTracing } from './services/tracing';
 import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
 import { ErrorCode } from './errors/catalog';
 import { AppError } from './errors/app-error';
 import v1Routes from './routes/v1';
+
+// Initialize distributed tracing
+initializeTracing(config.tracing);
 
 const app = express();
 

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
+import { context, trace } from '@opentelemetry/api';
 
 declare global {
   namespace Express {
@@ -27,5 +28,41 @@ export function requestIdMiddleware(req: Request, res: Response, next: NextFunct
   res.setHeader('x-trace-id', traceId);
   res.setHeader('x-span-id', spanId);
 
-  next();
+  // Propagate trace context
+  const tracer = trace.getTracer('express-middleware');
+  const span = tracer.startSpan(`${req.method} ${req.path}`, {
+    attributes: {
+      'http.method': req.method,
+      'http.url': req.url,
+      'http.target': req.path,
+      'http.host': req.hostname,
+      'http.scheme': req.protocol,
+      'http.user_agent': req.get('user-agent'),
+      'http.client_ip': req.ip,
+      'trace.id': traceId,
+      'request.id': requestId,
+      'span.id': spanId,
+    },
+  });
+
+  context.with(trace.setSpan(context.active(), span), () => {
+    const originalSend = res.send;
+
+    res.send = function (data: unknown) {
+      const statusCode = res.statusCode;
+      span.setAttributes({
+        'http.status_code': statusCode,
+      });
+
+      if (statusCode >= 400) {
+        span.recordException(new Error(`HTTP ${statusCode}`));
+      }
+
+      span.end();
+      return originalSend.call(this, data);
+    };
+
+    next();
+  });
 }
+

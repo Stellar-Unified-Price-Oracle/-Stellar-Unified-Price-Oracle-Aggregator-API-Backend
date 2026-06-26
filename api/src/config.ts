@@ -18,4 +18,10 @@ export const config = {
     poolMin: parseInt(process.env.DATABASE_POOL_MIN || '2', 10),
     poolMax: parseInt(process.env.DATABASE_POOL_MAX || '10', 10),
   },
+  tracing: {
+    enabled: process.env.TRACING_ENABLED === 'true',
+    jaegerEndpoint: process.env.JAEGER_ENDPOINT || 'http://localhost:14268/api/traces',
+    samplingRate: parseFloat(process.env.TRACING_SAMPLING_RATE || '1'),
+    serviceName: process.env.TRACING_SERVICE_NAME || 'stellar-oracle-api',
+  },
 };
