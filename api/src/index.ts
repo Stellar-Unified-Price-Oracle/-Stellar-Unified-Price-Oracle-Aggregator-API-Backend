@@ -8,9 +8,11 @@ import { logger } from './middleware/logger';
 import { requestLogger } from './middleware/request-logger';
 import { errorHandler, notFoundHandler } from './middleware/error';
 import { metricsMiddleware, metricsHandler } from './middleware/metrics';
+import { authMiddleware, optionalAuthMiddleware } from './middleware/auth';
 import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
 import v1Routes from './routes/v1';
+import adminRoutes from './routes/admin';
 
 const app = express();
 
@@ -32,7 +34,19 @@ app.use(
   }),
 );
 
+// Apply authentication to price endpoints
+app.use('/api/v1/prices', authMiddleware);
+app.use('/api/v1/history', authMiddleware);
+
+// Optional auth for general info endpoints
+app.use('/api/v1/sources', optionalAuthMiddleware);
+app.use('/api/v1/health', optionalAuthMiddleware);
+
+// Routes
 app.use('/api/v1', v1Routes);
+app.use('/api/v1/admin', adminRoutes);
+
+// Documentation and metrics
 app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.get('/metrics', metricsHandler);
 
