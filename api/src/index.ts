@@ -6,10 +6,13 @@ import swaggerUi from 'swagger-ui-express';
 import { config } from './config';
 import { logger } from './middleware/logger';
 import { requestLogger } from './middleware/request-logger';
+import { requestIdMiddleware } from './middleware/request-id';
 import { errorHandler, notFoundHandler } from './middleware/error';
 import { metricsMiddleware, metricsHandler } from './middleware/metrics';
 import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
+import { ErrorCode } from './errors/catalog';
+import { AppError } from './errors/app-error';
 import v1Routes from './routes/v1';
 
 const app = express();
@@ -17,6 +20,7 @@ const app = express();
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
+app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
 app.use(
@@ -25,9 +29,15 @@ app.use(
     max: config.rateLimitMax,
     standardHeaders: true,
     legacyHeaders: false,
-    message: {
-      success: false,
-      error: { code: 'RATE_LIMITED', message: 'Too many requests' },
+    skip: (req) => req.path === '/metrics',
+    handler: (req, res) => {
+      const error = new AppError(
+        ErrorCode.RATE_LIMITED,
+        'Too many requests. Please try again later.',
+        undefined,
+        req.path,
+      );
+      res.status(error.status).json(error.toResponseObject());
     },
   }),
 );

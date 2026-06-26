@@ -1,4 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
+import { AppError, isAppError } from '../errors/app-error';
+import { ErrorCode } from '../errors/catalog';
+import { logger } from './logger';
 
 export interface ApiError {
   status: number;
@@ -8,26 +11,44 @@ export interface ApiError {
 }
 
 export function errorHandler(
-  err: Error | ApiError,
-  _req: Request,
+  err: Error | ApiError | AppError,
+  req: Request,
   res: Response,
   _next: NextFunction,
 ): void {
-  const status = (err as ApiError).status || 500;
-  const code = (err as ApiError).code || 'INTERNAL_ERROR';
-  const message = err.message || 'An unexpected error occurred';
+  let appError: AppError;
 
-  res.status(status).json({
-    success: false,
-    error: { code, message },
-    timestamp: Math.floor(Date.now() / 1000),
+  if (isAppError(err)) {
+    appError = err;
+  } else if ((err as ApiError).status) {
+    appError = new AppError(
+      ((err as ApiError).code as ErrorCode) || ErrorCode.INTERNAL_ERROR,
+      err.message,
+      undefined,
+      req.path,
+    );
+  } else {
+    appError = new AppError(ErrorCode.INTERNAL_ERROR, err.message, undefined, req.path);
+  }
+
+  logger.error('Request error', {
+    code: appError.code,
+    status: appError.status,
+    message: appError.message,
+    path: req.path,
+    method: req.method,
+    requestId: (req as any).requestId,
   });
+
+  res.status(appError.status).json(appError.toResponseObject());
 }
 
-export function notFoundHandler(_req: Request, res: Response): void {
-  res.status(404).json({
-    success: false,
-    error: { code: 'NOT_FOUND', message: 'Resource not found' },
-    timestamp: Math.floor(Date.now() / 1000),
-  });
+export function notFoundHandler(req: Request, res: Response): void {
+  const error = new AppError(
+    ErrorCode.NOT_FOUND,
+    `Route ${req.method} ${req.path} not found`,
+    undefined,
+    req.path,
+  );
+  res.status(error.status).json(error.toResponseObject());
 }
