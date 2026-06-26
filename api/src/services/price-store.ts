@@ -1,9 +1,30 @@
 import fs from 'fs';
 import path from 'path';
+import { DatabaseClient } from './database';
 
 const DATA_DIR = path.resolve(__dirname, '../../data');
+let db: DatabaseClient | null = null;
 
-export function readAssetPrices(): any[] {
+export function setDatabase(database: DatabaseClient | null): void {
+  db = database;
+}
+
+export async function readAssetPrices(): Promise<any[]> {
+  if (db && db.isInitialized()) {
+    try {
+      const prices = await db.getAllLatestPrices();
+      return prices.map((p) => ({
+        asset: p.asset,
+        price: p.price,
+        decimals: p.decimals,
+        source: p.source,
+        timestamp: p.timestamp,
+      }));
+    } catch (err) {
+      console.error('Failed to read from database, falling back to files', err);
+    }
+  }
+
   const dir = DATA_DIR;
   if (!fs.existsSync(dir)) return [];
 
@@ -30,12 +51,26 @@ export function readAssetPrices(): any[] {
   return Array.from(assets.values());
 }
 
-export function readPriceHistory(
+export async function readPriceHistory(
   asset: string,
   from?: number,
   to?: number,
   limit = 100,
-): any[] {
+): Promise<any[]> {
+  if (db && db.isInitialized()) {
+    try {
+      const history = await db.getHistoricalPrices(asset, from, to, limit);
+      return history.map((h) => ({
+        price: h.price,
+        decimals: h.decimals,
+        source: h.source,
+        timestamp: h.timestamp,
+      }));
+    } catch (err) {
+      console.error('Failed to read from database, falling back to files', err);
+    }
+  }
+
   const filePath = path.join(DATA_DIR, `history-${asset.toLowerCase()}.json`);
   if (!fs.existsSync(filePath)) return [];
 

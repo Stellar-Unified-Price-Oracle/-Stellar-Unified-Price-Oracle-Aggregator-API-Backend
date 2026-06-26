@@ -16,12 +16,14 @@
     "bignumber.js": "^9.1.2",
     "cron": "^3.1.7",
     "dotenv": "^16.4.5",
-    "ws": "^8.17.1",
-    "winston": "^3.13.1"
+    "pg": "^8.22.0",
+    "winston": "^3.13.1",
+    "ws": "^8.17.1"
   },
   "devDependencies": {
     "@types/cron": "^2.4.0",
     "@types/node": "^20.14.10",
+    "@types/pg": "^8.20.0",
     "@types/ws": "^8.5.10",
     "eslint": "^9.7.0",
     "tsx": "^4.16.2",

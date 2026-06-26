@@ -42,7 +42,7 @@ router.get('/prices', async (req: Request, res: Response) => {
   }
   cacheMissTotal.inc();
 
-  const prices = readAssetPrices();
+  const prices = await readAssetPrices();
   const result = query.data.asset
     ? prices.filter((p) => p.asset === query.data.asset?.toUpperCase())
     : prices;
@@ -72,7 +72,7 @@ router.get('/prices/:asset', async (req: Request, res: Response) => {
   }
   cacheMissTotal.inc();
 
-  const prices = readAssetPrices();
+  const prices = await readAssetPrices();
   const price = prices.find((p) => p.asset === asset);
 
   if (!price) {
@@ -103,7 +103,7 @@ router.get('/history/:asset', async (req: Request, res: Response) => {
   }
   cacheMissTotal.inc();
 
-  const history = readPriceHistory(asset.toUpperCase(), from, to, limit);
+  const history = await readPriceHistory(asset.toUpperCase(), from, to, limit);
   const response = {
     asset: asset.toUpperCase(),
     from: from || null,
@@ -147,7 +147,7 @@ router.get('/health', async (_req: Request, res: Response) => {
   }
   cacheMissTotal.inc();
 
-  const prices = readAssetPrices();
+  const prices = await readAssetPrices();
   const status = prices.length > 0 ? 'healthy' : 'degraded';
 
   const data = {

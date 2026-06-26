@@ -18,4 +18,5 @@ export const config = {
   historyCacheTtl: parseInt(process.env.HISTORY_CACHE_TTL_MS || '60000', 10),
   sourcesCacheTtl: parseInt(process.env.SOURCES_CACHE_TTL_MS || '300000', 10),
   healthCacheTtl: parseInt(process.env.HEALTH_CACHE_TTL_MS || '30000', 10),
+  databaseUrl: process.env.DATABASE_URL,
 };
