@@ -1,0 +1,66 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      docker:
+        image: docker:dind
+        options: --privileged
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies (root)
+        run: npm ci
+
+      - name: Install dependencies (api)
+        run: npm ci
+        working-directory: api
+
+      - name: Lint (api)
+        run: npm run lint
+        working-directory: api
+
+      - name: Build (api)
+        run: npm run build
+        working-directory: api
+
+      - name: Unit Tests (api)
+        run: npm test
+        working-directory: api
+
+      - name: E2E Tests (api)
+        run: npm run test:e2e
+        working-directory: api
+        env:
+          CI: true
+
+      - name: Install dependencies (aggregator)
+        run: npm ci
+        working-directory: services/aggregator
+
+      - name: Lint (aggregator)
+        run: npm run lint
+        working-directory: services/aggregator
+
+      - name: Build (aggregator)
+        run: npm run build
+        working-directory: services/aggregator
+
+      - name: Tests (aggregator)
+        run: npm test
+        working-directory: services/aggregator
