@@ -5,13 +5,15 @@
   "scripts": {
     "build:aggregator": "cd services/aggregator && npm run build",
     "build:api": "cd api && npm run build",
-    "build:backend": "npm run build:aggregator && npm run build:api",
+    "build:sdk": "cd sdk && npm run build",
+    "build:backend": "npm run build:aggregator && npm run build:api && npm run build:sdk",
     "build:contract": "cd contracts/price-oracle && cargo build --release",
     "test:aggregator": "cd services/aggregator && npm test",
     "test:api": "cd api && npm test",
+    "test:sdk": "cd sdk && npm test",
     "test:contract": "cd contracts/price-oracle && cargo test",
-    "test:backend": "npm run test:aggregator && npm run test:api",
-    "install:all": "cd services/aggregator && npm install && cd ../../api && npm install",
+    "test:backend": "npm run test:aggregator && npm run test:api && npm run test:sdk",
+    "install:all": "cd services/aggregator && npm install && cd ../../api && npm install && cd ../../sdk && npm install",
     "prepare": "husky"
   },
   "devDependencies": {
