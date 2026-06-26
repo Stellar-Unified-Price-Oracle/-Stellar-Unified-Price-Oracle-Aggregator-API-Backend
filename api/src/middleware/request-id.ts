@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { context, trace } from '@opentelemetry/api';
 
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       requestId?: string;

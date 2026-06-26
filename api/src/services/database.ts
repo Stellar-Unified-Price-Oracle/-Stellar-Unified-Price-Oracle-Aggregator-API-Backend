@@ -54,6 +54,7 @@ export async function closeDatabase(): Promise<void> {
 }
 
 export async function runMigrations(databaseUrl: string): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const migrate = require('node-pg-migrate');
   const migrationsPath = path.join(__dirname, '../../migrations');
 

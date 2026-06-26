@@ -18,13 +18,13 @@
     "migrate:status": "node-pg-migrate status"
   },
   "dependencies": {
-    "@opentelemetry/api": "^1.8.1",
-    "@opentelemetry/auto-instrumentations-node": "^0.51.2",
-    "@opentelemetry/exporter-jaeger": "^1.21.0",
-    "@opentelemetry/resources": "^0.51.2",
-    "@opentelemetry/sdk-node": "^0.51.2",
-    "@opentelemetry/sdk-trace-node": "^0.51.2",
-    "@opentelemetry/semantic-conventions": "^0.51.2",
+    "@opentelemetry/api": "^1.7.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.42.0",
+    "@opentelemetry/exporter-jaeger": "^1.17.1",
+    "@opentelemetry/resources": "^1.17.1",
+    "@opentelemetry/sdk-node": "^0.44.0",
+    "@opentelemetry/sdk-trace-node": "^1.17.1",
+    "@opentelemetry/semantic-conventions": "^1.17.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
@@ -39,6 +39,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@testcontainers/postgresql": "^10.7.0",
     "@testcontainers/redis": "^10.7.0",
     "@types/cors": "^2.8.17",
@@ -54,6 +55,7 @@
     "testcontainers": "^10.7.0",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3",
+    "typescript-eslint": "^8.62.0",
     "vitest": "^1.6.0"
   }
 }

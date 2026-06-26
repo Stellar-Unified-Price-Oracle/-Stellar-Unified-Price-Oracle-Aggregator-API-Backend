@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import { AssetQuerySchema, HistoryQuerySchema } from '../services/validation';
 import { readAssetPrices, readPriceHistory } from '../services/price-store';
 import { LRUCache } from '../services/cache';
