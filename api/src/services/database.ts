@@ -1,156 +1,166 @@
-import { logger } from '../middleware/logger';
+import { Pool, PoolClient } from 'pg';
+import { Logger } from 'winston';
 
-let dbAvailable = false;
-let pgPool: any = null;
-
-export interface DatabaseConfig {
-  enabled: boolean;
-  host: string;
-  port: number;
-  database: string;
-  user: string;
-  password: string;
+export interface PriceHistory {
+  id?: number;
+  asset: string;
+  price: string;
+  decimals: number;
+  source: string;
+  timestamp: number;
+  created_at?: Date;
 }
 
-export function getDatabaseConfig(): DatabaseConfig {
-  return {
-    enabled: process.env.DATABASE_ENABLED !== 'false' && !!process.env.DATABASE_URL,
-    host: process.env.DATABASE_HOST || 'localhost',
-    port: parseInt(process.env.DATABASE_PORT || '5432', 10),
-    database: process.env.DATABASE_NAME || 'stellar_oracle',
-    user: process.env.DATABASE_USER || 'postgres',
-    password: process.env.DATABASE_PASSWORD || '',
-  };
-}
+export class DatabaseClient {
+  private pool: Pool;
+  private logger: Logger;
+  private initialized: boolean = false;
 
-export async function initializeDatabase(): Promise<void> {
-  const config = getDatabaseConfig();
-
-  if (!config.enabled) {
-    logger.info('Database disabled — using file-based storage');
-    dbAvailable = false;
-    return;
-  }
-
-  try {
-    // Lazy load pg only if needed (optional dependency)
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    let Pool: any;
-    try {
-      // @ts-ignore - pg is an optional dependency
-      // eslint-disable-next-line global-require
-      const pg = require('pg');
-      Pool = pg.Pool;
-    } catch (importError) {
-      logger.warn('PostgreSQL driver not installed. To enable database support, run: npm install pg');
-      dbAvailable = false;
-      return;
-    }
-
-    pgPool = new Pool({
-      host: config.host,
-      port: config.port,
-      database: config.database,
-      user: config.user,
-      password: config.password,
+  constructor(databaseUrl: string, logger: Logger) {
+    this.logger = logger;
+    this.pool = new Pool({
+      connectionString: databaseUrl,
       max: 20,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
     });
 
-    // Test connection
-    const client = await pgPool.connect();
-    await client.query('SELECT NOW()');
-    client.release();
-
-    await createSchema();
-    dbAvailable = true;
-    logger.info('Database connection established');
-  } catch (error) {
-    logger.error('Failed to initialize database:', error);
-    dbAvailable = false;
+    this.pool.on('error', (err) => {
+      this.logger.error('Unexpected error on idle client', err);
+    });
   }
-}
 
-export function isDbAvailable(): boolean {
-  return dbAvailable && pgPool !== null;
-}
-
-export async function getDb() {
-  if (!pgPool) {
-    throw new Error('Database not initialized');
+  async initialize(): Promise<void> {
+    try {
+      const client = await this.pool.connect();
+      await this.createSchema(client);
+      client.release();
+      this.initialized = true;
+      this.logger.info('PostgreSQL database initialized');
+    } catch (err) {
+      this.logger.error('Failed to initialize database', err);
+      throw err;
+    }
   }
-  return pgPool;
-}
 
-export async function createSchema(): Promise<void> {
-  if (!isDbAvailable()) return;
-
-  try {
-    const db = await getDb();
-
-    // Price history table
-    await db.query(`
+  private async createSchema(client: PoolClient): Promise<void> {
+    await client.query(`
       CREATE TABLE IF NOT EXISTS price_history (
         id SERIAL PRIMARY KEY,
-        asset VARCHAR(56) NOT NULL,
-        price NUMERIC(30, 18) NOT NULL,
+        asset VARCHAR(50) NOT NULL,
+        price VARCHAR(255) NOT NULL,
         decimals INTEGER NOT NULL,
-        source VARCHAR(50) NOT NULL,
-        timestamp INTEGER NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE (asset, source, timestamp)
-      )
-    `).catch(() => { /* table might exist */ });
+        source VARCHAR(100) NOT NULL,
+        timestamp BIGINT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
 
-    // Source metadata table
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS source_metadata (
-        id SERIAL PRIMARY KEY,
-        source VARCHAR(50) NOT NULL UNIQUE,
-        name VARCHAR(100),
-        type VARCHAR(50),
-        website VARCHAR(255),
-        last_update TIMESTAMP,
-        is_active BOOLEAN DEFAULT true
-      )
-    `).catch(() => { /* table might exist */ });
-
-    // Aggregator state table
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS aggregator_state (
-        id SERIAL PRIMARY KEY,
-        asset VARCHAR(56) NOT NULL UNIQUE,
-        latest_price NUMERIC(30, 18),
-        latest_timestamp INTEGER,
-        confidence NUMERIC(5, 2),
-        active_sources TEXT,
-        last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `).catch(() => { /* table might exist */ });
-
-    // Create indexes
-    await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_price_history_asset_timestamp
-      ON price_history(asset, timestamp DESC)
+      CREATE INDEX IF NOT EXISTS idx_price_history_asset ON price_history(asset);
+      CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_price_history_asset_timestamp ON price_history(asset, timestamp);
     `);
-
-    await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_price_history_source_timestamp
-      ON price_history(source, timestamp DESC)
-    `);
-
-    logger.info('Database schema created/verified');
-  } catch (error) {
-    logger.error('Failed to create schema:', error);
-    throw error;
   }
-}
 
-export async function closeDatabase(): Promise<void> {
-  if (pgPool) {
-    await pgPool.end();
-    pgPool = null;
-    dbAvailable = false;
+  async getHistoricalPrices(
+    asset: string,
+    from?: number,
+    to?: number,
+    limit = 100,
+  ): Promise<PriceHistory[]> {
+    if (!this.initialized) throw new Error('Database not initialized');
+
+    try {
+      let query = 'SELECT * FROM price_history WHERE asset = $1';
+      const params: any[] = [asset];
+      let paramIndex = 2;
+
+      if (from) {
+        query += ` AND timestamp >= $${paramIndex}`;
+        params.push(from);
+        paramIndex++;
+      }
+
+      if (to) {
+        query += ` AND timestamp <= $${paramIndex}`;
+        params.push(to);
+        paramIndex++;
+      }
+
+      query += ` ORDER BY timestamp DESC LIMIT $${paramIndex}`;
+      params.push(limit);
+
+      const result = await this.pool.query(query, params);
+      return result.rows
+        .reverse()
+        .map((row) => ({
+          id: row.id,
+          asset: row.asset,
+          price: row.price,
+          decimals: row.decimals,
+          source: row.source,
+          timestamp: row.timestamp,
+          created_at: row.created_at,
+        }));
+    } catch (err) {
+      this.logger.error('Failed to query price history', err);
+      throw err;
+    }
+  }
+
+  async getAllLatestPrices(): Promise<PriceHistory[]> {
+    if (!this.initialized) throw new Error('Database not initialized');
+
+    try {
+      const result = await this.pool.query(`
+        SELECT DISTINCT ON (asset) * FROM price_history
+        ORDER BY asset, timestamp DESC
+      `);
+      return result.rows.map((row) => ({
+        id: row.id,
+        asset: row.asset,
+        price: row.price,
+        decimals: row.decimals,
+        source: row.source,
+        timestamp: row.timestamp,
+        created_at: row.created_at,
+      }));
+    } catch (err) {
+      this.logger.error('Failed to fetch all latest prices', err);
+      throw err;
+    }
+  }
+
+  async getLatestPrice(asset: string): Promise<PriceHistory | null> {
+    if (!this.initialized) throw new Error('Database not initialized');
+
+    try {
+      const result = await this.pool.query(
+        `SELECT * FROM price_history WHERE asset = $1 ORDER BY timestamp DESC LIMIT 1`,
+        [asset],
+      );
+      if (result.rows.length === 0) return null;
+      const row = result.rows[0];
+      return {
+        id: row.id,
+        asset: row.asset,
+        price: row.price,
+        decimals: row.decimals,
+        source: row.source,
+        timestamp: row.timestamp,
+        created_at: row.created_at,
+      };
+    } catch (err) {
+      this.logger.error('Failed to fetch latest price', err);
+      throw err;
+    }
+  }
+
+  async disconnect(): Promise<void> {
+    await this.pool.end();
+    this.logger.info('Database connection pool closed');
+  }
+
+  isInitialized(): boolean {
+    return this.initialized;
   }
 }

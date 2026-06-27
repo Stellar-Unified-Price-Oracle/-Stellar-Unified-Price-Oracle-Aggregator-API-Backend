@@ -14,4 +14,10 @@ export const config = {
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),
   rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
   cacheTtlMs: parseInt(process.env.CACHE_TTL_MS || '15000', 10),
+  redisUrl: process.env.REDIS_URL,
+  priceCacheTtl: parseInt(process.env.PRICE_CACHE_TTL_MS || '15000', 10),
+  historyCacheTtl: parseInt(process.env.HISTORY_CACHE_TTL_MS || '60000', 10),
+  sourcesCacheTtl: parseInt(process.env.SOURCES_CACHE_TTL_MS || '300000', 10),
+  healthCacheTtl: parseInt(process.env.HEALTH_CACHE_TTL_MS || '30000', 10),
+  databaseUrl: process.env.DATABASE_URL,
 };

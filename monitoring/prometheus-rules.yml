@@ -1,0 +1,132 @@
+groups:
+  - name: stellar_oracle_alerts
+    interval: 30s
+    rules:
+      - alert: OracleSourceDowntime
+        expr: up{job="stellar-aggregator"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: stellar-oracle
+        annotations:
+          summary: "Oracle source {{ $labels.instance }} is down"
+          description: "Oracle source {{ $labels.instance }} has been down for more than 60 seconds"
+
+      - alert: SourceHealthDegraded
+        expr: |
+          (
+            rate(stellar_oracle_source_failures_total[5m])
+            /
+            (rate(stellar_oracle_source_failures_total[5m]) + rate(stellar_oracle_source_successes_total[5m]))
+          ) > 0.3
+        for: 5m
+        labels:
+          severity: warning
+          service: stellar-oracle
+        annotations:
+          summary: "Oracle source {{ $labels.source }} has high failure rate"
+          description: "Source {{ $labels.source }} failure rate is {{ $value | humanizePercentage }}"
+
+      - alert: CacheHitRatioCritical
+        expr: |
+          (
+            rate(cache_hits_total[5m])
+            /
+            (rate(cache_hits_total[5m]) + rate(cache_misses_total[5m]))
+          ) < 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: stellar-oracle
+        annotations:
+          summary: "Cache hit ratio below 50%"
+          description: "Cache hit ratio is {{ $value | humanizePercentage }} - consider increasing cache size or TTL"
+
+      - alert: PriceFeedStale
+        expr: |
+          time() - stellar_oracle_price_timestamp{asset="XLM"} > 120
+        for: 2m
+        labels:
+          severity: warning
+          service: stellar-oracle
+        annotations:
+          summary: "Price feed for {{ $labels.asset }} is stale"
+          description: "Last price update for {{ $labels.asset }} was {{ $value }} seconds ago"
+
+      - alert: PriceDeviation
+        expr: |
+          (
+            abs(
+              stellar_oracle_price{source="median"}
+              -
+              stellar_oracle_price{source="last"}
+            )
+            /
+            stellar_oracle_price{source="median"}
+          ) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          service: stellar-oracle
+        annotations:
+          summary: "Price deviation detected for {{ $labels.asset }}"
+          description: "Price deviation for {{ $labels.asset }} is {{ $value | humanizePercentage }}"
+
+      - alert: APILatencyHigh
+        expr: |
+          histogram_quantile(0.95, rate(stellar_api_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: stellar-api
+        annotations:
+          summary: "API p95 latency is high"
+          description: "95th percentile latency for {{ $labels.path }} is {{ $value }}s"
+
+      - alert: HighErrorRate
+        expr: |
+          (
+            rate(stellar_api_requests_total{status=~"5.."}[5m])
+            /
+            rate(stellar_api_requests_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: stellar-api
+        annotations:
+          summary: "API error rate is high"
+          description: "5xx error rate is {{ $value | humanizePercentage }}"
+
+      - alert: NoOracleSourcesHealthy
+        expr: |
+          count(stellar_oracle_source_healthy{status="healthy"}) == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: stellar-oracle
+        annotations:
+          summary: "No oracle sources are healthy"
+          description: "All oracle sources are currently unhealthy"
+
+      - alert: ContractCallFailures
+        expr: |
+          rate(stellar_soroban_contract_calls_failed_total[5m]) > 0
+        for: 3m
+        labels:
+          severity: warning
+          service: stellar-oracle
+        annotations:
+          summary: "Soroban contract calls are failing"
+          description: "Contract call failures detected for {{ $labels.function }}"
+
+      - alert: DatabaseConnectionPoolExhausted
+        expr: |
+          stellar_db_pool_active_connections / stellar_db_pool_max_connections > 0.9
+        for: 2m
+        labels:
+          severity: warning
+          service: stellar-oracle
+        annotations:
+          summary: "Database connection pool nearly exhausted"
+          description: "{{ $value | humanizePercentage }} of database connections are in use"

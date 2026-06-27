@@ -5,13 +5,14 @@ import { PriceAggregator } from './aggregator';
 import { AggregatedPrice } from './types';
 import { ContractPublisher } from './publisher';
 import { appendHistoricalPrice } from './utils/history';
+import { DatabaseClient } from './utils/database';
 import { BaseSource } from './sources/base';
 import { WebSocketServer } from './ws-server';
 import { HealthServer } from './health-server';
 import AlertManager, { AlertThresholds } from './alert-manager';
 
 let lastAggregated: AggregatedPrice[] = [];
-const alertManager = new AlertManager(config.alerts);
+let db: DatabaseClient | null = null;
 
 async function poll(): Promise<AggregatedPrice[]> {
   const sources: BaseSource[] = [
@@ -21,13 +22,22 @@ async function poll(): Promise<AggregatedPrice[]> {
     new ReflectorSource(),
   ];
 
-  const aggregator = new PriceAggregator();
-
   for (const source of sources) {
     const prices = await source.fetchAll(config.assets);
     for (const price of prices) {
       aggregator.updateSourcePrice(price);
-      appendHistoricalPrice(price.asset, price.price.toString(), price.decimals, price.source, price.timestamp);
+
+      if (db && db.isInitialized()) {
+        await db.appendHistoricalPrice(
+          price.asset,
+          price.price.toString(),
+          price.decimals,
+          price.source,
+          price.timestamp,
+        );
+      } else {
+        appendHistoricalPrice(price.asset, price.price.toString(), price.decimals, price.source, price.timestamp);
+      }
     }
   }
 
@@ -69,15 +79,18 @@ async function main(): Promise<void> {
     logger.warn('No contract ID configured — running in dry-run mode');
   }
 
-  // Initialize alert thresholds for all watched assets
-  const alertThresholds: AlertThresholds[] = config.assets.map((asset) => ({
-    asset: asset.toUpperCase(),
-    deviationThresholdPercent: config.alerts.defaultDeviationThresholdPercent,
-    staleThresholdSeconds: config.alerts.defaultStaleThresholdSeconds,
-    sourceDownThreshold: config.alerts.defaultSourceDownThreshold,
-  }));
-  alertManager.setThresholds(alertThresholds);
-  logger.info('Alert manager initialized with thresholds', { alertThresholds });
+  if (config.database.url) {
+    try {
+      db = new DatabaseClient(config.database.url, logger);
+      await db.initialize();
+      logger.info('PostgreSQL database connected');
+    } catch (err) {
+      logger.warn('Failed to connect to PostgreSQL, falling back to file-based storage', err);
+      db = null;
+    }
+  } else {
+    logger.info('DATABASE_URL not configured, using file-based storage');
+  }
 
   const wss = new WebSocketServer(config.port);
   wss.start();
@@ -90,6 +103,7 @@ async function main(): Promise<void> {
       reflector: new ReflectorSource().health,
     },
     lastAggregated,
+    circuitBreakerMetrics: aggregator.getCircuitBreakerMetrics(),
     uptime: process.uptime(),
   }));
   healthServer.start();
@@ -109,6 +123,9 @@ async function main(): Promise<void> {
     logger.info('Shutting down...');
     wss.stop();
     healthServer.stop();
+    if (db) {
+      db.disconnect().catch((err) => logger.error('Error disconnecting from database', err));
+    }
     process.exit(0);
   });
 }

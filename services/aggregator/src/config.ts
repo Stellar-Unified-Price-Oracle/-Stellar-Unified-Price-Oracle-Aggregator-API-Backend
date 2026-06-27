@@ -35,14 +35,7 @@ export const config = {
 
   logLevel: process.env.LOG_LEVEL || 'info',
 
-  alerts: {
-    webhookUrl: process.env.ALERT_WEBHOOK_URL,
-    webhookRetries: parseInt(process.env.ALERT_WEBHOOK_RETRIES || '3', 10),
-    webhookRetryDelayMs: parseInt(process.env.ALERT_WEBHOOK_RETRY_DELAY_MS || '1000', 10),
-    enableConsoleLog: process.env.ALERT_CONSOLE_LOG !== 'false',
-    enableFileLog: process.env.ALERT_FILE_LOG !== 'false',
-    defaultDeviationThresholdPercent: parseFloat(process.env.ALERT_DEVIATION_THRESHOLD || '5'),
-    defaultStaleThresholdSeconds: parseInt(process.env.ALERT_STALE_THRESHOLD || '300', 10),
-    defaultSourceDownThreshold: parseInt(process.env.ALERT_SOURCE_DOWN_THRESHOLD || '3', 10),
+  database: {
+    url: process.env.DATABASE_URL || '',
   },
 };
