@@ -22,12 +22,18 @@ install:
 	cd api && npm install
 
 build-soroban:
-	cd contracts/price-oracle && cargo build --release
+	@if command -v cargo >/dev/null 2>&1; then \
+		cd contracts/price-oracle && cargo build --release; \
+	else \
+		echo "Skipping Soroban contract build (cargo not installed)"; \
+	fi
 
 build-aggregator:
+	@if [ ! -d services/aggregator/node_modules ]; then cd services/aggregator && npm install; fi
 	cd services/aggregator && npm run build
 
 build-api:
+	@if [ ! -d api/node_modules ]; then cd api && npm install; fi
 	cd api && npm run build
 
 build: build-soroban build-aggregator build-api

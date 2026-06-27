@@ -14,8 +14,12 @@ import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
 import v1Routes, { initializeCache } from './routes/v1';
 import { HybridCache } from './services/cache';
-import { DatabaseClient } from './services/database';
+import { DatabaseClient, setDb } from './services/database';
 import { setDatabase } from './services/price-store';
+import { initializeTracing } from './services/tracing';
+import adminRoutes from './routes/admin';
+import { AppError } from './errors/app-error';
+import { ErrorCode } from './errors/catalog';
 
 // Initialize distributed tracing
 initializeTracing(config.tracing);
@@ -30,6 +34,7 @@ async function initializeApp(): Promise<void> {
       db = new DatabaseClient(config.databaseUrl, logger);
       await db.initialize();
       setDatabase(db);
+      setDb(db);
       logger.info('PostgreSQL database connected');
     } catch (err) {
       logger.warn('Failed to connect to PostgreSQL, falling back to file-based storage', err);

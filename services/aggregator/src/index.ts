@@ -11,6 +11,9 @@ import { WebSocketServer } from './ws-server';
 import { HealthServer } from './health-server';
 import AlertManager, { AlertThresholds } from './alert-manager';
 
+const aggregator = new PriceAggregator();
+const alertManager = new AlertManager();
+
 let lastAggregated: AggregatedPrice[] = [];
 let db: DatabaseClient | null = null;
 

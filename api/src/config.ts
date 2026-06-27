@@ -20,4 +20,10 @@ export const config = {
   sourcesCacheTtl: parseInt(process.env.SOURCES_CACHE_TTL_MS || '300000', 10),
   healthCacheTtl: parseInt(process.env.HEALTH_CACHE_TTL_MS || '30000', 10),
   databaseUrl: process.env.DATABASE_URL,
+  tracing: {
+    enabled: process.env.TRACING_ENABLED === 'true',
+    jaegerEndpoint: process.env.JAEGER_ENDPOINT,
+    samplingRate: parseFloat(process.env.TRACING_SAMPLING_RATE || '1.0'),
+    serviceName: process.env.TRACING_SERVICE_NAME || 'stellar-oracle-api',
+  },
 };

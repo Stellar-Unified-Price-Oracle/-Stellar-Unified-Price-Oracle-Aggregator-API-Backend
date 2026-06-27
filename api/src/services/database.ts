@@ -30,6 +30,10 @@ export class DatabaseClient {
     });
   }
 
+  async query(sql: string, params?: any[]): Promise<{ rows: any[]; rowCount?: number | null }> {
+    return this.pool.query(sql, params);
+  }
+
   async initialize(): Promise<void> {
     try {
       const client = await this.pool.connect();
@@ -163,4 +167,21 @@ export class DatabaseClient {
   isInitialized(): boolean {
     return this.initialized;
   }
+}
+
+let _dbInstance: DatabaseClient | null = null;
+let _dbAvailable = false;
+
+export function setDb(db: DatabaseClient): void {
+  _dbInstance = db;
+  _dbAvailable = true;
+}
+
+export async function getDb(): Promise<DatabaseClient> {
+  if (!_dbInstance) throw new Error('Database not initialized');
+  return _dbInstance;
+}
+
+export function isDbAvailable(): boolean {
+  return _dbAvailable;
 }

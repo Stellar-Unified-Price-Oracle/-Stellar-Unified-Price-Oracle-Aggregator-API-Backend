@@ -2,10 +2,21 @@
 ROOT=$(git rev-parse --show-toplevel)
 
 echo "=== Pre-push: Building backend services ==="
+
+if [ ! -d "$ROOT/services/aggregator/node_modules" ]; then
+  echo "Installing aggregator dependencies..."
+  cd "$ROOT/services/aggregator" && npm install
+fi
+
 cd "$ROOT/services/aggregator" && npm run build
 if [ $? -ne 0 ]; then
   echo "FAILED: Aggregator build"
   exit 1
+fi
+
+if [ ! -d "$ROOT/api/node_modules" ]; then
+  echo "Installing API dependencies..."
+  cd "$ROOT/api" && npm install
 fi
 
 cd "$ROOT/api" && npm run build
