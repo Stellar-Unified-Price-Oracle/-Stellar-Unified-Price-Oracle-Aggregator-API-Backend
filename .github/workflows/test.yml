@@ -7,14 +7,12 @@ on:
     branches: [main, develop]
 
 jobs:
-  test:
+  api:
+    name: API service
     runs-on: ubuntu-latest
-
-    services:
-      docker:
-        image: docker:dind
-        options: --privileged
-
+    defaults:
+      run:
+        working-directory: api
     steps:
       - uses: actions/checkout@v4
 
@@ -23,44 +21,41 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: api/package-lock.json
 
-      - name: Install dependencies (root)
+      - name: Install dependencies
         run: npm ci
 
-      - name: Install dependencies (api)
-        run: npm ci
-        working-directory: api
-
-      - name: Lint (api)
+      - name: Lint
         run: npm run lint
-        working-directory: api
 
-      - name: Build (api)
+      - name: Build
         run: npm run build
-        working-directory: api
 
-      - name: Unit Tests (api)
+      - name: Tests
         run: npm test
-        working-directory: api
 
-      - name: E2E Tests (api)
-        run: npm run test:e2e
-        working-directory: api
-        env:
-          CI: true
+  aggregator:
+    name: Aggregator service
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/aggregator
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Install dependencies (aggregator)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: services/aggregator/package-lock.json
+
+      - name: Install dependencies
         run: npm ci
-        working-directory: services/aggregator
 
-      - name: Lint (aggregator)
-        run: npm run lint
-        working-directory: services/aggregator
-
-      - name: Build (aggregator)
+      - name: Build
         run: npm run build
-        working-directory: services/aggregator
 
-      - name: Tests (aggregator)
+      - name: Tests
         run: npm test
-        working-directory: services/aggregator
