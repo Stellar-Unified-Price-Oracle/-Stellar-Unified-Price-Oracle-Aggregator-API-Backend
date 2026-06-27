@@ -2,13 +2,34 @@ import BigNumber from 'bignumber.js';
 import { NormalizedPrice, AggregatedPrice } from './types';
 import { config } from './config';
 import { logger } from './utils/logger';
+import { CircuitBreaker, CircuitBreakerConfig } from './circuit-breaker';
 
 export class PriceAggregator {
   private sources: Map<string, NormalizedPrice> = new Map();
+  private circuitBreaker: CircuitBreaker;
+
+  constructor(cbConfig?: CircuitBreakerConfig) {
+    const circuitBreakerConfig: CircuitBreakerConfig = {
+      deviationThreshold: 20, // 20% deviation threshold
+      recoveryRequiredSuccesses: 3, // 3 consecutive successes to recover
+      ...cbConfig,
+    };
+    this.circuitBreaker = new CircuitBreaker(circuitBreakerConfig);
+  }
 
   updateSourcePrice(price: NormalizedPrice): void {
     const key = `${price.source}:${price.asset}`;
     this.sources.set(key, price);
+
+    // Evaluate with circuit breaker
+    const allPrices = Array.from(this.sources.values());
+    const evaluation = this.circuitBreaker.evaluatePrice(price, allPrices);
+
+    if (evaluation.isSuspicious) {
+      logger.warn(
+        `Source ${price.source} is suspicious for ${price.asset} (deviation: ${evaluation.deviation.toFixed(2)}%)`,
+      );
+    }
   }
 
   getLatestForAsset(asset: string): AggregatedPrice | null {
@@ -24,16 +45,24 @@ export class PriceAggregator {
 
     if (validPrices.length === 0) return null;
 
-    const median = this.medianPrice(validPrices);
-    const sources = Array.from(new Set(validPrices.map((p) => p.source)));
+    // Filter out suspicious sources
+    const trustedPrices = validPrices.filter((p) => {
+      const state = this.circuitBreaker.getSourceState(`${p.source}:${p.asset}`);
+      return !state || !state.suspicious;
+    });
+
+    const pricesToUse = trustedPrices.length > 0 ? trustedPrices : validPrices;
+
+    const median = this.medianPrice(pricesToUse);
+    const sources = Array.from(new Set(pricesToUse.map((p) => p.source)));
 
     return {
       asset: normalized,
       price: median.toString(),
-      decimals: validPrices[0].decimals,
+      decimals: pricesToUse[0].decimals,
       sources,
       timestamp: Math.floor(Date.now() / 1000),
-      confidence: validPrices.length / prices.length,
+      confidence: pricesToUse.length / prices.length,
     };
   }
 
@@ -50,6 +79,22 @@ export class PriceAggregator {
     return Array.from(
       new Set(Array.from(this.sources.values()).map((p) => p.source)),
     ).length;
+  }
+
+  getCircuitBreakerMetrics() {
+    return this.circuitBreaker.getMetrics();
+  }
+
+  getSuspiciousSources() {
+    return this.circuitBreaker.getSuspiciousSources();
+  }
+
+  resetCircuitBreaker(sourceKey?: string) {
+    if (sourceKey) {
+      this.circuitBreaker.resetSource(sourceKey);
+    } else {
+      this.circuitBreaker.resetAll();
+    }
   }
 
   private medianPrice(prices: NormalizedPrice[]): BigNumber {

@@ -1,0 +1,11 @@
+src/
+src/**/__tests__
+*.test.ts
+*.spec.ts
+jest.config.js
+tsconfig.json
+.eslintrc*
+.prettier*
+.gitignore
+README.md
+CHANGELOG.md

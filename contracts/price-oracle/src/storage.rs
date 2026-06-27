@@ -7,6 +7,30 @@ pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
 }
 
+pub fn set_implementation(env: &Env, implementation: &Address) {
+    env.storage().instance().set(&DataKey::Implementation, implementation);
+}
+
+pub fn get_implementation(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Implementation)
+}
+
+pub fn set_previous_implementation(env: &Env, implementation: &Address) {
+    env.storage().instance().set(&DataKey::PreviousImplementation, implementation);
+}
+
+pub fn get_previous_implementation(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::PreviousImplementation)
+}
+
+pub fn set_contract_version(env: &Env, version: u32) {
+    env.storage().instance().set(&DataKey::ContractVersion, &version);
+}
+
+pub fn get_contract_version(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::ContractVersion).unwrap_or(0)
+}
+
 pub fn verify_admin(env: &Env, admin: &Address) -> Result<(), OracleError> {
     let stored: Address = env
         .storage()

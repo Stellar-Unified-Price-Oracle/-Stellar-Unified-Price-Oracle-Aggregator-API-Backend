@@ -21,8 +21,6 @@ async function poll(): Promise<AggregatedPrice[]> {
     new ReflectorSource(),
   ];
 
-  const aggregator = new PriceAggregator();
-
   for (const source of sources) {
     const prices = await source.fetchAll(config.assets);
     for (const price of prices) {
@@ -101,6 +99,7 @@ async function main(): Promise<void> {
       reflector: new ReflectorSource().health,
     },
     lastAggregated,
+    circuitBreakerMetrics: aggregator.getCircuitBreakerMetrics(),
     uptime: process.uptime(),
   }));
   healthServer.start();

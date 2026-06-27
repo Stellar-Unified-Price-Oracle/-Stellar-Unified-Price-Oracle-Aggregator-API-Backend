@@ -46,6 +46,27 @@ export const lastPriceTimestamp = new client.Gauge({
 });
 register.registerMetric(lastPriceTimestamp);
 
+export const circuitBreakerTriggered = new client.Counter({
+  name: 'circuit_breaker_triggered_total',
+  help: 'Total number of circuit breaker triggers by source and asset',
+  labelNames: ['source', 'asset'],
+});
+register.registerMetric(circuitBreakerTriggered);
+
+export const circuitBreakerActive = new client.Gauge({
+  name: 'circuit_breaker_active',
+  help: 'Number of active circuit breakers',
+});
+register.registerMetric(circuitBreakerActive);
+
+export const priceDeviation = new client.Histogram({
+  name: 'price_deviation_percent',
+  help: 'Price deviation from median in percentage',
+  labelNames: ['source', 'asset'],
+  buckets: [1, 5, 10, 20, 30, 50, 100],
+});
+register.registerMetric(priceDeviation);
+
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();
   res.on('finish', () => {
