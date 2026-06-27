@@ -59,11 +59,14 @@ DeFi protocols.
 │       ├── errors.rs             # OracleError enum
 │       └── test.rs               # Unit tests
 │
+├── .husky/
+│   ├── pre-push                  # Backend build on git push
+│   └── _/                        # Husky internal stubs (managed)
 ├── data/                         # Historical price JSON files (gitignored)
 ├── logs/                         # Runtime logs (gitignored)
 ├── scripts/deploy-soroban.js     # Contract deployment script
 ├── fly/                          # Fly.io deployment configs
-├── .github/workflows/ci.yml      # CI: contract, aggregator, API
+├── .github/workflows/ci.yml      # CI: backend build (aggregator + API)
 ├── Makefile                      # Build/test/run shortcuts
 ├── docker-compose.yml
 ├── AGENTS.md                     # This file
@@ -94,7 +97,7 @@ Reflector ─┤    (poll 30s, median)      (on-chain storage)
 **Push to `main`** — source code only:
 - `api/src/`, `services/aggregator/src/`, `contracts/price-oracle/src/`
 - `Makefile`, `docker-compose.yml`, `package.json`, `AGENTS.md`
-- `.github/workflows/`, `fly/`, `scripts/`
+- `.husky/`, `.github/workflows/`, `fly/`, `scripts/`
 - Configuration: `.env.example`, `.gitignore`
 
 **Never push** (already gitignored):
@@ -109,10 +112,18 @@ After any change, confirm:
 
 1. **TypeScript** — no type errors:
    ```
+   npm run build:aggregator && npm run build:api
+   ```
+   Or individually:
+   ```
    cd services/aggregator && npx tsc --noEmit
    cd ../../api && npx tsc --noEmit
    ```
 2. **Tests** — all pass:
+   ```
+   npm run test:backend
+   ```
+   Or individually:
    ```
    cd services/aggregator && npm test
    cd ../../api && npm test
@@ -121,8 +132,7 @@ After any change, confirm:
 3. **Pre-push hook** — runs automatically via Husky at `git push`:
    - Aggregator build
    - API build
-   - Contract build + tests
-4. **CI** — `.github/workflows/ci.yml` runs the same three jobs on push/PR.
+4. **CI** — `.github/workflows/ci.yml` runs backend build (aggregator + API) on push/PR.
 
 ---
 

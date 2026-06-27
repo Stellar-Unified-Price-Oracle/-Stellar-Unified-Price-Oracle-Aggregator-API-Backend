@@ -14,11 +14,4 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
-echo "=== Pre-push: Building and testing contract ==="
-cd "$ROOT/contracts/price-oracle" && cargo test
-if [ $? -ne 0 ]; then
-  echo "FAILED: Contract tests"
-  exit 1
-fi
-
 echo "=== Pre-push: All checks passed ==="

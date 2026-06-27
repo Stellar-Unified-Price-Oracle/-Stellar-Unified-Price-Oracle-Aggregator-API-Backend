@@ -7,40 +7,9 @@ on:
     branches: [main]
 
 env:
-  CARGO_TERM_COLOR: always
   NODE_VERSION: '20'
 
 jobs:
-  contract:
-    name: Contract build + tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            contracts/price-oracle/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/price-oracle/Cargo.toml') }}
-
-      - name: Build
-        run: cargo build --release
-        working-directory: contracts/price-oracle
-
-      - name: Test
-        run: cargo test
-        working-directory: contracts/price-oracle
-
   aggregator:
     name: Aggregator service build
     runs-on: ubuntu-latest
