@@ -98,7 +98,7 @@ export class PriceWebSocketServer {
     this.cache = cache;
   }
 
-  private invalidateCache(asset?: string): void {
+  private invalidateCache(_asset?: string): void {
     if (!this.cache) return;
     const patterns = [
       'prices:*',

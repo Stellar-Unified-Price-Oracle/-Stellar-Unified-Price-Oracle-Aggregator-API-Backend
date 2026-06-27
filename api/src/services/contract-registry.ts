@@ -1,4 +1,3 @@
-import { config } from '../config';
 import { logger } from '../middleware/logger';
 
 export interface TokenMetadata {
