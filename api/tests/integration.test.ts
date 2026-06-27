@@ -49,7 +49,7 @@ describe.skipIf(!process.env.RUN_INTEGRATION_TESTS)('Integration Tests: Full Dat
 
     it('should return specific asset price', async () => {
       const response = await fetch(`${API_BASE}/prices/XLM`);
-      expect(response.status).toBeOneOf([200, 404]);
+      expect([200, 404]).toContain(response.status);
 
       const data = await response.json() as any;
       expect(data.success).toBeDefined();
