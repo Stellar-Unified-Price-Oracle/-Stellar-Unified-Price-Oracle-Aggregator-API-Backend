@@ -78,7 +78,7 @@ router.get('/prices/:asset', async (req: Request, res: Response) => {
   if (!price) {
     return res.status(404).json({
       success: false,
-      error: { code: 'ASSET_NOT_FOUND', message: `No price data for ${asset}` },
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch price' }
     });
   }
 

@@ -9,6 +9,7 @@ import { DatabaseClient } from './utils/database';
 import { BaseSource } from './sources/base';
 import { WebSocketServer } from './ws-server';
 import { HealthServer } from './health-server';
+import AlertManager, { AlertThresholds } from './alert-manager';
 
 let lastAggregated: AggregatedPrice[] = [];
 let db: DatabaseClient | null = null;
@@ -50,6 +51,9 @@ async function poll(): Promise<AggregatedPrice[]> {
       consecutiveFailures: s.health.consecutiveFailures,
     }));
     logger.info(`Aggregated ${ap.asset}: ~$${usdPrice} (sources: ${ap.sources.join(', ')}, confidence: ${(ap.confidence * 100).toFixed(0)}%)`, { health: healthStatuses });
+
+    // Check price against alert thresholds
+    await alertManager.checkPrice(ap);
   }
 
   const unhealthy = sources.filter((s) => !s.health.healthy);
