@@ -10,6 +10,7 @@ import { requestIdMiddleware } from './middleware/request-id';
 import { errorHandler, notFoundHandler } from './middleware/error';
 import { metricsMiddleware, metricsHandler } from './middleware/metrics';
 import { authMiddleware, optionalAuthMiddleware } from './middleware/auth';
+import { sanitizeInputs, cspHeaders } from './middleware/sanitization';
 import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
 import v1Routes, { initializeCache } from './routes/v1';
@@ -57,8 +58,10 @@ const cache = new HybridCache<any>(logger, {
 initializeCache(cache);
 
 app.use(helmet());
+app.use(cspHeaders);
 app.use(cors());
 app.use(express.json());
+app.use(sanitizeInputs);
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
