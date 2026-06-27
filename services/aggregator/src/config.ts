@@ -34,4 +34,8 @@ export const config = {
   assets: (process.env.WATCHED_ASSETS || 'XLM,USDC,BTC,ETH,USDT').split(','),
 
   logLevel: process.env.LOG_LEVEL || 'info',
+
+  database: {
+    url: process.env.DATABASE_URL || '',
+  },
 };
