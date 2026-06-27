@@ -6,6 +6,7 @@ import swaggerUi from 'swagger-ui-express';
 import { config } from './config';
 import { logger } from './middleware/logger';
 import { requestLogger } from './middleware/request-logger';
+import { requestIdMiddleware } from './middleware/request-id';
 import { errorHandler, notFoundHandler } from './middleware/error';
 import { metricsMiddleware, metricsHandler } from './middleware/metrics';
 import { authMiddleware, optionalAuthMiddleware } from './middleware/auth';
@@ -15,6 +16,9 @@ import v1Routes, { initializeCache } from './routes/v1';
 import { HybridCache } from './services/cache';
 import { DatabaseClient } from './services/database';
 import { setDatabase } from './services/price-store';
+
+// Initialize distributed tracing
+initializeTracing(config.tracing);
 
 const app = express();
 
@@ -50,6 +54,7 @@ initializeCache(cache);
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
+app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
 app.use(
@@ -58,9 +63,15 @@ app.use(
     max: config.rateLimitMax,
     standardHeaders: true,
     legacyHeaders: false,
-    message: {
-      success: false,
-      error: { code: 'RATE_LIMITED', message: 'Too many requests' },
+    skip: (req) => req.path === '/metrics',
+    handler: (req, res) => {
+      const error = new AppError(
+        ErrorCode.RATE_LIMITED,
+        'Too many requests. Please try again later.',
+        undefined,
+        req.path,
+      );
+      res.status(error.status).json(error.toResponseObject());
     },
   }),
 );
