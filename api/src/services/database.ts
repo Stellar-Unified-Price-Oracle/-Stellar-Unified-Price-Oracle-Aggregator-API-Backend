@@ -1,93 +1,166 @@
-import { Pool, Client } from 'pg';
-import path from 'path';
-import { logger } from '../middleware/logger';
+import { Pool, PoolClient } from 'pg';
+import { Logger } from 'winston';
 
-export interface DatabaseConfig {
-  url: string;
-  poolMin?: number;
-  poolMax?: number;
+export interface PriceHistory {
+  id?: number;
+  asset: string;
+  price: string;
+  decimals: number;
+  source: string;
+  timestamp: number;
+  created_at?: Date;
 }
 
-let pool: Pool | null = null;
+export class DatabaseClient {
+  private pool: Pool;
+  private logger: Logger;
+  private initialized: boolean = false;
 
-export async function initializeDatabase(config: DatabaseConfig): Promise<Pool> {
-  if (pool) {
-    return pool;
-  }
-
-  pool = new Pool({
-    connectionString: config.url,
-    min: config.poolMin || 2,
-    max: config.poolMax || 10,
-  });
-
-  pool.on('error', (err) => {
-    logger.error('Unexpected database pool error', { error: err.message });
-  });
-
-  try {
-    const client = await pool.connect();
-    await client.query('SELECT NOW()');
-    client.release();
-    logger.info('Database connection established');
-  } catch (error) {
-    logger.error('Failed to connect to database', { error });
-    throw error;
-  }
-
-  return pool;
-}
-
-export function getDatabase(): Pool {
-  if (!pool) {
-    throw new Error('Database not initialized. Call initializeDatabase first.');
-  }
-  return pool;
-}
-
-export async function closeDatabase(): Promise<void> {
-  if (pool) {
-    await pool.end();
-    pool = null;
-    logger.info('Database connection closed');
-  }
-}
-
-export async function runMigrations(databaseUrl: string): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const migrate = require('node-pg-migrate');
-  const migrationsPath = path.join(__dirname, '../../migrations');
-
-  const client = new Client({ connectionString: databaseUrl });
-
-  try {
-    await client.connect();
-    logger.info('Running database migrations...');
-
-    const migrations = await migrate.default({
-      dbClient: client,
-      dir: migrationsPath,
-      direction: 'up',
-      log: (msg: string) => logger.info(msg),
+  constructor(databaseUrl: string, logger: Logger) {
+    this.logger = logger;
+    this.pool = new Pool({
+      connectionString: databaseUrl,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
     });
 
-    logger.info(`Applied ${migrations.length} migrations`);
-  } catch (error) {
-    logger.error('Migration failed', { error });
-    throw error;
-  } finally {
-    await client.end();
+    this.pool.on('error', (err) => {
+      this.logger.error('Unexpected error on idle client', err);
+    });
   }
-}
 
-export async function queryDatabase(
-  query: string,
-  params?: unknown[],
-): Promise<{ rows: unknown[]; rowCount: number }> {
-  const db = getDatabase();
-  const result = await db.query(query, params);
-  return {
-    rows: result.rows,
-    rowCount: result.rowCount || 0,
-  };
+  async initialize(): Promise<void> {
+    try {
+      const client = await this.pool.connect();
+      await this.createSchema(client);
+      client.release();
+      this.initialized = true;
+      this.logger.info('PostgreSQL database initialized');
+    } catch (err) {
+      this.logger.error('Failed to initialize database', err);
+      throw err;
+    }
+  }
+
+  private async createSchema(client: PoolClient): Promise<void> {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS price_history (
+        id SERIAL PRIMARY KEY,
+        asset VARCHAR(50) NOT NULL,
+        price VARCHAR(255) NOT NULL,
+        decimals INTEGER NOT NULL,
+        source VARCHAR(100) NOT NULL,
+        timestamp BIGINT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_price_history_asset ON price_history(asset);
+      CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_price_history_asset_timestamp ON price_history(asset, timestamp);
+    `);
+  }
+
+  async getHistoricalPrices(
+    asset: string,
+    from?: number,
+    to?: number,
+    limit = 100,
+  ): Promise<PriceHistory[]> {
+    if (!this.initialized) throw new Error('Database not initialized');
+
+    try {
+      let query = 'SELECT * FROM price_history WHERE asset = $1';
+      const params: any[] = [asset];
+      let paramIndex = 2;
+
+      if (from) {
+        query += ` AND timestamp >= $${paramIndex}`;
+        params.push(from);
+        paramIndex++;
+      }
+
+      if (to) {
+        query += ` AND timestamp <= $${paramIndex}`;
+        params.push(to);
+        paramIndex++;
+      }
+
+      query += ` ORDER BY timestamp DESC LIMIT $${paramIndex}`;
+      params.push(limit);
+
+      const result = await this.pool.query(query, params);
+      return result.rows
+        .reverse()
+        .map((row) => ({
+          id: row.id,
+          asset: row.asset,
+          price: row.price,
+          decimals: row.decimals,
+          source: row.source,
+          timestamp: row.timestamp,
+          created_at: row.created_at,
+        }));
+    } catch (err) {
+      this.logger.error('Failed to query price history', err);
+      throw err;
+    }
+  }
+
+  async getAllLatestPrices(): Promise<PriceHistory[]> {
+    if (!this.initialized) throw new Error('Database not initialized');
+
+    try {
+      const result = await this.pool.query(`
+        SELECT DISTINCT ON (asset) * FROM price_history
+        ORDER BY asset, timestamp DESC
+      `);
+      return result.rows.map((row) => ({
+        id: row.id,
+        asset: row.asset,
+        price: row.price,
+        decimals: row.decimals,
+        source: row.source,
+        timestamp: row.timestamp,
+        created_at: row.created_at,
+      }));
+    } catch (err) {
+      this.logger.error('Failed to fetch all latest prices', err);
+      throw err;
+    }
+  }
+
+  async getLatestPrice(asset: string): Promise<PriceHistory | null> {
+    if (!this.initialized) throw new Error('Database not initialized');
+
+    try {
+      const result = await this.pool.query(
+        `SELECT * FROM price_history WHERE asset = $1 ORDER BY timestamp DESC LIMIT 1`,
+        [asset],
+      );
+      if (result.rows.length === 0) return null;
+      const row = result.rows[0];
+      return {
+        id: row.id,
+        asset: row.asset,
+        price: row.price,
+        decimals: row.decimals,
+        source: row.source,
+        timestamp: row.timestamp,
+        created_at: row.created_at,
+      };
+    } catch (err) {
+      this.logger.error('Failed to fetch latest price', err);
+      throw err;
+    }
+  }
+
+  async disconnect(): Promise<void> {
+    await this.pool.end();
+    this.logger.info('Database connection pool closed');
+  }
+
+  isInitialized(): boolean {
+    return this.initialized;
+  }
 }

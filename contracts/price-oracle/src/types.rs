@@ -42,4 +42,8 @@ pub enum DataKey {
     TrustedAsset(String),
     AllAssets,
     SourceCount,
+    // Proxy pattern keys
+    Implementation,
+    PreviousImplementation,
+    ContractVersion,
 }
