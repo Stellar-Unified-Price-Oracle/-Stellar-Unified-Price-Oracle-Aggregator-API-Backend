@@ -1,43 +1,57 @@
 import { Router, Request, Response } from 'express';
-import { apiKeyManager } from '../services/api-key-manager';
+import { apiKeyManager, TIER_RATE_LIMITS, KeyTier, KeyRole } from '../services/api-key-manager';
+import { corsManager } from '../services/cors-manager';
 import { adminAuthMiddleware } from '../middleware/auth';
+import { requireRole, ROLES, ROLE_PERMISSIONS } from '../middleware/rbac';
 import { logger } from '../middleware/logger';
+import { auditLog } from '../services/audit-logger';
+import type { Role } from '../middleware/rbac';
 
 const router = Router();
 const ADMIN_KEY_PREFIX = process.env.ADMIN_KEY_PREFIX || 'admin_';
 
-// Apply admin auth to all admin routes
 router.use(adminAuthMiddleware(ADMIN_KEY_PREFIX));
 
-/**
- * POST /api/v1/admin/keys
- * Generate a new API key
- */
-router.post('/keys', (req: Request, res: Response) => {
-  const { rateLimitPerMin = 100, description } = req.body;
+// ── API Key Management ────────────────────────────────────────────────────────
 
-  if (typeof rateLimitPerMin !== 'number' || rateLimitPerMin < 1) {
+router.post('/keys', (req: Request, res: Response) => {
+  const { rateLimitPerMin, description, tier = 'free', role = 'read-only' } = req.body;
+
+  const validTiers: KeyTier[] = ['free', 'pro', 'enterprise', 'admin'];
+  const validRoles: KeyRole[] = ['read-only', 'admin'];
+
+  if (tier && !validTiers.includes(tier)) {
     return res.status(400).json({
       success: false,
-      error: {
-        code: 'INVALID_RATE_LIMIT',
-        message: 'rateLimitPerMin must be a positive number',
-      },
+      error: { code: 'INVALID_TIER', message: `tier must be one of: ${validTiers.join(', ')}` },
     });
   }
 
-  try {
-    const newKey = apiKeyManager.generateKey(rateLimitPerMin, description);
+  if (role && !validRoles.includes(role)) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_ROLE', message: `role must be one of: ${validRoles.join(', ')}` },
+    });
+  }
 
-    logger.info(`Admin ${req.apiKey?.substring(0, 8)}... generated new API key`);
+  const limit = typeof rateLimitPerMin === 'number' && rateLimitPerMin >= 1
+    ? rateLimitPerMin
+    : TIER_RATE_LIMITS[tier as KeyTier];
+
+  try {
+    const newKey = apiKeyManager.generateKey(limit, description, tier as KeyTier, role as KeyRole);
+    logger.info(`Admin ${req.apiKey?.substring(0, 8)}... generated API key tier=${tier} role=${role}`);
 
     res.status(201).json({
       success: true,
       data: {
         key: newKey.key,
-        createdAt: new Date(newKey.createdAt).toISOString(),
+        keyHash: newKey.keyHash,
+        tier: newKey.tier,
+        role: newKey.role,
         rateLimitPerMin: newKey.rateLimitPerMin,
         description: newKey.description,
+        createdAt: new Date(newKey.createdAt).toISOString(),
         message: 'Store this key securely. It will not be shown again.',
       },
     });
@@ -50,192 +64,202 @@ router.post('/keys', (req: Request, res: Response) => {
   }
 });
 
-/**
- * GET /api/v1/admin/keys
- * List all API keys (without exposing full keys)
- */
-router.get('/keys', (req: Request, res: Response) => {
-  try {
-    const keys = apiKeyManager.getAllKeys();
-
-    res.json({
-      success: true,
-      data: {
-        count: keys.length,
-        keys,
-      },
-    });
-  } catch (err) {
-    logger.error('Failed to list API keys', err);
-    res.status(500).json({
-      success: false,
-      error: { code: 'KEY_LIST_FAILED', message: 'Failed to list API keys' },
-    });
-  }
+router.get('/keys', (_req: Request, res: Response) => {
+  const keys = apiKeyManager.getAllKeys();
+  res.json({ success: true, data: { count: keys.length, keys } });
 });
 
-/**
- * GET /api/v1/admin/keys/:keyPrefix
- * Get details for a specific API key
- */
-router.get('/keys/:keyPrefix', (req: Request, res: Response) => {
-  const { keyPrefix } = req.params;
-
-  // Find key by prefix (for security, we don't expose full keys)
-  const keys = apiKeyManager.getAllKeys();
-  const keyInfo = keys.find((k) => k.keyPrefix === keyPrefix);
-
+router.get('/keys/:keyHash', (req: Request, res: Response) => {
+  const keyInfo = apiKeyManager.findByHash(req.params.keyHash);
   if (!keyInfo) {
     return res.status(404).json({
       success: false,
       error: { code: 'KEY_NOT_FOUND', message: 'API key not found' },
     });
   }
+  const { key: _key, ...safeInfo } = keyInfo;
+  res.json({ success: true, data: safeInfo });
+});
 
+router.post('/keys/:keyHash/rotate', (req: Request, res: Response) => {
+  const existing = apiKeyManager.findByHash(req.params.keyHash);
+  if (!existing) {
+    return res.status(404).json({
+      success: false,
+      error: { code: 'KEY_NOT_FOUND', message: 'API key not found' },
+    });
+  }
+
+  const rotated = apiKeyManager.rotateKey(existing.key);
+  if (!rotated) {
+    return res.status(500).json({
+      success: false,
+      error: { code: 'ROTATE_FAILED', message: 'Failed to rotate API key' },
+    });
+  }
+
+  logger.info(`Admin ${req.apiKey?.substring(0, 8)}... rotated key ${req.params.keyHash}`);
   res.json({
     success: true,
-    data: keyInfo,
+    data: {
+      key: rotated.key,
+      keyHash: rotated.keyHash,
+      tier: rotated.tier,
+      role: rotated.role,
+      rateLimitPerMin: rotated.rateLimitPerMin,
+      message: 'Old key is now invalid. Store new key securely.',
+    },
   });
 });
 
-/**
- * PUT /api/v1/admin/keys/:keyPrefix/rate-limit
- * Update rate limit for a key
- */
-router.put('/keys/:keyPrefix/rate-limit', (req: Request, res: Response) => {
-  const { keyPrefix } = req.params;
+router.put('/keys/:keyHash/tier', (req: Request, res: Response) => {
+  const { tier } = req.body;
+  const validTiers: KeyTier[] = ['free', 'pro', 'enterprise', 'admin'];
+
+  if (!validTiers.includes(tier)) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_TIER', message: `tier must be one of: ${validTiers.join(', ')}` },
+    });
+  }
+
+  const existing = apiKeyManager.findByHash(req.params.keyHash);
+  if (!existing) {
+    return res.status(404).json({
+      success: false,
+      error: { code: 'KEY_NOT_FOUND', message: 'API key not found' },
+    });
+  }
+
+  apiKeyManager.updateTier(existing.key, tier as KeyTier);
+  res.json({
+    success: true,
+    data: { keyHash: req.params.keyHash, tier, rateLimitPerMin: TIER_RATE_LIMITS[tier as KeyTier] },
+  });
+});
+
+router.put('/keys/:keyHash/rate-limit', (req: Request, res: Response) => {
   const { rateLimitPerMin } = req.body;
 
   if (typeof rateLimitPerMin !== 'number' || rateLimitPerMin < 1) {
     return res.status(400).json({
       success: false,
-      error: {
-        code: 'INVALID_RATE_LIMIT',
-        message: 'rateLimitPerMin must be a positive number',
-      },
+      error: { code: 'INVALID_RATE_LIMIT', message: 'rateLimitPerMin must be a positive number' },
     });
   }
 
-  // We need to find the full key from prefix - in production, use proper mapping
-  const keys = apiKeyManager.getAllKeys();
-  const keyInfo = keys.find((k) => k.keyPrefix === keyPrefix);
-
-  if (!keyInfo) {
+  const existing = apiKeyManager.findByHash(req.params.keyHash);
+  if (!existing) {
     return res.status(404).json({
       success: false,
       error: { code: 'KEY_NOT_FOUND', message: 'API key not found' },
     });
   }
 
-  try {
-    // In production, you'd need a better way to map prefix back to full key
-    // For now, log the operation
-    logger.info(`Admin ${req.apiKey?.substring(0, 8)}... updated rate limit for ${keyPrefix} to ${rateLimitPerMin}`);
-
-    res.json({
-      success: true,
-      data: {
-        keyPrefix,
-        newRateLimit: rateLimitPerMin,
-      },
-    });
-  } catch (err) {
-    logger.error('Failed to update rate limit', err);
-    res.status(500).json({
-      success: false,
-      error: { code: 'UPDATE_FAILED', message: 'Failed to update rate limit' },
-    });
-  }
+  apiKeyManager.updateRateLimit(existing.key, rateLimitPerMin);
+  res.json({ success: true, data: { keyHash: req.params.keyHash, rateLimitPerMin } });
 });
 
-/**
- * DELETE /api/v1/admin/keys/:keyPrefix
- * Deactivate an API key
- */
-router.delete('/keys/:keyPrefix', (req: Request, res: Response) => {
-  const { keyPrefix } = req.params;
-  const { permanent = false } = req.body;
-
-  // Find key by prefix
-  const keys = apiKeyManager.getAllKeys();
-  const keyInfo = keys.find((k) => k.keyPrefix === keyPrefix);
-
-  if (!keyInfo) {
+router.post('/keys/:keyHash/revoke', (req: Request, res: Response) => {
+  const existing = apiKeyManager.findByHash(req.params.keyHash);
+  if (!existing) {
     return res.status(404).json({
       success: false,
       error: { code: 'KEY_NOT_FOUND', message: 'API key not found' },
     });
   }
 
-  try {
-    logger.info(
-      `Admin ${req.apiKey?.substring(0, 8)}... ${permanent ? 'deleted' : 'deactivated'} API key ${keyPrefix}`,
-    );
-
-    res.json({
-      success: true,
-      data: {
-        keyPrefix,
-        action: permanent ? 'deleted' : 'deactivated',
-      },
-    });
-  } catch (err) {
-    logger.error('Failed to delete/deactivate key', err);
-    res.status(500).json({
-      success: false,
-      error: { code: 'DELETE_FAILED', message: 'Failed to delete/deactivate key' },
-    });
-  }
+  apiKeyManager.revokeKey(existing.key);
+  logger.info(`Admin ${req.apiKey?.substring(0, 8)}... revoked key ${req.params.keyHash}`);
+  res.json({ success: true, data: { keyHash: req.params.keyHash, action: 'revoked' } });
 });
 
-/**
- * POST /api/v1/admin/keys/:keyPrefix/reactivate
- * Reactivate a deactivated key
- */
-router.post('/keys/:keyPrefix/reactivate', (req: Request, res: Response) => {
-  const { keyPrefix } = req.params;
-
-  // Find key by prefix
-  const keys = apiKeyManager.getAllKeys();
-  const keyInfo = keys.find((k) => k.keyPrefix === keyPrefix);
-
-  if (!keyInfo) {
+router.post('/keys/:keyHash/reactivate', (req: Request, res: Response) => {
+  const existing = apiKeyManager.findByHash(req.params.keyHash);
+  if (!existing) {
     return res.status(404).json({
       success: false,
       error: { code: 'KEY_NOT_FOUND', message: 'API key not found' },
     });
   }
 
-  try {
-    logger.info(`Admin ${req.apiKey?.substring(0, 8)}... reactivated API key ${keyPrefix}`);
-
-    res.json({
-      success: true,
-      data: {
-        keyPrefix,
-        action: 'reactivated',
-      },
-    });
-  } catch (err) {
-    logger.error('Failed to reactivate key', err);
-    res.status(500).json({
-      success: false,
-      error: { code: 'REACTIVATE_FAILED', message: 'Failed to reactivate key' },
-    });
-  }
+  apiKeyManager.reactivateKey(existing.key);
+  logger.info(`Admin ${req.apiKey?.substring(0, 8)}... reactivated key ${req.params.keyHash}`);
+  res.json({ success: true, data: { keyHash: req.params.keyHash, action: 'reactivated' } });
 });
 
-/**
- * GET /api/v1/admin/health
- * Admin health check endpoint
- */
+router.delete('/keys/:keyHash', (req: Request, res: Response) => {
+  const existing = apiKeyManager.findByHash(req.params.keyHash);
+  if (!existing) {
+    return res.status(404).json({
+      success: false,
+      error: { code: 'KEY_NOT_FOUND', message: 'API key not found' },
+    });
+  }
+
+  apiKeyManager.deleteKey(existing.key);
+  logger.info(`Admin ${req.apiKey?.substring(0, 8)}... deleted key ${req.params.keyHash}`);
+  res.json({ success: true, data: { keyHash: req.params.keyHash, action: 'deleted' } });
+});
+
+// ── CORS Management ───────────────────────────────────────────────────────────
+
+router.get('/cors/origins', (_req: Request, res: Response) => {
+  res.json({ success: true, data: { origins: corsManager.listOrigins() } });
+});
+
+router.post('/cors/origins', (req: Request, res: Response) => {
+  const { origin } = req.body;
+
+  if (!origin || typeof origin !== 'string') {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_ORIGIN', message: "'origin' must be a non-empty string (e.g. https://example.com or *.example.com)" },
+    });
+  }
+
+  const added = corsManager.addOrigin(origin);
+  const status = added ? 201 : 200;
+  res.status(status).json({
+    success: true,
+    data: { origin, added, origins: corsManager.listOrigins() },
+  });
+});
+
+router.delete('/cors/origins', (req: Request, res: Response) => {
+  const { origin } = req.body;
+
+  if (!origin || typeof origin !== 'string') {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_ORIGIN', message: "'origin' must be a non-empty string" },
+    });
+  }
+
+  const removed = corsManager.removeOrigin(origin);
+  if (!removed) {
+    return res.status(404).json({
+      success: false,
+      error: { code: 'ORIGIN_NOT_FOUND', message: `Origin '${origin}' not found in whitelist` },
+    });
+  }
+
+  res.json({ success: true, data: { origin, removed: true, origins: corsManager.listOrigins() } });
+});
+
+// ── Admin Health ──────────────────────────────────────────────────────────────
+
 router.get('/health', (req: Request, res: Response) => {
+  const tierLimits = TIER_RATE_LIMITS;
   res.json({
     success: true,
     data: {
       status: 'healthy',
       adminAuthenticated: !!req.apiKey,
+      role: req.userRole,
       timestamp: Math.floor(Date.now() / 1000),
+      tiers: tierLimits,
+      corsOriginsCount: corsManager.listOrigins().length,
     },
   });
 });

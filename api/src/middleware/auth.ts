@@ -1,33 +1,35 @@
 import { Request, Response, NextFunction } from 'express';
+import { IncomingMessage } from 'http';
 import { apiKeyManager } from '../services/api-key-manager';
 import { logger } from './logger';
+import { auditLog } from '../services/audit-logger';
+import type { Role } from './rbac';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       apiKey?: string;
+      userRole?: Role;
       rateLimitInfo?: {
         allowed: boolean;
         remaining: number;
         resetTime: number;
+        retryAfter?: number;
       };
     }
   }
 }
 
-/**
- * Extract API key from request headers
- */
-export function extractApiKey(req: Request): string | null {
-  // Try Authorization header first: Bearer <key>
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
+export function extractApiKey(req: Request | IncomingMessage): string | null {
+  const headers = req.headers;
+
+  const authHeader = headers['authorization'];
+  if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
     return authHeader.substring(7);
   }
 
-  // Try x-api-key header
-  const apiKeyHeader = req.headers['x-api-key'];
+  const apiKeyHeader = headers['x-api-key'];
   if (typeof apiKeyHeader === 'string') {
     return apiKeyHeader;
   }
@@ -35,28 +37,36 @@ export function extractApiKey(req: Request): string | null {
   return null;
 }
 
-/**
- * Authentication middleware
- * Validates API keys and enforces rate limiting
- */
+function applyRateLimitHeaders(res: Response, rateLimitPerMin: number, remaining: number, resetTime: number): void {
+  res.set('X-RateLimit-Limit', rateLimitPerMin.toString());
+  res.set('X-RateLimit-Remaining', remaining.toString());
+  res.set('X-RateLimit-Reset', Math.ceil(resetTime / 1000).toString());
+}
+
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const apiKey = extractApiKey(req);
+  const ctx = requestContext(req);
 
   if (!apiKey) {
+    auditLog('auth.failure', { ...ctx, details: { reason: 'MISSING_API_KEY', path: req.path } });
     res.status(401).json({
       success: false,
       error: {
         code: 'MISSING_API_KEY',
-        message: 'API key required. Use Authorization: Bearer <key> or x-api-key header',
+        message: 'API key required. Use Authorization: Bearer <key> or X-Api-Key header.',
       },
     });
     return;
   }
 
-  // Validate API key
   const validation = apiKeyManager.validateKey(apiKey);
   if (!validation.valid) {
     logger.warn(`Invalid API key attempt: ${apiKey.substring(0, 8)}...`);
+    auditLog('auth.failure', {
+      ...ctx,
+      apiKeyPrefix: apiKey.substring(0, 8),
+      details: { reason: 'INVALID_API_KEY', path: req.path },
+    });
     res.status(401).json({
       success: false,
       error: {
@@ -67,125 +77,123 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     return;
   }
 
-  // Check rate limit
   const rateLimitInfo = apiKeyManager.checkRateLimit(apiKey);
   if (!rateLimitInfo.allowed) {
-    const resetTime = new Date(rateLimitInfo.resetTime);
     logger.warn(`Rate limit exceeded for API key: ${apiKey.substring(0, 8)}...`);
-
+    res.set('Retry-After', String(rateLimitInfo.retryAfter ?? 60));
+    applyRateLimitHeaders(res, validation.metadata!.rateLimitPerMin, 0, rateLimitInfo.resetTime);
     res.status(429).json({
       success: false,
       error: {
         code: 'RATE_LIMITED',
-        message: 'API rate limit exceeded',
-        resetTime: resetTime.toISOString(),
+        message: `Rate limit exceeded. Retry after ${rateLimitInfo.retryAfter ?? 60} seconds.`,
+        retryAfter: rateLimitInfo.retryAfter,
+        resetTime: new Date(rateLimitInfo.resetTime).toISOString(),
       },
     });
     return;
   }
 
-  // Attach API key and rate limit info to request
   req.apiKey = apiKey;
+  req.userRole = validation.metadata?.role || 'viewer';
   req.rateLimitInfo = rateLimitInfo;
-
-  // Set rate limit headers
-  res.set('X-RateLimit-Limit', validation.metadata?.rateLimitPerMin.toString() || '0');
-  res.set('X-RateLimit-Remaining', rateLimitInfo.remaining.toString());
-  if (rateLimitInfo.resetTime > 0) {
-    res.set('X-RateLimit-Reset', Math.ceil(rateLimitInfo.resetTime / 1000).toString());
-  }
+  applyRateLimitHeaders(res, validation.metadata!.rateLimitPerMin, rateLimitInfo.remaining, rateLimitInfo.resetTime);
 
   next();
 }
 
-/**
- * Admin key validation middleware
- * For endpoints that require an admin API key
- */
-export function adminAuthMiddleware(adminKeyPrefix: string) {
+export function adminAuthMiddleware(_adminKeyPrefix: string) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const apiKey = extractApiKey(req);
+    const ctx = requestContext(req);
 
     if (!apiKey) {
+      auditLog('auth.failure', { ...ctx, details: { reason: 'MISSING_ADMIN_KEY', path: req.path } });
       res.status(401).json({
         success: false,
-        error: {
-          code: 'MISSING_API_KEY',
-          message: 'Admin API key required',
-        },
+        error: { code: 'MISSING_API_KEY', message: 'Admin API key required.' },
       });
       return;
     }
 
-    // For now, we consider keys starting with specific prefix as admin keys
-    // In production, you'd want a more robust system
-    if (!apiKey.includes(adminKeyPrefix) && process.env.ADMIN_API_KEY !== apiKey) {
-      logger.warn(`Unauthorized admin access attempt: ${apiKey.substring(0, 8)}...`);
+    const validation = apiKeyManager.validateKey(apiKey);
+    if (!validation.valid) {
+      logger.warn(`Invalid admin key attempt: ${apiKey.substring(0, 8)}...`);
+      res.status(401).json({
+        success: false,
+        error: { code: 'INVALID_API_KEY', message: validation.error || 'Invalid API key' },
+      });
+      return;
+    }
+
+    const isAdmin = apiKeyManager.isAdminKey(apiKey) || process.env.ADMIN_API_KEY === apiKey;
+    if (!isAdmin) {
+      logger.warn(`Unauthorized admin access: ${apiKey.substring(0, 8)}...`);
       res.status(403).json({
         success: false,
-        error: {
-          code: 'FORBIDDEN',
-          message: 'This operation requires admin privileges',
-        },
+        error: { code: 'FORBIDDEN', message: 'This operation requires admin privileges.' },
       });
       return;
     }
 
     req.apiKey = apiKey;
+    req.userRole = 'admin';
     next();
   };
 }
 
-/**
- * Optional authentication middleware
- * Validates API key if provided, but doesn't require it
- */
 export function optionalAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
   const apiKey = extractApiKey(req);
+  const ctx = requestContext(req);
 
   if (!apiKey) {
-    // No API key provided, continue without authentication
     next();
     return;
   }
 
-  // Validate if key is provided
   const validation = apiKeyManager.validateKey(apiKey);
   if (!validation.valid) {
-    logger.warn(`Invalid API key attempt: ${apiKey.substring(0, 8)}...`);
     res.status(401).json({
       success: false,
-      error: {
-        code: 'INVALID_API_KEY',
-        message: validation.error || 'Invalid API key',
-      },
+      error: { code: 'INVALID_API_KEY', message: validation.error || 'Invalid API key' },
     });
     return;
   }
 
-  // Check rate limit
   const rateLimitInfo = apiKeyManager.checkRateLimit(apiKey);
   if (!rateLimitInfo.allowed) {
-    const resetTime = new Date(rateLimitInfo.resetTime);
-    logger.warn(`Rate limit exceeded for API key: ${apiKey.substring(0, 8)}...`);
-
+    res.set('Retry-After', String(rateLimitInfo.retryAfter ?? 60));
+    applyRateLimitHeaders(res, validation.metadata!.rateLimitPerMin, 0, rateLimitInfo.resetTime);
     res.status(429).json({
       success: false,
       error: {
         code: 'RATE_LIMITED',
-        message: 'API rate limit exceeded',
-        resetTime: resetTime.toISOString(),
+        message: `Rate limit exceeded. Retry after ${rateLimitInfo.retryAfter ?? 60} seconds.`,
+        retryAfter: rateLimitInfo.retryAfter,
       },
     });
     return;
   }
 
   req.apiKey = apiKey;
+  req.userRole = validation.metadata?.role || 'viewer';
   req.rateLimitInfo = rateLimitInfo;
-
-  // Set rate limit headers
-  res.set('X-RateLimit-Limit', validation.metadata?.rateLimitPerMin.toString() || '0');
-  res.set('X-RateLimit-Remaining', rateLimitInfo.remaining.toString());
+  applyRateLimitHeaders(res, validation.metadata!.rateLimitPerMin, rateLimitInfo.remaining, rateLimitInfo.resetTime);
 
   next();
+}
+
+export function validateWebSocketApiKey(req: IncomingMessage): { valid: boolean; error?: string } {
+  const apiKey = extractApiKey(req);
+
+  if (!apiKey) {
+    return { valid: false, error: 'API key required for WebSocket connections' };
+  }
+
+  const validation = apiKeyManager.validateKey(apiKey);
+  if (!validation.valid) {
+    return { valid: false, error: validation.error || 'Invalid API key' };
+  }
+
+  return { valid: true };
 }

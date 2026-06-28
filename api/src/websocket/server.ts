@@ -1,8 +1,9 @@
 import { WebSocketServer as WsServer, WebSocket } from 'ws';
-import type { IncomingMessage } from 'http';
+import { IncomingMessage } from 'http';
 import { logger } from '../middleware/logger';
+import { validateWebSocketApiKey } from '../middleware/auth';
 import { HybridCache } from '../services/cache';
-import { WsUpgradeGuard } from './upgrade-guard';
+import { validateWsAssets } from '../middleware/sanitization';
 
 export class PriceWebSocketServer {
   private wss: WsServer | null = null;
@@ -18,15 +19,16 @@ export class PriceWebSocketServer {
   }
 
   start(): void {
-    // Validate every upgrade (origin, rate limit, CSRF) before accepting it.
-    this.wss = new WsServer({ port: this.port, verifyClient: this.guard.verifyClient });
-
-    // Periodically discard stale per-IP rate-limit buckets.
-    this.sweepTimer = setInterval(() => this.guard.sweep(), 60000);
-    this.sweepTimer.unref?.();
+    this.wss = new WsServer({ port: this.port, clientTracking: false });
 
     this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-      const ip = req.socket.remoteAddress || 'unknown';
+      const auth = validateWebSocketApiKey(req);
+      if (!auth.valid) {
+        ws.send(JSON.stringify({ type: 'error', code: 'UNAUTHORIZED', message: auth.error }));
+        ws.close(1008, auth.error || 'Unauthorized');
+        return;
+      }
+
       this.clients.add(ws);
       this.subscriptions.set(ws, new Set());
       logger.info(`WS client connected from ${ip} (total: ${this.clients.size})`);
@@ -58,25 +60,42 @@ export class PriceWebSocketServer {
     logger.info(`WebSocket server on port ${this.port}`);
   }
 
-  private handleMessage(ws: WebSocket, msg: any): void {
-    switch (msg.type) {
+  private handleMessage(ws: WebSocket, msg: unknown): void {
+    if (!msg || typeof msg !== 'object') {
+      ws.send(JSON.stringify({ type: 'error', message: 'Invalid message' }));
+      return;
+    }
+
+    const m = msg as Record<string, unknown>;
+
+    switch (m.type) {
       case 'subscribe':
-        if (msg.assets && Array.isArray(msg.assets)) {
+        if (!validateWsAssets(m.assets)) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Invalid assets: must be an array of up to 50 valid asset symbols' }));
+          return;
+        }
+        {
           const subs = this.subscriptions.get(ws);
-          msg.assets.forEach((a: string) => subs?.add(a.toUpperCase()));
-          ws.send(JSON.stringify({ type: 'subscribed', assets: msg.assets }));
+          (m.assets as string[]).forEach((a) => subs?.add(a.toUpperCase()));
+          ws.send(JSON.stringify({ type: 'subscribed', assets: m.assets }));
         }
         break;
       case 'unsubscribe':
-        if (msg.assets && Array.isArray(msg.assets)) {
+        if (!validateWsAssets(m.assets)) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Invalid assets: must be an array of up to 50 valid asset symbols' }));
+          return;
+        }
+        {
           const subs = this.subscriptions.get(ws);
-          msg.assets.forEach((a: string) => subs?.delete(a.toUpperCase()));
-          ws.send(JSON.stringify({ type: 'unsubscribed', assets: msg.assets }));
+          (m.assets as string[]).forEach((a) => subs?.delete(a.toUpperCase()));
+          ws.send(JSON.stringify({ type: 'unsubscribed', assets: m.assets }));
         }
         break;
       case 'ping':
         ws.send(JSON.stringify({ type: 'pong', timestamp: Math.floor(Date.now() / 1000) }));
         break;
+      default:
+        ws.send(JSON.stringify({ type: 'error', message: 'Unknown message type' }));
     }
   }
 
@@ -110,13 +129,7 @@ export class PriceWebSocketServer {
 
   private invalidateCache(_asset?: string): void {
     if (!this.cache) return;
-    const patterns = [
-      'prices:*',
-      'price:*',
-      'history:*',
-      'sources:*',
-      'health:*',
-    ];
+    const patterns = ['prices:*', 'price:*', 'history:*', 'sources:*', 'health:*'];
     patterns.forEach((pattern) => {
       this.cache!.invalidate(pattern).catch((err) => {
         logger.warn(`Cache invalidation failed for pattern ${pattern}: ${err}`);

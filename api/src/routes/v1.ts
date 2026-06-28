@@ -1,4 +1,4 @@
-import { AssetQuerySchema, HistoryQuerySchema } from '../services/validation';
+import { AssetQuerySchema, HistoryQuerySchema, formatValidationResponse } from '../services/validation';
 import { readAssetPrices, readPriceHistory } from '../services/price-store';
 import { HybridCache } from '../services/cache';
 import { cacheHitTotal, cacheMissTotal, lastPriceTimestamp, priceQueriesTotal } from '../middleware/metrics';
@@ -23,6 +23,8 @@ router.get('/', (_req: Request, res: Response) => {
       history: '/api/v1/history/:asset',
       sources: '/api/v1/sources',
       health: '/api/v1/health',
+      healthLive: '/api/v1/health/live',
+      healthReady: '/api/v1/health/ready',
       docs: '/api/v1/docs',
       metrics: '/metrics',
     },
@@ -32,7 +34,7 @@ router.get('/', (_req: Request, res: Response) => {
 router.get('/prices', async (req: Request, res: Response) => {
   const query = AssetQuerySchema.safeParse(req.query);
   if (!query.success) {
-    return res.status(400).json({ success: false, error: query.error.flatten() });
+    return res.status(400).json(formatValidationResponse(query.error));
   }
 
   const cacheKey = `prices:${query.data.asset || '*'}`;
@@ -92,7 +94,7 @@ router.get('/prices/:asset', async (req: Request, res: Response) => {
 router.get('/history/:asset', async (req: Request, res: Response) => {
   const params = HistoryQuerySchema.safeParse({ ...req.params, ...req.query });
   if (!params.success) {
-    return res.status(400).json({ success: false, error: params.error.flatten() });
+    return res.status(400).json(formatValidationResponse(params.error));
   }
 
   const { asset, from, to, limit } = params.data;
@@ -139,25 +141,19 @@ router.get('/sources', async (_req: Request, res: Response) => {
   res.json({ success: true, data });
 });
 
-// Issues a short-lived CSRF token required to open a WebSocket connection
-// when WS CSRF protection is enabled (issue #40). Clients pass the returned
-// token as the `?token=` query parameter on the WebSocket URL.
-router.get('/ws-token', (_req: Request, res: Response) => {
-  if (!isCsrfEnabled()) {
-    return res.json({ success: true, data: { csrfRequired: false } });
-  }
-  res.json({
-    success: true,
-    data: {
-      csrfRequired: true,
-      token: issueWsCsrfToken(),
-      expiresInMs: config.ws.csrfTtlMs,
-    },
-  });
+router.get('/health/live', (_req: Request, res: Response) => {
+  res.json({ status: 'alive', uptime: process.uptime() });
 });
 
-router.get('/health', async (_req: Request, res: Response) => {
-  const cacheKey = 'health:status';
+router.get('/health/ready', async (_req: Request, res: Response) => {
+  const prices = await readAssetPrices();
+  const ready = prices.length > 0;
+  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', assetsTracked: prices.length });
+});
+
+router.get('/health', async (req: Request, res: Response) => {
+  const verbose = req.query.verbose === 'true';
+  const cacheKey = `health:status:${verbose}`;
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
@@ -166,18 +162,35 @@ router.get('/health', async (_req: Request, res: Response) => {
   cacheMissTotal.inc();
 
   const prices = await readAssetPrices();
-  const status = prices.length > 0 ? 'healthy' : 'degraded';
+  const hasStale = prices.some((p) => Date.now() / 1000 - p.timestamp > 120);
+  const status = prices.length === 0 ? 'unhealthy' : hasStale ? 'degraded' : 'healthy';
 
-  const data = {
+  const data: Record<string, any> = {
     service: 'stellar-price-oracle-api',
     status,
     uptime: process.uptime(),
     timestamp: Math.floor(Date.now() / 1000),
     assetsTracked: prices.length,
+    degradedAssets: prices.filter((p) => Date.now() / 1000 - p.timestamp > 120).map((p) => p.asset),
+    endpoints: {
+      liveness: '/api/v1/health/live',
+      readiness: '/api/v1/health/ready',
+    },
   };
 
+  if (verbose) {
+    data.prices = prices.map((p) => ({
+      asset: p.asset,
+      timestamp: p.timestamp,
+      sources: p.sources,
+      stale: Date.now() / 1000 - p.timestamp > 120,
+    }));
+    data.processMemoryMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    data.nodeVersion = process.version;
+  }
+
   await pricesCache.set(cacheKey, data, 'health');
-  res.json({ success: true, data });
+  res.status(status === 'unhealthy' ? 503 : 200).json({ success: true, data });
 });
 
 export default router;

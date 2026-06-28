@@ -1,18 +1,35 @@
 import crypto from 'crypto';
 import { logger } from '../middleware/logger';
+import type { Role } from '../middleware/rbac';
+
+export type KeyTier = 'free' | 'pro' | 'enterprise' | 'admin';
+export type KeyRole = 'read-only' | 'admin';
+
+export const TIER_RATE_LIMITS: Record<KeyTier, number> = {
+  free: 60,
+  pro: 500,
+  enterprise: 10000,
+  admin: 100000,
+};
 
 export interface ApiKeyMetadata {
   key: string;
+  keyHash: string;
   createdAt: number;
   lastUsed: number | null;
   requestCount: number;
   isActive: boolean;
   rateLimitPerMin: number;
+  tier: KeyTier;
+  role: KeyRole;
   description?: string;
+  role: Role;
+  /** If set, this key is in rotation grace period until this timestamp */
+  rotationExpiresAt?: number;
 }
 
 export interface ApiKeyStore {
-  [key: string]: ApiKeyMetadata;
+  [keyHash: string]: ApiKeyMetadata;
 }
 
 export class ApiKeyManager {
@@ -23,30 +40,29 @@ export class ApiKeyManager {
     this.loadKeysFromEnv();
   }
 
-  /**
-   * Generate a new API key
-   */
-  generateKey(rateLimitPerMin: number = 100, description?: string): ApiKeyMetadata {
-    const key = this.createKey();
+  generateKey(rateLimitPerMin: number = TIER_RATE_LIMITS.free, description?: string, tier: KeyTier = 'free', role: KeyRole = 'read-only'): ApiKeyMetadata {
+    const key = this.createKey(tier);
+    const keyHash = this.hashKey(key);
     const metadata: ApiKeyMetadata = {
       key,
+      keyHash,
       createdAt: Date.now(),
       lastUsed: null,
       requestCount: 0,
       isActive: true,
       rateLimitPerMin,
+      tier,
+      role,
       description,
+      role,
     };
 
     this.keys.set(key, metadata);
-    logger.info(`Generated new API key: ${key.substring(0, 8)}... (limit: ${rateLimitPerMin} req/min)`);
+    logger.info(`Generated new API key: ${key.substring(0, 8)}... tier=${tier} role=${role} limit=${rateLimitPerMin}/min`);
 
     return metadata;
   }
 
-  /**
-   * Validate an API key
-   */
   validateKey(key: string): { valid: boolean; metadata?: ApiKeyMetadata; error?: string } {
     const metadata = this.keys.get(key);
 
@@ -55,167 +71,187 @@ export class ApiKeyManager {
     }
 
     if (!metadata.isActive) {
-      return { valid: false, error: 'API key is inactive' };
+      return { valid: false, error: 'API key has been revoked' };
     }
 
     return { valid: true, metadata };
   }
 
-  /**
-   * Check if key has exceeded rate limit
-   */
-  checkRateLimit(key: string): { allowed: boolean; remaining: number; resetTime: number } {
+  isAdminKey(key: string): boolean {
+    const metadata = this.keys.get(key);
+    return !!metadata && metadata.role === 'admin';
+  }
+
+  checkRateLimit(key: string): { allowed: boolean; remaining: number; resetTime: number; retryAfter?: number } {
     const metadata = this.keys.get(key);
     if (!metadata) {
       return { allowed: false, remaining: 0, resetTime: 0 };
     }
 
     const now = Date.now();
-    const oneMinuteAgo = now - 60000;
+    const windowMs = 60000;
+    const oneMinuteAgo = now - windowMs;
 
-    // Get or create request timestamps for this key
     let requests = this.lastMinuteRequests.get(key) || [];
-
-    // Filter out requests older than 1 minute
-    requests = requests.filter((timestamp) => timestamp > oneMinuteAgo);
+    requests = requests.filter((ts) => ts > oneMinuteAgo);
 
     if (requests.length >= metadata.rateLimitPerMin) {
-      // Find the reset time (when the oldest request expires)
       const oldestRequest = Math.min(...requests);
-      const resetTime = oldestRequest + 60000;
+      const resetTime = oldestRequest + windowMs;
+      const retryAfter = Math.ceil((resetTime - now) / 1000);
 
-      return { allowed: false, remaining: 0, resetTime };
+      return { allowed: false, remaining: 0, resetTime, retryAfter };
     }
 
-    // Add current request timestamp
     requests.push(now);
     this.lastMinuteRequests.set(key, requests);
 
-    // Update metadata
     metadata.lastUsed = now;
     metadata.requestCount++;
 
     const remaining = metadata.rateLimitPerMin - requests.length;
-    return { allowed: true, remaining, resetTime: 0 };
+    return { allowed: true, remaining, resetTime: now + windowMs };
   }
 
-  /**
-   * Deactivate an API key
-   */
-  deactivateKey(key: string): boolean {
+  rotateKey(oldKey: string): ApiKeyMetadata | null {
+    const metadata = this.keys.get(oldKey);
+    if (!metadata) return null;
+
+    const newKey = this.createKey(metadata.tier);
+    const newHash = this.hashKey(newKey);
+    const newMetadata: ApiKeyMetadata = {
+      ...metadata,
+      key: newKey,
+      keyHash: newHash,
+      createdAt: Date.now(),
+      lastUsed: null,
+      requestCount: 0,
+    };
+
+    this.keys.delete(oldKey);
+    this.lastMinuteRequests.delete(oldKey);
+    this.keys.set(newKey, newMetadata);
+    logger.info(`Rotated API key: old=${oldKey.substring(0, 8)}... new=${newKey.substring(0, 8)}...`);
+
+    return newMetadata;
+  }
+
+  revokeKey(key: string): boolean {
     const metadata = this.keys.get(key);
-    if (!metadata) {
-      return false;
-    }
+    if (!metadata) return false;
 
     metadata.isActive = false;
-    logger.info(`Deactivated API key: ${key.substring(0, 8)}...`);
-
+    logger.info(`Revoked API key: ${key.substring(0, 8)}...`);
     return true;
   }
 
-  /**
-   * Reactivate an API key
-   */
+  deactivateKey(key: string): boolean {
+    return this.revokeKey(key);
+  }
+
   reactivateKey(key: string): boolean {
     const metadata = this.keys.get(key);
-    if (!metadata) {
-      return false;
-    }
+    if (!metadata) return false;
 
     metadata.isActive = true;
     logger.info(`Reactivated API key: ${key.substring(0, 8)}...`);
-
     return true;
   }
 
-  /**
-   * Get key metadata
-   */
   getKeyMetadata(key: string): ApiKeyMetadata | null {
     return this.keys.get(key) || null;
   }
 
-  /**
-   * Get all active keys (without exposing full keys)
-   */
-  getAllKeys(): Array<{ keyPrefix: string; createdAt: number; lastUsed: number | null; requestCount: number; isActive: boolean; rateLimitPerMin: number; description?: string }> {
-    return Array.from(this.keys.values()).map((metadata) => ({
-      keyPrefix: metadata.key.substring(0, 8) + '...',
-      createdAt: metadata.createdAt,
-      lastUsed: metadata.lastUsed,
-      requestCount: metadata.requestCount,
-      isActive: metadata.isActive,
-      rateLimitPerMin: metadata.rateLimitPerMin,
-      description: metadata.description,
+  getAllKeys(): Array<{ keyPrefix: string; keyHash: string; createdAt: number; lastUsed: number | null; requestCount: number; isActive: boolean; rateLimitPerMin: number; tier: KeyTier; role: KeyRole; description?: string }> {
+    return Array.from(this.keys.values()).map((m) => ({
+      keyPrefix: m.key.substring(0, 12) + '...',
+      keyHash: m.keyHash,
+      createdAt: m.createdAt,
+      lastUsed: m.lastUsed,
+      requestCount: m.requestCount,
+      isActive: m.isActive,
+      rateLimitPerMin: m.rateLimitPerMin,
+      tier: m.tier,
+      role: m.role,
+      description: m.description,
     }));
   }
 
-  /**
-   * Update rate limit for a key
-   */
+  findByHash(hash: string): ApiKeyMetadata | null {
+    return Array.from(this.keys.values()).find((m) => m.keyHash === hash) || null;
+  }
+
   updateRateLimit(key: string, newLimit: number): boolean {
     const metadata = this.keys.get(key);
-    if (!metadata) {
-      return false;
-    }
+    if (!metadata) return false;
 
     metadata.rateLimitPerMin = newLimit;
-    logger.info(`Updated rate limit for ${key.substring(0, 8)}... to ${newLimit} req/min`);
-
+    logger.info(`Updated rate limit for ${key.substring(0, 8)}... to ${newLimit}/min`);
     return true;
   }
 
-  /**
-   * Delete an API key
-   */
+  updateTier(key: string, tier: KeyTier): boolean {
+    const metadata = this.keys.get(key);
+    if (!metadata) return false;
+
+    metadata.tier = tier;
+    metadata.rateLimitPerMin = TIER_RATE_LIMITS[tier];
+    logger.info(`Updated tier for ${key.substring(0, 8)}... to ${tier} (${TIER_RATE_LIMITS[tier]}/min)`);
+    return true;
+  }
+
   deleteKey(key: string): boolean {
     const result = this.keys.delete(key);
     if (result) {
       this.lastMinuteRequests.delete(key);
       logger.info(`Deleted API key: ${key.substring(0, 8)}...`);
     }
-
     return result;
   }
 
-  private createKey(): string {
-    // Generate a secure random key: "sk_" + random bytes encoded as hex
-    const randomBytes = crypto.randomBytes(32);
-    return `sk_${randomBytes.toString('hex')}`;
+  hashKey(key: string): string {
+    return crypto.createHash('sha256').update(key).digest('hex');
+  }
+
+  private createKey(tier: KeyTier = 'free'): string {
+    const prefix = tier === 'admin' ? 'sk_admin_' : `sk_${tier}_`;
+    return prefix + crypto.randomBytes(32).toString('hex');
   }
 
   private loadKeysFromEnv(): void {
-    // Load keys from environment variable if provided
     const envKeys = process.env.API_KEYS;
     if (!envKeys) {
-      // Create a default admin key if none exist
       if (this.keys.size === 0) {
-        const adminKey = this.generateKey(10000, 'Default admin key');
+        const adminKey = this.generateKey(TIER_RATE_LIMITS.admin, 'Default admin key', 'admin', 'admin');
         logger.info(`Generated default admin key: ${adminKey.key}`);
-        logger.info('Store this key securely and use it for admin operations');
+        logger.info('Store this key securely. It will not be shown again.');
       }
       return;
     }
 
     try {
-      // Expected format: key1:limit1:desc1,key2:limit2:desc2
-      const keyConfigs = envKeys.split(',');
-      for (const config of keyConfigs) {
+      // Format: key1:limit1:desc1:tier1:role1,key2:...
+      for (const config of envKeys.split(',')) {
         const parts = config.trim().split(':');
-        if (parts.length >= 2) {
+        if (parts.length >= 1 && parts[0]) {
           const key = parts[0];
           const limit = parseInt(parts[1], 10);
-          const description = parts[2];
+          const description = parts[2] || undefined;
+          const tier = (parts[3] as KeyTier) || 'free';
+          const role = (parts[4] as KeyRole) || 'read-only';
 
           const metadata: ApiKeyMetadata = {
             key,
+            keyHash: this.hashKey(key),
             createdAt: Date.now(),
             lastUsed: null,
             requestCount: 0,
             isActive: true,
-            rateLimitPerMin: isNaN(limit) ? 100 : limit,
+            rateLimitPerMin: isNaN(limit) ? TIER_RATE_LIMITS[tier] : limit,
+            tier,
+            role,
             description,
+            role,
           };
 
           this.keys.set(key, metadata);
@@ -229,5 +265,4 @@ export class ApiKeyManager {
   }
 }
 
-// Global instance
 export const apiKeyManager = new ApiKeyManager();
