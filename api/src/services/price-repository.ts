@@ -63,7 +63,7 @@ class PriceRepository {
       query += ` ORDER BY timestamp DESC LIMIT $${paramIndex}`;
       params.push(limit);
 
-      const result = await db.query(query, params);
+      const result = await db.readQuery(query, params);
       return result.rows.map((row: any) => ({
         asset: row.asset,
         price: row.price,
@@ -82,7 +82,7 @@ class PriceRepository {
 
     try {
       const db = await getDb();
-      const result = await db.query(
+      const result = await db.readQuery(
         'SELECT * FROM price_history WHERE asset = $1 ORDER BY timestamp DESC LIMIT 1',
         [asset.toUpperCase()]
       );
@@ -135,7 +135,7 @@ class PriceRepository {
 
     try {
       const db = await getDb();
-      const result = await db.query(
+      const result = await db.readQuery(
         'SELECT * FROM aggregator_state WHERE asset = $1',
         [asset.toUpperCase()]
       );
@@ -161,7 +161,7 @@ class PriceRepository {
 
     try {
       const db = await getDb();
-      const result = await db.query('SELECT DISTINCT asset FROM aggregator_state WHERE active = true');
+      const result = await db.readQuery('SELECT DISTINCT asset FROM aggregator_state WHERE active = true');
       return result.rows.map((row: any) => row.asset);
     } catch (error) {
       logger.error('Failed to get all assets:', error);

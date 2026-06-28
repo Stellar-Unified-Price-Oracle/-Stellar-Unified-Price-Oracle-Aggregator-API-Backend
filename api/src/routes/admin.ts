@@ -5,6 +5,8 @@ import { adminAuthMiddleware } from '../middleware/auth';
 import { requireRole, ROLES, ROLE_PERMISSIONS } from '../middleware/rbac';
 import { logger } from '../middleware/logger';
 import { auditLog } from '../services/audit-logger';
+import { getDb, isDbAvailable } from '../services/database';
+import { ArchivalService } from '../services/archival';
 import type { Role } from '../middleware/rbac';
 
 const router = Router();
@@ -245,6 +247,73 @@ router.delete('/cors/origins', (req: Request, res: Response) => {
   }
 
   res.json({ success: true, data: { origin, removed: true, origins: corsManager.listOrigins() } });
+});
+
+// ── Database Pool & Replicas (issues #44, #45) ─────────────────────────────────
+
+router.get('/db/pool', async (_req: Request, res: Response) => {
+  if (!isDbAvailable()) {
+    return res.status(503).json({
+      success: false,
+      error: { code: 'DB_UNAVAILABLE', message: 'Database is not configured' },
+    });
+  }
+  const db = await getDb();
+  res.json({ success: true, data: db.getPoolStats() });
+});
+
+// ── Data Archival (issue #43) ──────────────────────────────────────────────────
+
+router.post('/archival/run', async (req: Request, res: Response) => {
+  if (!isDbAvailable()) {
+    return res.status(503).json({
+      success: false,
+      error: { code: 'DB_UNAVAILABLE', message: 'Database is not configured' },
+    });
+  }
+  const dryRun = req.body?.dryRun === true || req.query.dryRun === 'true';
+  try {
+    const db = await getDb();
+    const archival = new ArchivalService(db, logger);
+    const result = await archival.runOnce(dryRun);
+    auditLog('archival.run', {
+      apiKeyPrefix: req.apiKey?.substring(0, 8),
+      details: { ...result },
+    });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    logger.error('Archival run failed', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'ARCHIVAL_FAILED', message: 'Failed to run archival' },
+    });
+  }
+});
+
+router.post('/archival/restore', async (req: Request, res: Response) => {
+  if (!isDbAvailable()) {
+    return res.status(503).json({
+      success: false,
+      error: { code: 'DB_UNAVAILABLE', message: 'Database is not configured' },
+    });
+  }
+  const file = typeof req.body?.file === 'string' ? req.body.file : undefined;
+  try {
+    const db = await getDb();
+    const archival = new ArchivalService(db, logger);
+    const restored = await archival.restore(file);
+    auditLog('archival.restore', {
+      apiKeyPrefix: req.apiKey?.substring(0, 8),
+      details: { file, restored },
+    });
+    res.json({ success: true, data: { restored, file: file || 'all' } });
+  } catch (err) {
+    logger.error('Archival restore failed', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'RESTORE_FAILED', message: 'Failed to restore archive' },
+    });
+  }
 });
 
 // ── Admin Health ──────────────────────────────────────────────────────────────

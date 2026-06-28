@@ -19,9 +19,26 @@ npm run migrate:up
 # Revert the last migration
 npm run migrate:down
 
-# Check migration status
-npm run migrate:status
+# Preview the changes that WOULD be applied, without committing (dry-run)
+npm run migrate:dry-run
+
+# Revert a specific number of migrations
+npm run migrate:down -- --count=2
 ```
+
+### Safety guarantees (issue #46)
+
+The migration runner provides the following guarantees:
+
+- **Rollback for all migrations** — every migration file must export both `up()`
+  and `down()`. The runner validates this before touching the database and
+  refuses to run if any migration is missing a rollback script.
+- **Dry-run mode** — `--dry-run` lists exactly which migrations would be applied
+  or reverted without writing any changes.
+- **Transactional** — the whole batch runs inside a single transaction
+  (`singleTransaction`).
+- **Automatic rollback on failure** — if any migration in the batch fails, the
+  transaction is rolled back, leaving the schema in its previous state.
 
 ## Creating a New Migration
 

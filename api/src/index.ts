@@ -17,6 +17,7 @@ import { swaggerSpec } from './services/openapi';
 import v1Routes, { initializeCache } from './routes/v1';
 import { HybridCache } from './services/cache';
 import { DatabaseClient, setDb } from './services/database';
+import { ArchivalService } from './services/archival';
 import { setDatabase } from './services/price-store';
 import { initializeTracing } from './services/tracing';
 import adminRoutes from './routes/admin';
@@ -29,6 +30,7 @@ initializeTracing(config.tracing);
 const app = express();
 
 let db: DatabaseClient | null = null;
+let archival: ArchivalService | null = null;
 
 async function initializeApp(): Promise<void> {
   if (config.databaseUrl) {
@@ -37,6 +39,9 @@ async function initializeApp(): Promise<void> {
       await db.initialize();
       setDatabase(db);
       setDb(db);
+      // Data lifecycle / archival of old price records (issue #43).
+      archival = new ArchivalService(db, logger);
+      archival.start();
       logger.info('PostgreSQL database connected');
     } catch (err) {
       logger.warn('Failed to connect to PostgreSQL, falling back to file-based storage', err);
@@ -124,6 +129,9 @@ async function startServer(): Promise<void> {
   process.on('SIGTERM', () => {
     logger.info('Shutting down API server...');
     wss.stop();
+    if (archival) {
+      archival.stop();
+    }
     if (db) {
       db.disconnect().catch((err) => logger.error('Error disconnecting from database', err));
     }
@@ -133,6 +141,9 @@ async function startServer(): Promise<void> {
   process.on('SIGINT', () => {
     logger.info('Shutting down API server...');
     wss.stop();
+    if (archival) {
+      archival.stop();
+    }
     if (db) {
       db.disconnect().catch((err) => logger.error('Error disconnecting from database', err));
     }

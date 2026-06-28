@@ -13,7 +13,9 @@ export type AuditEvent =
   | 'admin.rate_limit_updated'
   | 'admin.role_assigned'
   | 'key.rotation_started'
-  | 'key.rotation_completed';
+  | 'key.rotation_completed'
+  | 'archival.run'
+  | 'archival.restore';
 
 interface AuditEntry {
   event: AuditEvent;

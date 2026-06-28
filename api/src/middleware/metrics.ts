@@ -67,6 +67,85 @@ export const priceDeviation = new client.Histogram({
 });
 register.registerMetric(priceDeviation);
 
+// ── Database connection pool & resilience (issues #44, #45) ──────────────────
+
+export const dbPoolTotalConnections = new client.Gauge({
+  name: 'db_pool_total_connections',
+  help: 'Total connections in the pool (in use + idle)',
+  labelNames: ['pool'],
+});
+register.registerMetric(dbPoolTotalConnections);
+
+export const dbPoolIdleConnections = new client.Gauge({
+  name: 'db_pool_idle_connections',
+  help: 'Idle connections available in the pool',
+  labelNames: ['pool'],
+});
+register.registerMetric(dbPoolIdleConnections);
+
+export const dbPoolWaitingCount = new client.Gauge({
+  name: 'db_pool_waiting_count',
+  help: 'Number of queued requests waiting for a connection',
+  labelNames: ['pool'],
+});
+register.registerMetric(dbPoolWaitingCount);
+
+export const dbPoolMaxConnections = new client.Gauge({
+  name: 'db_pool_max_connections',
+  help: 'Configured maximum pool size',
+  labelNames: ['pool'],
+});
+register.registerMetric(dbPoolMaxConnections);
+
+export const dbQueryDuration = new client.Histogram({
+  name: 'db_query_duration_seconds',
+  help: 'Duration of database queries in seconds',
+  labelNames: ['pool', 'operation'],
+  buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+});
+register.registerMetric(dbQueryDuration);
+
+export const dbQueryErrorsTotal = new client.Counter({
+  name: 'db_query_errors_total',
+  help: 'Total number of failed database queries',
+  labelNames: ['pool', 'operation'],
+});
+register.registerMetric(dbQueryErrorsTotal);
+
+export const dbRetriesTotal = new client.Counter({
+  name: 'db_retries_total',
+  help: 'Total number of database query retries',
+  labelNames: ['pool'],
+});
+register.registerMetric(dbRetriesTotal);
+
+export const dbCircuitBreakerState = new client.Gauge({
+  name: 'db_circuit_breaker_state',
+  help: 'Database circuit breaker state (0=closed, 1=half-open, 2=open)',
+  labelNames: ['pool'],
+});
+register.registerMetric(dbCircuitBreakerState);
+
+export const dbReplicaHealthy = new client.Gauge({
+  name: 'db_replica_healthy',
+  help: 'Read replica health (1=healthy, 0=unhealthy)',
+  labelNames: ['replica'],
+});
+register.registerMetric(dbReplicaHealthy);
+
+export const dbReplicaLagSeconds = new client.Gauge({
+  name: 'db_replica_lag_seconds',
+  help: 'Estimated read replica replication lag in seconds',
+  labelNames: ['replica'],
+});
+register.registerMetric(dbReplicaLagSeconds);
+
+export const dbRecordsArchivedTotal = new client.Counter({
+  name: 'db_records_archived_total',
+  help: 'Total number of price records archived to cold storage',
+});
+register.registerMetric(dbRecordsArchivedTotal);
+
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();
   res.on('finish', () => {
