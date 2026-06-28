@@ -1,5 +1,7 @@
 import { WebSocketServer as WsServer, WebSocket } from 'ws';
+import { IncomingMessage } from 'http';
 import { logger } from '../middleware/logger';
+import { validateWebSocketApiKey } from '../middleware/auth';
 import { HybridCache } from '../services/cache';
 import { validateWsAssets } from '../middleware/sanitization';
 
@@ -15,9 +17,16 @@ export class PriceWebSocketServer {
   }
 
   start(): void {
-    this.wss = new WsServer({ port: this.port });
+    this.wss = new WsServer({ port: this.port, clientTracking: false });
 
-    this.wss.on('connection', (ws: WebSocket) => {
+    this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+      const auth = validateWebSocketApiKey(req);
+      if (!auth.valid) {
+        ws.send(JSON.stringify({ type: 'error', code: 'UNAUTHORIZED', message: auth.error }));
+        ws.close(1008, auth.error || 'Unauthorized');
+        return;
+      }
+
       this.clients.add(ws);
       this.subscriptions.set(ws, new Set());
       logger.info(`WS client connected (total: ${this.clients.size})`);
@@ -118,13 +127,7 @@ export class PriceWebSocketServer {
 
   private invalidateCache(_asset?: string): void {
     if (!this.cache) return;
-    const patterns = [
-      'prices:*',
-      'price:*',
-      'history:*',
-      'sources:*',
-      'health:*',
-    ];
+    const patterns = ['prices:*', 'price:*', 'history:*', 'sources:*', 'health:*'];
     patterns.forEach((pattern) => {
       this.cache!.invalidate(pattern).catch((err) => {
         logger.warn(`Cache invalidation failed for pattern ${pattern}: ${err}`);

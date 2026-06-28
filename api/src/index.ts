@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import { config } from './config';
+import { corsManager } from './services/cors-manager';
 import { logger } from './middleware/logger';
 import { requestLogger } from './middleware/request-logger';
 import { requestIdMiddleware } from './middleware/request-id';
@@ -58,8 +59,7 @@ const cache = new HybridCache<any>(logger, {
 initializeCache(cache);
 
 app.use(helmet());
-app.use(cspHeaders);
-app.use(cors());
+app.use(cors(corsManager.getCorsOptions()));
 app.use(express.json());
 app.use(sanitizeInputs);
 app.use(requestIdMiddleware);

@@ -1,4 +1,4 @@
-import { AssetQuerySchema, HistoryQuerySchema } from '../services/validation';
+import { AssetQuerySchema, HistoryQuerySchema, formatValidationResponse } from '../services/validation';
 import { readAssetPrices, readPriceHistory } from '../services/price-store';
 import { HybridCache } from '../services/cache';
 import { cacheHitTotal, cacheMissTotal, lastPriceTimestamp, priceQueriesTotal } from '../middleware/metrics';
@@ -30,7 +30,7 @@ router.get('/', (_req: Request, res: Response) => {
 router.get('/prices', async (req: Request, res: Response) => {
   const query = AssetQuerySchema.safeParse(req.query);
   if (!query.success) {
-    return res.status(400).json({ success: false, error: query.error.flatten() });
+    return res.status(400).json(formatValidationResponse(query.error));
   }
 
   const cacheKey = `prices:${query.data.asset || '*'}`;
@@ -90,7 +90,7 @@ router.get('/prices/:asset', async (req: Request, res: Response) => {
 router.get('/history/:asset', async (req: Request, res: Response) => {
   const params = HistoryQuerySchema.safeParse({ ...req.params, ...req.query });
   if (!params.success) {
-    return res.status(400).json({ success: false, error: params.error.flatten() });
+    return res.status(400).json(formatValidationResponse(params.error));
   }
 
   const { asset, from, to, limit } = params.data;
