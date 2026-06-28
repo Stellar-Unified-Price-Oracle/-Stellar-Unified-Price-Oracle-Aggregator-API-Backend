@@ -1,4 +1,22 @@
 services:
+  # TimescaleDB-enabled PostgreSQL for time-series historical price data (#42).
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-oracle}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oracle}
+      POSTGRES_DB: ${POSTGRES_DB:-stellar_oracle}
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-oracle} -d ${POSTGRES_DB:-stellar_oracle}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   aggregator:
     build:
       context: ./services/aggregator
@@ -13,6 +31,9 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
     restart: unless-stopped
+    depends_on:
+      timescaledb:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4002/health"]
       interval: 30s
@@ -35,11 +56,16 @@ services:
     depends_on:
       aggregator:
         condition: service_started
+      timescaledb:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+volumes:
+  timescale-data:
 
 networks:
   default:

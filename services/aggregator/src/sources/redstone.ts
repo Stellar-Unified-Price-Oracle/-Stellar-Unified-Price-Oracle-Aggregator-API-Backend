@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { httpClient } from '../utils/http-client';
 import { config } from '../config';
 import { NormalizedPrice, OracleSourceName } from '../types';
 import { BaseSource } from './base';
@@ -15,7 +15,7 @@ export class RedstoneSource extends BaseSource {
 
   async fetchPrice(asset: string): Promise<NormalizedPrice | null> {
     const symbol = asset.toUpperCase();
-    const response = await axios.get(`${this.baseUrl}/prices`, {
+    const response = await httpClient.get(`${this.baseUrl}/prices`, {
       params: { symbols: symbol, provider: 'redstone' },
     });
 

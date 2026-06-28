@@ -1,9 +1,18 @@
 import fs from 'fs';
 import path from 'path';
 import { DatabaseClient } from './database';
+import { decrypt, isEncrypted } from './crypto';
 
 const DATA_DIR = path.resolve(__dirname, '../../data');
 let db: DatabaseClient | null = null;
+
+/** Read and parse a history file, transparently decrypting if encrypted at rest. */
+function readHistoryFile(filePath: string): any[] {
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  if (!raw) return [];
+  const contents = isEncrypted(raw) ? decrypt(raw) : raw;
+  return JSON.parse(contents);
+}
 
 export function setDatabase(database: DatabaseClient | null): void {
   db = database;
@@ -34,7 +43,7 @@ export async function readAssetPrices(): Promise<any[]> {
   for (const file of files) {
     try {
       const asset = file.replace('history-', '').replace('.json', '').toUpperCase();
-      const data = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8'));
+      const data = readHistoryFile(path.join(dir, file));
       if (data.length > 0) {
         const latest = data[data.length - 1];
         assets.set(asset, {
@@ -75,7 +84,7 @@ export async function readPriceHistory(
   if (!fs.existsSync(filePath)) return [];
 
   try {
-    let history = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    let history = readHistoryFile(filePath);
     if (from) history = history.filter((h: any) => h.timestamp >= from);
     if (to) history = history.filter((h: any) => h.timestamp <= to);
     return history.slice(-limit);

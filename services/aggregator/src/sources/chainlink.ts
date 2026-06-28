@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { httpClient } from '../utils/http-client';
 import { config } from '../config';
 import { NormalizedPrice, OracleSourceName } from '../types';
 import { BaseSource } from './base';
@@ -15,7 +15,7 @@ export class ChainlinkSource extends BaseSource {
 
   async fetchPrice(asset: string): Promise<NormalizedPrice | null> {
     const symbol = this.toSymbol(asset);
-    const response = await axios.get(`${this.baseUrl}/price`, {
+    const response = await httpClient.get(`${this.baseUrl}/price`, {
       params: { fsym: symbol, tsym: 'USD', api_key: config.sources.chainlink.apiKey },
     });
 

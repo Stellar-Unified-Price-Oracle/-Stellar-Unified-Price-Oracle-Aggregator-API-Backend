@@ -2,6 +2,8 @@ import { AssetQuerySchema, HistoryQuerySchema, formatValidationResponse } from '
 import { readAssetPrices, readPriceHistory } from '../services/price-store';
 import { HybridCache } from '../services/cache';
 import { cacheHitTotal, cacheMissTotal, lastPriceTimestamp, priceQueriesTotal } from '../middleware/metrics';
+import { issueWsCsrfToken, isCsrfEnabled } from '../websocket/csrf';
+import { config } from '../config';
 import { Router, Request, Response } from 'express';
 
 const router = Router();

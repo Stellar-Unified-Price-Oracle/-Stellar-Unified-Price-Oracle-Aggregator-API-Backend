@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import { decryptSecret } from './services/crypto';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
@@ -19,7 +20,27 @@ export const config = {
   historyCacheTtl: parseInt(process.env.HISTORY_CACHE_TTL_MS || '60000', 10),
   sourcesCacheTtl: parseInt(process.env.SOURCES_CACHE_TTL_MS || '300000', 10),
   healthCacheTtl: parseInt(process.env.HEALTH_CACHE_TTL_MS || '30000', 10),
-  databaseUrl: process.env.DATABASE_URL,
+  // Sensitive: decrypted at rest if stored as an `enc:` payload (issue #41).
+  databaseUrl: process.env.DATABASE_URL ? decryptSecret(process.env.DATABASE_URL) : undefined,
+  // TimescaleDB hypertable support (issue #42).
+  useTimescale: process.env.USE_TIMESCALEDB !== 'false',
+  // WebSocket upgrade hardening (issue #40).
+  ws: {
+    allowedOrigins: (process.env.WS_ALLOWED_ORIGINS || '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
+    requireOrigin: process.env.WS_REQUIRE_ORIGIN !== 'false',
+    csrfSecret: process.env.WS_CSRF_SECRET || '',
+    csrfTtlMs: parseInt(process.env.WS_CSRF_TTL_MS || '300000', 10),
+    rateLimitMax: parseInt(process.env.WS_RATE_LIMIT_MAX || '20', 10),
+    rateLimitWindowMs: parseInt(process.env.WS_RATE_LIMIT_WINDOW_MS || '60000', 10),
+  },
+  // Encryption at rest for sensitive config + historical data (issue #41).
+  encryption: {
+    key: process.env.ENCRYPTION_KEY || '',
+    previousKey: process.env.ENCRYPTION_KEY_PREVIOUS || '',
+  },
   tracing: {
     enabled: process.env.TRACING_ENABLED === 'true',
     jaegerEndpoint: process.env.JAEGER_ENDPOINT,
