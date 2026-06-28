@@ -8,6 +8,8 @@ export interface NormalizedPrice {
 
 export type OracleSourceName = 'chainlink' | 'redstone' | 'band' | 'reflector';
 
+export type DegradationLevel = 'healthy' | 'degraded' | 'critical';
+
 export interface AggregatedPrice {
   asset: string;
   price: string;
@@ -15,6 +17,8 @@ export interface AggregatedPrice {
   sources: OracleSourceName[];
   timestamp: number;
   confidence: number;
+  degradationLevel: DegradationLevel;
+  stale: boolean;
 }
 
 export interface SourceHealthStatus {

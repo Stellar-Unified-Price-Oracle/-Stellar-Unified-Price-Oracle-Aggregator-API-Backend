@@ -1,5 +1,5 @@
 import BigNumber from 'bignumber.js';
-import { NormalizedPrice, AggregatedPrice } from './types';
+import { NormalizedPrice, AggregatedPrice, DegradationLevel } from './types';
 import { config } from './config';
 import { logger } from './utils/logger';
 import { CircuitBreaker, CircuitBreakerConfig } from './circuit-breaker';
@@ -39,22 +39,28 @@ export class PriceAggregator {
 
     if (prices.length === 0) return null;
 
+    const totalSources = prices.length;
     const validPrices = prices.filter(
       (p) => Date.now() - p.timestamp * 1000 < config.stalenessThresholdMs,
     );
+    const stale = validPrices.length === 0;
 
-    if (validPrices.length === 0) return null;
+    // Fall back to all prices (stale) rather than returning null for degraded mode
+    const activePrices = stale ? prices : validPrices;
 
     // Filter out suspicious sources
-    const trustedPrices = validPrices.filter((p) => {
+    const trustedPrices = activePrices.filter((p) => {
       const state = this.circuitBreaker.getSourceState(`${p.source}:${p.asset}`);
       return !state || !state.suspicious;
     });
 
-    const pricesToUse = trustedPrices.length > 0 ? trustedPrices : validPrices;
+    const pricesToUse = trustedPrices.length > 0 ? trustedPrices : activePrices;
 
     const median = this.medianPrice(pricesToUse);
     const sources = Array.from(new Set(pricesToUse.map((p) => p.source)));
+    const confidence = pricesToUse.length / Math.max(totalSources, 1);
+
+    const degradationLevel = this.computeDegradationLevel(pricesToUse.length, totalSources, stale);
 
     return {
       asset: normalized,
@@ -62,8 +68,18 @@ export class PriceAggregator {
       decimals: pricesToUse[0].decimals,
       sources,
       timestamp: Math.floor(Date.now() / 1000),
-      confidence: pricesToUse.length / prices.length,
+      confidence,
+      degradationLevel,
+      stale,
     };
+  }
+
+  private computeDegradationLevel(activeCount: number, totalCount: number, stale: boolean): DegradationLevel {
+    if (stale || activeCount === 0) return 'critical';
+    const ratio = activeCount / Math.max(totalCount, 1);
+    if (ratio < 0.5) return 'critical';
+    if (ratio < 1.0) return 'degraded';
+    return 'healthy';
   }
 
   getAllPrices(): AggregatedPrice[] {

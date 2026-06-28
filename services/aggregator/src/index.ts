@@ -10,20 +10,17 @@ import { BaseSource } from './sources/base';
 import { WebSocketServer } from './ws-server';
 import { HealthServer } from './health-server';
 import AlertManager, { AlertThresholds } from './alert-manager';
+import { sourceCircuitBreaker } from './source-circuit-breaker';
 
 const aggregator = new PriceAggregator();
 const alertManager = new AlertManager();
 
 let lastAggregated: AggregatedPrice[] = [];
 let db: DatabaseClient | null = null;
+let pollSources: BaseSource[] = [];
 
 async function poll(): Promise<AggregatedPrice[]> {
-  const sources: BaseSource[] = [
-    new ChainlinkSource(),
-    new RedstoneSource(),
-    new BandSource(),
-    new ReflectorSource(),
-  ];
+  const sources: BaseSource[] = pollSources;
 
   for (const source of sources) {
     const prices = await source.fetchAll(config.assets);
@@ -98,15 +95,24 @@ async function main(): Promise<void> {
   const wss = new WebSocketServer(config.port);
   wss.start();
 
+  const persistentSources = {
+    chainlink: new ChainlinkSource(),
+    redstone: new RedstoneSource(),
+    band: new BandSource(),
+    reflector: new ReflectorSource(),
+  };
+  pollSources = Object.values(persistentSources);
+
   const healthServer = new HealthServer(config.port + 2, () => ({
     sourceHealth: {
-      chainlink: new ChainlinkSource().health,
-      redstone: new RedstoneSource().health,
-      band: new BandSource().health,
-      reflector: new ReflectorSource().health,
+      chainlink: persistentSources.chainlink.health,
+      redstone: persistentSources.redstone.health,
+      band: persistentSources.band.health,
+      reflector: persistentSources.reflector.health,
     },
     lastAggregated,
     circuitBreakerMetrics: aggregator.getCircuitBreakerMetrics(),
+    circuitBreakerStates: sourceCircuitBreaker.getAllStatuses(),
     uptime: process.uptime(),
   }));
   healthServer.start();
