@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import { config } from '../config';
+import { encrypt, decrypt, isEncrypted, isEncryptionConfigured } from './crypto';
 
 const DATA_DIR = path.resolve(__dirname, '../../data');
 const HISTORY_FILE = (asset: string) => path.join(DATA_DIR, `history-${asset.toLowerCase()}.json`);
@@ -8,6 +10,25 @@ export function ensureDataDir(): void {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+}
+
+/** Whether historical price files should be encrypted at rest (issue #41). */
+function historyEncryptionEnabled(): boolean {
+  return config.security.encryption.encryptHistory && isEncryptionConfigured();
+}
+
+function readHistoryFile(filePath: string): any[] {
+  if (!fs.existsSync(filePath)) return [];
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  if (!raw) return [];
+  const contents = isEncrypted(raw) ? decrypt(raw) : raw;
+  return JSON.parse(contents);
+}
+
+function writeHistoryFile(filePath: string, history: any[]): void {
+  const serialized = JSON.stringify(history);
+  const payload = historyEncryptionEnabled() ? encrypt(serialized) : serialized;
+  fs.writeFileSync(filePath, payload);
 }
 
 export function appendHistoricalPrice(
@@ -20,13 +41,11 @@ export function appendHistoricalPrice(
   ensureDataDir();
   const filePath = HISTORY_FILE(asset);
   let history: any[] = [];
-  if (fs.existsSync(filePath)) {
-    try {
-      history = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    } catch { /* ignore corrupt data */ }
-  }
+  try {
+    history = readHistoryFile(filePath);
+  } catch { /* ignore corrupt data */ }
   history.push({ price, decimals, source, timestamp });
-  fs.writeFileSync(filePath, JSON.stringify(history));
+  writeHistoryFile(filePath, history);
 }
 
 export function getHistoricalPrices(
@@ -36,9 +55,8 @@ export function getHistoricalPrices(
   limit = 100,
 ): any[] {
   const filePath = HISTORY_FILE(asset);
-  if (!fs.existsSync(filePath)) return [];
   try {
-    let history = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    let history = readHistoryFile(filePath);
     if (from) history = history.filter((h: any) => h.timestamp >= from);
     if (to) history = history.filter((h: any) => h.timestamp <= to);
     return history.slice(-limit);

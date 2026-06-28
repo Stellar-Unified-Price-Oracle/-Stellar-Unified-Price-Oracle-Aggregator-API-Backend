@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from 'pg';
 import { Logger } from 'winston';
+import { config } from '../config';
 
 export interface PriceHistory {
   id?: number;
@@ -15,6 +16,7 @@ export class DatabaseClient {
   private pool: Pool;
   private logger: Logger;
   private initialized: boolean = false;
+  private timescaleEnabled: boolean = false;
 
   constructor(databaseUrl: string, logger: Logger) {
     this.logger = logger;
@@ -34,6 +36,9 @@ export class DatabaseClient {
     try {
       const client = await this.pool.connect();
       await this.createSchema(client);
+      if (config.database.useTimescale) {
+        await this.enableTimescale(client);
+      }
       client.release();
       this.initialized = true;
       this.logger.info('PostgreSQL database initialized');
@@ -44,21 +49,74 @@ export class DatabaseClient {
   }
 
   private async createSchema(client: PoolClient): Promise<void> {
+    // The primary key includes `timestamp` because TimescaleDB requires the
+    // partitioning (time) column to be part of every unique index.
     await client.query(`
       CREATE TABLE IF NOT EXISTS price_history (
-        id SERIAL PRIMARY KEY,
+        id BIGSERIAL,
         asset VARCHAR(50) NOT NULL,
         price VARCHAR(255) NOT NULL,
         decimals INTEGER NOT NULL,
         source VARCHAR(100) NOT NULL,
         timestamp BIGINT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id, timestamp)
       );
 
       CREATE INDEX IF NOT EXISTS idx_price_history_asset ON price_history(asset);
-      CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp);
-      CREATE INDEX IF NOT EXISTS idx_price_history_asset_timestamp ON price_history(asset, timestamp);
+      CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_price_history_asset_timestamp ON price_history(asset, timestamp DESC);
+
+      -- De-duplicate identical samples so JSON migration can be re-run idempotently.
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_price_history_asset_source_ts
+        ON price_history(asset, source, timestamp);
     `);
+  }
+
+  /**
+   * Convert price_history into a TimescaleDB hypertable partitioned on the
+   * integer `timestamp` column (issue #42). Falls back gracefully to a plain
+   * indexed table when the timescaledb extension is not installed.
+   */
+  private async enableTimescale(client: PoolClient): Promise<void> {
+    try {
+      await client.query('CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE');
+
+      // Integer time dimension: chunk_time_interval is expressed in the same
+      // unit as `timestamp` (unix seconds).
+      await client.query(
+        `SELECT create_hypertable(
+           'price_history', 'timestamp',
+           chunk_time_interval => $1,
+           if_not_exists => TRUE,
+           migrate_data => TRUE
+         )`,
+        [config.database.chunkIntervalSeconds],
+      );
+
+      this.timescaleEnabled = true;
+      this.logger.info('TimescaleDB hypertable enabled on price_history');
+
+      if (config.database.retentionDays > 0) {
+        const retentionSeconds = config.database.retentionDays * 24 * 60 * 60;
+        await client.query(
+          `SELECT add_retention_policy('price_history', drop_after => $1::bigint, if_not_exists => TRUE)`,
+          [retentionSeconds],
+        );
+        this.logger.info(`TimescaleDB retention policy set to ${config.database.retentionDays} days`);
+      }
+    } catch (err) {
+      this.timescaleEnabled = false;
+      this.logger.warn(
+        'TimescaleDB not available — continuing with a plain indexed table. ' +
+          'Install the timescaledb extension for time-series optimizations.',
+        err,
+      );
+    }
+  }
+
+  isTimescaleEnabled(): boolean {
+    return this.timescaleEnabled;
   }
 
   async appendHistoricalPrice(

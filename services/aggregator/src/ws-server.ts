@@ -1,18 +1,27 @@
 import { WebSocketServer as WsServer, WebSocket } from 'ws';
+import type { IncomingMessage } from 'http';
 import { logger } from './utils/logger';
+import { WsConnectionGuard } from './utils/ws-guard';
 
 export class WebSocketServer {
   private wss: WsServer | null = null;
   private port: number;
+  private guard = new WsConnectionGuard();
+  private sweepTimer: NodeJS.Timeout | null = null;
 
   constructor(port: number) {
     this.port = port;
   }
 
   start(): void {
-    this.wss = new WsServer({ port: this.port + 1 });
-    this.wss.on('connection', (ws: WebSocket) => {
-      logger.info(`WebSocket client connected (total: ${this.wss?.clients.size})`);
+    // Validate origin and rate-limit per IP on every upgrade (issue #40).
+    this.wss = new WsServer({ port: this.port + 1, verifyClient: this.guard.verifyClient });
+    this.sweepTimer = setInterval(() => this.guard.sweep(), 60000);
+    this.sweepTimer.unref?.();
+
+    this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+      const ip = req.socket.remoteAddress || 'unknown';
+      logger.info(`WebSocket client connected from ${ip} (total: ${this.wss?.clients.size})`);
 
       ws.on('close', () => {
         logger.info(`WebSocket client disconnected (total: ${this.wss?.clients.size})`);
@@ -37,6 +46,7 @@ export class WebSocketServer {
   }
 
   stop(): void {
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.wss?.close();
   }
 }

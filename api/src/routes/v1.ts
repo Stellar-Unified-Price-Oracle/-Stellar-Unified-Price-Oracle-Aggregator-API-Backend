@@ -2,6 +2,8 @@ import { AssetQuerySchema, HistoryQuerySchema } from '../services/validation';
 import { readAssetPrices, readPriceHistory } from '../services/price-store';
 import { HybridCache } from '../services/cache';
 import { cacheHitTotal, cacheMissTotal, lastPriceTimestamp, priceQueriesTotal } from '../middleware/metrics';
+import { issueWsCsrfToken, isCsrfEnabled } from '../websocket/csrf';
+import { config } from '../config';
 import { Router, Request, Response } from 'express';
 
 const router = Router();
@@ -135,6 +137,23 @@ router.get('/sources', async (_req: Request, res: Response) => {
 
   await pricesCache.set(cacheKey, data, 'sources');
   res.json({ success: true, data });
+});
+
+// Issues a short-lived CSRF token required to open a WebSocket connection
+// when WS CSRF protection is enabled (issue #40). Clients pass the returned
+// token as the `?token=` query parameter on the WebSocket URL.
+router.get('/ws-token', (_req: Request, res: Response) => {
+  if (!isCsrfEnabled()) {
+    return res.json({ success: true, data: { csrfRequired: false } });
+  }
+  res.json({
+    success: true,
+    data: {
+      csrfRequired: true,
+      token: issueWsCsrfToken(),
+      expiresInMs: config.ws.csrfTtlMs,
+    },
+  });
 });
 
 router.get('/health', async (_req: Request, res: Response) => {

@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { httpClient } from '../utils/http-client';
 import { config } from '../config';
 import { NormalizedPrice, OracleSourceName } from '../types';
 import { BaseSource } from './base';
@@ -15,7 +15,7 @@ export class ReflectorSource extends BaseSource {
 
   async fetchPrice(asset: string): Promise<NormalizedPrice | null> {
     const symbol = `Crypto.${asset}/USD`;
-    const response = await axios.get(`${this.baseUrl}/v1/prices`, {
+    const response = await httpClient.get(`${this.baseUrl}/v1/prices`, {
       params: { asset: symbol },
     });
 
