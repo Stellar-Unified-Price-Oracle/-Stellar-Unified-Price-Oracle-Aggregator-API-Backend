@@ -21,6 +21,8 @@ router.get('/', (_req: Request, res: Response) => {
       history: '/api/v1/history/:asset',
       sources: '/api/v1/sources',
       health: '/api/v1/health',
+      healthLive: '/api/v1/health/live',
+      healthReady: '/api/v1/health/ready',
       docs: '/api/v1/docs',
       metrics: '/metrics',
     },
@@ -137,8 +139,19 @@ router.get('/sources', async (_req: Request, res: Response) => {
   res.json({ success: true, data });
 });
 
-router.get('/health', async (_req: Request, res: Response) => {
-  const cacheKey = 'health:status';
+router.get('/health/live', (_req: Request, res: Response) => {
+  res.json({ status: 'alive', uptime: process.uptime() });
+});
+
+router.get('/health/ready', async (_req: Request, res: Response) => {
+  const prices = await readAssetPrices();
+  const ready = prices.length > 0;
+  res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not_ready', assetsTracked: prices.length });
+});
+
+router.get('/health', async (req: Request, res: Response) => {
+  const verbose = req.query.verbose === 'true';
+  const cacheKey = `health:status:${verbose}`;
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
@@ -147,18 +160,35 @@ router.get('/health', async (_req: Request, res: Response) => {
   cacheMissTotal.inc();
 
   const prices = await readAssetPrices();
-  const status = prices.length > 0 ? 'healthy' : 'degraded';
+  const hasStale = prices.some((p) => Date.now() / 1000 - p.timestamp > 120);
+  const status = prices.length === 0 ? 'unhealthy' : hasStale ? 'degraded' : 'healthy';
 
-  const data = {
+  const data: Record<string, any> = {
     service: 'stellar-price-oracle-api',
     status,
     uptime: process.uptime(),
     timestamp: Math.floor(Date.now() / 1000),
     assetsTracked: prices.length,
+    degradedAssets: prices.filter((p) => Date.now() / 1000 - p.timestamp > 120).map((p) => p.asset),
+    endpoints: {
+      liveness: '/api/v1/health/live',
+      readiness: '/api/v1/health/ready',
+    },
   };
 
+  if (verbose) {
+    data.prices = prices.map((p) => ({
+      asset: p.asset,
+      timestamp: p.timestamp,
+      sources: p.sources,
+      stale: Date.now() / 1000 - p.timestamp > 120,
+    }));
+    data.processMemoryMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    data.nodeVersion = process.version;
+  }
+
   await pricesCache.set(cacheKey, data, 'health');
-  res.json({ success: true, data });
+  res.status(status === 'unhealthy' ? 503 : 200).json({ success: true, data });
 });
 
 export default router;

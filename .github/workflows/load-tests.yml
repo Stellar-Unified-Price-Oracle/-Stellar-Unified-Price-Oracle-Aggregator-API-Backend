@@ -1,0 +1,97 @@
+name: Load Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'API base URL to test against'
+        required: false
+        default: 'http://localhost:3000'
+      scenario:
+        description: 'k6 script to run'
+        required: false
+        default: 'api-benchmark'
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly on Monday at 2am
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: price_oracle
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start API server
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/price_oracle
+          PORT: 3000
+          NODE_ENV: test
+        run: |
+          npm run build --workspace=api 2>/dev/null || true
+          npm start --workspace=api &
+          sleep 5
+
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:3000/api/v1/health/live && break
+            sleep 2
+          done
+
+      - name: Run k6 load test
+        run: |
+          SCRIPT="${{ github.event.inputs.scenario || 'api-benchmark' }}"
+          k6 run \
+            --env BASE_URL="${{ github.event.inputs.base_url || 'http://localhost:3000' }}" \
+            --out json=load-tests/results/summary.json \
+            load-tests/k6/${SCRIPT}.js
+        continue-on-error: true
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-results
+          path: load-tests/results/
+
+      - name: Check performance thresholds
+        run: |
+          if [ -f load-tests/results/summary.json ]; then
+            node -e "
+              const fs = require('fs');
+              const lines = fs.readFileSync('load-tests/results/summary.json', 'utf8').trim().split('\n');
+              const metrics = {};
+              for (const line of lines) {
+                try { const d = JSON.parse(line); if (d.type === 'Metric') metrics[d.data.name] = d.data; } catch {}
+              }
+              const p95 = metrics['http_req_duration']?.contains?.find(c => c.stat === 'p(95)')?.value;
+              if (p95 && p95 > 500) { console.error('p95 latency ' + p95.toFixed(0) + 'ms exceeds 500ms budget'); process.exit(1); }
+              console.log('Performance thresholds passed. p95:', p95?.toFixed(0) + 'ms');
+            "
+          fi

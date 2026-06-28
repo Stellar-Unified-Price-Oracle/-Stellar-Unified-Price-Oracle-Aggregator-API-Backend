@@ -2,6 +2,7 @@ import axios from 'axios';
 import BigNumber from 'bignumber.js';
 import { logger } from '../utils/logger';
 import { NormalizedPrice, OracleSourceName, SourceHealthStatus } from '../types';
+import { sourceCircuitBreaker } from '../source-circuit-breaker';
 
 export abstract class BaseSource {
   abstract name: OracleSourceName;
@@ -37,6 +38,11 @@ export abstract class BaseSource {
   }
 
   async fetchWithBackoff(asset: string, attempt = 1): Promise<NormalizedPrice | null> {
+    if (!sourceCircuitBreaker.isAllowed(this.name)) {
+      logger.warn(`[${this.name}] Circuit breaker OPEN — skipping fetch for ${asset}`);
+      return null;
+    }
+
     const maxAttempts = 3;
     const baseDelay = 1000;
 
@@ -46,6 +52,7 @@ export abstract class BaseSource {
       this.health.lastSuccess = Math.floor(Date.now() / 1000);
       this.health.consecutiveFailures = 0;
       this.health.healthy = true;
+      sourceCircuitBreaker.recordSuccess(this.name);
       return price;
     } catch (err) {
       this.health.totalFailures++;
@@ -57,6 +64,7 @@ export abstract class BaseSource {
       }
 
       this.health.uptimePercent = this.calcUptime();
+      sourceCircuitBreaker.recordFailure(this.name);
 
       if (attempt < maxAttempts) {
         const delay = Math.min(baseDelay * Math.pow(2, attempt - 1) + Math.random() * 500, 10000);
