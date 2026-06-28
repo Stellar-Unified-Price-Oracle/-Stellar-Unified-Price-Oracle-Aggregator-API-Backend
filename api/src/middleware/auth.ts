@@ -2,12 +2,15 @@ import { Request, Response, NextFunction } from 'express';
 import { IncomingMessage } from 'http';
 import { apiKeyManager } from '../services/api-key-manager';
 import { logger } from './logger';
+import { auditLog } from '../services/audit-logger';
+import type { Role } from './rbac';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       apiKey?: string;
+      userRole?: Role;
       rateLimitInfo?: {
         allowed: boolean;
         remaining: number;
@@ -42,8 +45,10 @@ function applyRateLimitHeaders(res: Response, rateLimitPerMin: number, remaining
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const apiKey = extractApiKey(req);
+  const ctx = requestContext(req);
 
   if (!apiKey) {
+    auditLog('auth.failure', { ...ctx, details: { reason: 'MISSING_API_KEY', path: req.path } });
     res.status(401).json({
       success: false,
       error: {
@@ -57,6 +62,11 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const validation = apiKeyManager.validateKey(apiKey);
   if (!validation.valid) {
     logger.warn(`Invalid API key attempt: ${apiKey.substring(0, 8)}...`);
+    auditLog('auth.failure', {
+      ...ctx,
+      apiKeyPrefix: apiKey.substring(0, 8),
+      details: { reason: 'INVALID_API_KEY', path: req.path },
+    });
     res.status(401).json({
       success: false,
       error: {
@@ -85,6 +95,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   }
 
   req.apiKey = apiKey;
+  req.userRole = validation.metadata?.role || 'viewer';
   req.rateLimitInfo = rateLimitInfo;
   applyRateLimitHeaders(res, validation.metadata!.rateLimitPerMin, rateLimitInfo.remaining, rateLimitInfo.resetTime);
 
@@ -94,8 +105,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
 export function adminAuthMiddleware(_adminKeyPrefix: string) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const apiKey = extractApiKey(req);
+    const ctx = requestContext(req);
 
     if (!apiKey) {
+      auditLog('auth.failure', { ...ctx, details: { reason: 'MISSING_ADMIN_KEY', path: req.path } });
       res.status(401).json({
         success: false,
         error: { code: 'MISSING_API_KEY', message: 'Admin API key required.' },
@@ -124,12 +137,14 @@ export function adminAuthMiddleware(_adminKeyPrefix: string) {
     }
 
     req.apiKey = apiKey;
+    req.userRole = 'admin';
     next();
   };
 }
 
 export function optionalAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
   const apiKey = extractApiKey(req);
+  const ctx = requestContext(req);
 
   if (!apiKey) {
     next();
@@ -161,6 +176,7 @@ export function optionalAuthMiddleware(req: Request, res: Response, next: NextFu
   }
 
   req.apiKey = apiKey;
+  req.userRole = validation.metadata?.role || 'viewer';
   req.rateLimitInfo = rateLimitInfo;
   applyRateLimitHeaders(res, validation.metadata!.rateLimitPerMin, rateLimitInfo.remaining, rateLimitInfo.resetTime);
 

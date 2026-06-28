@@ -2,7 +2,10 @@ import { Router, Request, Response } from 'express';
 import { apiKeyManager, TIER_RATE_LIMITS, KeyTier, KeyRole } from '../services/api-key-manager';
 import { corsManager } from '../services/cors-manager';
 import { adminAuthMiddleware } from '../middleware/auth';
+import { requireRole, ROLES, ROLE_PERMISSIONS } from '../middleware/rbac';
 import { logger } from '../middleware/logger';
+import { auditLog } from '../services/audit-logger';
+import type { Role } from '../middleware/rbac';
 
 const router = Router();
 const ADMIN_KEY_PREFIX = process.env.ADMIN_KEY_PREFIX || 'admin_';
@@ -253,6 +256,7 @@ router.get('/health', (req: Request, res: Response) => {
     data: {
       status: 'healthy',
       adminAuthenticated: !!req.apiKey,
+      role: req.userRole,
       timestamp: Math.floor(Date.now() / 1000),
       tiers: tierLimits,
       corsOriginsCount: corsManager.listOrigins().length,

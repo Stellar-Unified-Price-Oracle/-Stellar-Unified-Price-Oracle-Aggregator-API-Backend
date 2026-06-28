@@ -3,6 +3,7 @@ import { IncomingMessage } from 'http';
 import { logger } from '../middleware/logger';
 import { validateWebSocketApiKey } from '../middleware/auth';
 import { HybridCache } from '../services/cache';
+import { validateWsAssets } from '../middleware/sanitization';
 
 export class PriceWebSocketServer {
   private wss: WsServer | null = null;
@@ -57,25 +58,42 @@ export class PriceWebSocketServer {
     logger.info(`WebSocket server on port ${this.port}`);
   }
 
-  private handleMessage(ws: WebSocket, msg: any): void {
-    switch (msg.type) {
+  private handleMessage(ws: WebSocket, msg: unknown): void {
+    if (!msg || typeof msg !== 'object') {
+      ws.send(JSON.stringify({ type: 'error', message: 'Invalid message' }));
+      return;
+    }
+
+    const m = msg as Record<string, unknown>;
+
+    switch (m.type) {
       case 'subscribe':
-        if (msg.assets && Array.isArray(msg.assets)) {
+        if (!validateWsAssets(m.assets)) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Invalid assets: must be an array of up to 50 valid asset symbols' }));
+          return;
+        }
+        {
           const subs = this.subscriptions.get(ws);
-          msg.assets.forEach((a: string) => subs?.add(a.toUpperCase()));
-          ws.send(JSON.stringify({ type: 'subscribed', assets: msg.assets }));
+          (m.assets as string[]).forEach((a) => subs?.add(a.toUpperCase()));
+          ws.send(JSON.stringify({ type: 'subscribed', assets: m.assets }));
         }
         break;
       case 'unsubscribe':
-        if (msg.assets && Array.isArray(msg.assets)) {
+        if (!validateWsAssets(m.assets)) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Invalid assets: must be an array of up to 50 valid asset symbols' }));
+          return;
+        }
+        {
           const subs = this.subscriptions.get(ws);
-          msg.assets.forEach((a: string) => subs?.delete(a.toUpperCase()));
-          ws.send(JSON.stringify({ type: 'unsubscribed', assets: msg.assets }));
+          (m.assets as string[]).forEach((a) => subs?.delete(a.toUpperCase()));
+          ws.send(JSON.stringify({ type: 'unsubscribed', assets: m.assets }));
         }
         break;
       case 'ping':
         ws.send(JSON.stringify({ type: 'pong', timestamp: Math.floor(Date.now() / 1000) }));
         break;
+      default:
+        ws.send(JSON.stringify({ type: 'error', message: 'Unknown message type' }));
     }
   }
 

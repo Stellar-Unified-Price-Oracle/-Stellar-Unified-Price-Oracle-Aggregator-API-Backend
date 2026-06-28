@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { logger } from '../middleware/logger';
+import type { Role } from '../middleware/rbac';
 
 export type KeyTier = 'free' | 'pro' | 'enterprise' | 'admin';
 export type KeyRole = 'read-only' | 'admin';
@@ -22,6 +23,9 @@ export interface ApiKeyMetadata {
   tier: KeyTier;
   role: KeyRole;
   description?: string;
+  role: Role;
+  /** If set, this key is in rotation grace period until this timestamp */
+  rotationExpiresAt?: number;
 }
 
 export interface ApiKeyStore {
@@ -50,6 +54,7 @@ export class ApiKeyManager {
       tier,
       role,
       description,
+      role,
     };
 
     this.keys.set(key, metadata);
@@ -246,6 +251,7 @@ export class ApiKeyManager {
             tier,
             role,
             description,
+            role,
           };
 
           this.keys.set(key, metadata);
