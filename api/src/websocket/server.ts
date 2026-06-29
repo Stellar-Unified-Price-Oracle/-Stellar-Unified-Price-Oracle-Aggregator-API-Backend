@@ -13,7 +13,6 @@ export class PriceWebSocketServer {
   private clients: Set<WebSocket> = new Set();
   private subscriptions: Map<WebSocket, Set<string>> = new Map();
   private cache: HybridCache<any> | null = null;
-  private guard = new WsUpgradeGuard();
   private sweepTimer: NodeJS.Timeout | null = null;
 
   constructor(port: number) {
@@ -40,7 +39,7 @@ export class PriceWebSocketServer {
 
       this.clients.add(ws);
       this.subscriptions.set(ws, new Set());
-      logger.info(`WS client connected from ${ip} (total: ${this.clients.size})`);
+      logger.info(`WS client connected (total: ${this.clients.size})`);
 
       ws.on('message', (raw: Buffer) => {
         try {

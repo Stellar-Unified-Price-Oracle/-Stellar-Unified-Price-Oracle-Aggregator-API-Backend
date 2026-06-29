@@ -21,6 +21,15 @@ declare global {
   }
 }
 
+function requestContext(req: Request) {
+  return {
+    ip: req.ip,
+    method: req.method,
+    path: req.path,
+    userAgent: req.headers['user-agent'],
+  };
+}
+
 export function extractApiKey(req: Request | IncomingMessage): string | null {
   const headers = req.headers;
 
