@@ -78,7 +78,7 @@ jobs:
         run: docker build -t stellar-oracle-aggregator:scan services/aggregator
 
       - name: Scan aggregator image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: stellar-oracle-aggregator:scan
           format: sarif
@@ -104,7 +104,7 @@ jobs:
         run: docker build -t stellar-oracle-api:scan api
 
       - name: Scan API image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: stellar-oracle-api:scan
           format: sarif
