@@ -149,3 +149,20 @@ fn calculate_usd_price(env: &Env, asset: &String, price: i128, decimals: u32) ->
 
     None
 }
+
+// Event emission helpers
+pub fn emit_price_updated(env: &Env, asset: &String, price: i128) {
+env.events().publish(("price_updated", asset.clone()), price);
+}
+
+pub fn emit_admin_changed(env: &Env, new_admin: &Address) {
+env.events().publish(("admin_changed",), new_admin.clone());
+}
+
+pub fn emit_fee_updated(env: &Env, fee: i128) {
+env.events().publish(("fee_updated",), fee);
+}
+
+pub fn emit_whitelist_updated(env: &Env, addr: &Address, status: bool) {
+env.events().publish(("whitelist_updated", addr.clone()), status);
+}
