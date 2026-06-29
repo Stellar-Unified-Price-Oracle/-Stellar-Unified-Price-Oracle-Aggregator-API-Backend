@@ -22,6 +22,8 @@ import { ArchivalService } from './services/archival';
 import { setDatabase } from './services/price-store';
 import { initializeTracing } from './services/tracing';
 import adminRoutes from './routes/admin';
+import statusRoutes from './routes/status';
+import { uptimeTracker } from './services/uptime-tracker';
 import { AppError } from './errors/app-error';
 import { ErrorCode } from './errors/catalog';
 
@@ -107,6 +109,8 @@ app.use('/api/v1/health', optionalAuthMiddleware);
 // Routes
 app.use('/api/v1', v1Routes);
 app.use('/api/v1/admin', adminRoutes);
+// Public status page — no authentication required (#66)
+app.use('/api/v1/status', statusRoutes);
 
 // Documentation and metrics
 app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
@@ -132,6 +136,9 @@ async function startServer(): Promise<void> {
   const wss = new PriceWebSocketServer(config.wsPort);
   wss.setCache(cache);
   wss.start();
+
+  // #66 — Synthetic monitoring probes (run every 60 s)
+  startSyntheticProbes(config.port);
 
   process.on('SIGTERM', () => {
     logger.info('Shutting down API server...');
@@ -162,5 +169,44 @@ startServer().catch((err) => {
   logger.error('Failed to start API server', err);
   process.exit(1);
 });
+
+function startSyntheticProbes(port: number): void {
+  const probe = async () => {
+    // API liveness
+    try {
+      const res = await fetch(`http://localhost:${port}/api/v1/health/live`);
+      uptimeTracker.recordCheck('API', res.ok);
+    } catch {
+      uptimeTracker.recordCheck('API', false);
+    }
+
+    // API readiness / price feed
+    try {
+      const res = await fetch(`http://localhost:${port}/api/v1/health/ready`);
+      if (res.ok) {
+        uptimeTracker.recordCheck('Price Feed', true);
+      } else {
+        uptimeTracker.setDegraded('Price Feed');
+      }
+    } catch {
+      uptimeTracker.recordCheck('Price Feed', false);
+    }
+
+    // WebSocket reachability (TCP connect check via health endpoint)
+    try {
+      const res = await fetch(`http://localhost:${port}/api/v1/health`);
+      const body = await res.json() as any;
+      const wsStatus = body?.data?.status === 'healthy' ? true : body?.data?.status !== 'unhealthy';
+      uptimeTracker.recordCheck('WebSocket', wsStatus);
+    } catch {
+      uptimeTracker.recordCheck('WebSocket', false);
+    }
+  };
+
+  // Run once immediately then on interval
+  probe().catch(() => {});
+  const timer = setInterval(() => probe().catch(() => {}), 60_000);
+  timer.unref?.();
+}
 
 export { app };

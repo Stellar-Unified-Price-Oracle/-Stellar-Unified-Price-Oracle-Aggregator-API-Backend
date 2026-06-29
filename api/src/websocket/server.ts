@@ -6,6 +6,14 @@ import { HybridCache } from '../services/cache';
 import { validateWsAssets } from '../middleware/sanitization';
 import { verifyWsSignature } from '../middleware/ws-signing';
 import { config } from '../config';
+import {
+  wsConnectionsActive,
+  wsConnectionsTotal,
+  wsMessagesTotal,
+  wsConnectionDuration,
+  wsErrorsTotal,
+  wsSubscribeEventsTotal,
+} from '../middleware/metrics';
 
 export class PriceWebSocketServer {
   private wss: WsServer | null = null;
@@ -37,26 +45,35 @@ export class PriceWebSocketServer {
         return;
       }
 
+      const connectedAt = Date.now();
       this.clients.add(ws);
       this.subscriptions.set(ws, new Set());
+
+      wsConnectionsActive.inc();
+      wsConnectionsTotal.inc();
       logger.info(`WS client connected (total: ${this.clients.size})`);
 
       ws.on('message', (raw: Buffer) => {
+        wsMessagesTotal.inc({ direction: 'inbound', type: 'raw' });
         try {
           const msg = JSON.parse(raw.toString());
           this.handleMessage(ws, msg);
         } catch {
           ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
+          wsErrorsTotal.inc();
         }
       });
 
       ws.on('close', () => {
         this.clients.delete(ws);
         this.subscriptions.delete(ws);
+        wsConnectionsActive.dec();
+        wsConnectionDuration.observe((Date.now() - connectedAt) / 1000);
         logger.info(`WS client disconnected (total: ${this.clients.size})`);
       });
 
       ws.on('error', (err) => {
+        wsErrorsTotal.inc();
         logger.error('WS error', err);
         this.clients.delete(ws);
         this.subscriptions.delete(ws);
@@ -71,6 +88,7 @@ export class PriceWebSocketServer {
   private handleMessage(ws: WebSocket, msg: unknown): void {
     if (!msg || typeof msg !== 'object') {
       ws.send(JSON.stringify({ type: 'error', message: 'Invalid message' }));
+      wsErrorsTotal.inc();
       return;
     }
 
@@ -85,6 +103,8 @@ export class PriceWebSocketServer {
         {
           const subs = this.subscriptions.get(ws);
           (m.assets as string[]).forEach((a) => subs?.add(a.toUpperCase()));
+          wsSubscribeEventsTotal.inc({ action: 'subscribe' });
+          wsMessagesTotal.inc({ direction: 'inbound', type: 'subscribe' });
           ws.send(JSON.stringify({ type: 'subscribed', assets: m.assets }));
         }
         break;
@@ -96,38 +116,49 @@ export class PriceWebSocketServer {
         {
           const subs = this.subscriptions.get(ws);
           (m.assets as string[]).forEach((a) => subs?.delete(a.toUpperCase()));
+          wsSubscribeEventsTotal.inc({ action: 'unsubscribe' });
+          wsMessagesTotal.inc({ direction: 'inbound', type: 'unsubscribe' });
           ws.send(JSON.stringify({ type: 'unsubscribed', assets: m.assets }));
         }
         break;
       case 'ping':
+        wsMessagesTotal.inc({ direction: 'inbound', type: 'ping' });
         ws.send(JSON.stringify({ type: 'pong', timestamp: Math.floor(Date.now() / 1000) }));
+        wsMessagesTotal.inc({ direction: 'outbound', type: 'pong' });
         break;
       default:
+        wsErrorsTotal.inc();
         ws.send(JSON.stringify({ type: 'error', message: 'Unknown message type' }));
     }
   }
 
   broadcast(data: any): void {
     const message = JSON.stringify({ type: 'price_update', ...data });
+    let sent = 0;
     this.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(message);
+        sent++;
       }
     });
+    if (sent > 0) wsMessagesTotal.inc({ direction: 'outbound', type: 'price_update' }, sent);
   }
 
   broadcastToSubscribers(priceUpdate: any): void {
     const asset = priceUpdate?.asset?.toUpperCase();
     const message = JSON.stringify({ type: 'price_update', data: priceUpdate });
+    let sent = 0;
 
     this.clients.forEach((client) => {
       if (client.readyState !== WebSocket.OPEN) return;
       const subs = this.subscriptions.get(client);
       if (!subs || subs.size === 0 || (asset && subs.has(asset))) {
         client.send(message);
+        sent++;
       }
     });
 
+    if (sent > 0) wsMessagesTotal.inc({ direction: 'outbound', type: 'price_update' }, sent);
     this.invalidateCache(asset);
   }
 
