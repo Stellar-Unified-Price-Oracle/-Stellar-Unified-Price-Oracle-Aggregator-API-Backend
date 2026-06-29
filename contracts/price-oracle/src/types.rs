@@ -46,4 +46,7 @@ pub enum DataKey {
     Implementation,
     PreviousImplementation,
     ContractVersion,
+ QueryFee,
+ FeeBalance,
+ Whitelist(Address),
 }

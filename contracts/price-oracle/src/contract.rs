@@ -149,3 +149,32 @@ fn calculate_usd_price(env: &Env, asset: &String, price: i128, decimals: u32) ->
 
     None
 }
+
+impl PriceOracleContract {
+pub fn set_query_fee(env: Env, fee: i128) {
+let admin = storage::get_admin(&env);
+admin.require_auth();
+storage::set_query_fee(&env, &fee);
+}
+
+pub fn get_query_fee(env: Env) -> i128 {
+storage::get_query_fee(&env)
+}
+
+pub fn set_whitelist(env: Env, addr: Address, status: bool) {
+let admin = storage::get_admin(&env);
+admin.require_auth();
+storage::set_whitelist(&env, &addr, status);
+}
+
+pub fn withdraw_fees(env: Env, to: Address) {
+let admin = storage::get_admin(&env);
+admin.require_auth();
+let balance = storage::get_fee_balance(&env);
+if balance > 0 {
+storage::set_fee_balance(&env, &0);
+let token = soroban_sdk::token::Client::new(&env, &to);
+token.transfer(&env.current_contract_address(), &to, &balance);
+}
+}
+}

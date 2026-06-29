@@ -144,3 +144,38 @@ pub fn is_trusted_asset(env: &Env, asset: &String) -> bool {
         .get(&DataKey::TrustedAsset(asset.clone()))
         .unwrap_or(false)
 }
+
+pub fn set_query_fee(env: &Env, fee: &i128) {
+env.storage().instance().set(&DataKey::QueryFee, fee);
+}
+
+pub fn get_query_fee(env: &Env) -> i128 {
+env.storage()
+.instance()
+.get(&DataKey::QueryFee)
+.unwrap_or(0)
+}
+
+pub fn set_fee_balance(env: &Env, balance: &i128) {
+env.storage().instance().set(&DataKey::FeeBalance, balance);
+}
+
+pub fn get_fee_balance(env: &Env) -> i128 {
+env.storage()
+.instance()
+.get(&DataKey::FeeBalance)
+.unwrap_or(0)
+}
+
+pub fn is_whitelisted(env: &Env, addr: &Address) -> bool {
+env.storage()
+.instance()
+.get(&DataKey::Whitelist(addr.clone()))
+.unwrap_or(false)
+}
+
+pub fn set_whitelist(env: &Env, addr: &Address, status: bool) {
+env.storage()
+.instance()
+.set(&DataKey::Whitelist(addr.clone()), &status);
+}
