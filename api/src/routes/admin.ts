@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { apiKeyManager, TIER_RATE_LIMITS, KeyTier, KeyRole } from '../services/api-key-manager';
+import { apiKeyManager, TIER_RATE_LIMITS, KeyTier } from '../services/api-key-manager';
 import { corsManager } from '../services/cors-manager';
 import { adminAuthMiddleware } from '../middleware/auth';
 import { requireRole, ROLES, ROLE_PERMISSIONS } from '../middleware/rbac';
@@ -17,10 +17,10 @@ router.use(adminAuthMiddleware(ADMIN_KEY_PREFIX));
 // ── API Key Management ────────────────────────────────────────────────────────
 
 router.post('/keys', (req: Request, res: Response) => {
-  const { rateLimitPerMin, description, tier = 'free', role = 'read-only' } = req.body;
+  const { rateLimitPerMin, description, tier = 'free', role = 'viewer' } = req.body;
 
   const validTiers: KeyTier[] = ['free', 'pro', 'enterprise', 'admin'];
-  const validRoles: KeyRole[] = ['read-only', 'admin'];
+  const validRoles: Role[] = ['admin', 'operator', 'viewer'];
 
   if (tier && !validTiers.includes(tier)) {
     return res.status(400).json({
@@ -41,7 +41,7 @@ router.post('/keys', (req: Request, res: Response) => {
     : TIER_RATE_LIMITS[tier as KeyTier];
 
   try {
-    const newKey = apiKeyManager.generateKey(limit, description, tier as KeyTier, role as KeyRole);
+    const newKey = apiKeyManager.generateKey(limit, description, tier as KeyTier, role as Role);
     logger.info(`Admin ${req.apiKey?.substring(0, 8)}... generated API key tier=${tier} role=${role}`);
 
     res.status(201).json({

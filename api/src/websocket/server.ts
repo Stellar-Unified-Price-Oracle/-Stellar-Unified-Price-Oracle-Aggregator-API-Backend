@@ -4,6 +4,8 @@ import { logger } from '../middleware/logger';
 import { validateWebSocketApiKey } from '../middleware/auth';
 import { HybridCache } from '../services/cache';
 import { validateWsAssets } from '../middleware/sanitization';
+import { verifyWsSignature } from '../middleware/ws-signing';
+import { config } from '../config';
 
 export class PriceWebSocketServer {
   private wss: WsServer | null = null;
@@ -11,7 +13,6 @@ export class PriceWebSocketServer {
   private clients: Set<WebSocket> = new Set();
   private subscriptions: Map<WebSocket, Set<string>> = new Map();
   private cache: HybridCache<any> | null = null;
-  private guard = new WsUpgradeGuard();
   private sweepTimer: NodeJS.Timeout | null = null;
 
   constructor(port: number) {
@@ -29,9 +30,16 @@ export class PriceWebSocketServer {
         return;
       }
 
+      const sigCheck = verifyWsSignature(req, config.ws.hmacSecret);
+      if (!sigCheck.valid) {
+        ws.send(JSON.stringify({ type: 'error', code: 'SIGNATURE_INVALID', message: sigCheck.error }));
+        ws.close(1008, sigCheck.error || 'Invalid signature');
+        return;
+      }
+
       this.clients.add(ws);
       this.subscriptions.set(ws, new Set());
-      logger.info(`WS client connected from ${ip} (total: ${this.clients.size})`);
+      logger.info(`WS client connected (total: ${this.clients.size})`);
 
       ws.on('message', (raw: Buffer) => {
         try {

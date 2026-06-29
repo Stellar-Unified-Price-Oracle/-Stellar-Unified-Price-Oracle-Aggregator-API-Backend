@@ -3,7 +3,6 @@ import { logger } from '../middleware/logger';
 import type { Role } from '../middleware/rbac';
 
 export type KeyTier = 'free' | 'pro' | 'enterprise' | 'admin';
-export type KeyRole = 'read-only' | 'admin';
 
 export const TIER_RATE_LIMITS: Record<KeyTier, number> = {
   free: 60,
@@ -21,9 +20,8 @@ export interface ApiKeyMetadata {
   isActive: boolean;
   rateLimitPerMin: number;
   tier: KeyTier;
-  role: KeyRole;
-  description?: string;
   role: Role;
+  description?: string;
   /** If set, this key is in rotation grace period until this timestamp */
   rotationExpiresAt?: number;
 }
@@ -40,7 +38,7 @@ export class ApiKeyManager {
     this.loadKeysFromEnv();
   }
 
-  generateKey(rateLimitPerMin: number = TIER_RATE_LIMITS.free, description?: string, tier: KeyTier = 'free', role: KeyRole = 'read-only'): ApiKeyMetadata {
+  generateKey(rateLimitPerMin: number = TIER_RATE_LIMITS.free, description?: string, tier: KeyTier = 'free', role: Role = 'viewer'): ApiKeyMetadata {
     const key = this.createKey(tier);
     const keyHash = this.hashKey(key);
     const metadata: ApiKeyMetadata = {
@@ -54,7 +52,6 @@ export class ApiKeyManager {
       tier,
       role,
       description,
-      role,
     };
 
     this.keys.set(key, metadata);
@@ -162,7 +159,7 @@ export class ApiKeyManager {
     return this.keys.get(key) || null;
   }
 
-  getAllKeys(): Array<{ keyPrefix: string; keyHash: string; createdAt: number; lastUsed: number | null; requestCount: number; isActive: boolean; rateLimitPerMin: number; tier: KeyTier; role: KeyRole; description?: string }> {
+  getAllKeys(): Array<{ keyPrefix: string; keyHash: string; createdAt: number; lastUsed: number | null; requestCount: number; isActive: boolean; rateLimitPerMin: number; tier: KeyTier; role: Role; description?: string }> {
     return Array.from(this.keys.values()).map((m) => ({
       keyPrefix: m.key.substring(0, 12) + '...',
       keyHash: m.keyHash,
@@ -238,7 +235,7 @@ export class ApiKeyManager {
           const limit = parseInt(parts[1], 10);
           const description = parts[2] || undefined;
           const tier = (parts[3] as KeyTier) || 'free';
-          const role = (parts[4] as KeyRole) || 'read-only';
+          const role = (parts[4] as Role) || 'viewer';
 
           const metadata: ApiKeyMetadata = {
             key,
@@ -251,7 +248,6 @@ export class ApiKeyManager {
             tier,
             role,
             description,
-            role,
           };
 
           this.keys.set(key, metadata);
