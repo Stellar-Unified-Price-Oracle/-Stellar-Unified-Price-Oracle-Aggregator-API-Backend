@@ -12,6 +12,7 @@ import { errorHandler, notFoundHandler } from './middleware/error';
 import { metricsMiddleware, metricsHandler } from './middleware/metrics';
 import { authMiddleware, optionalAuthMiddleware } from './middleware/auth';
 import { sanitizeInputs, cspHeaders } from './middleware/sanitization';
+import { httpsRedirect, hstsHeaders } from './middleware/https';
 import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
 import v1Routes, { initializeCache } from './routes/v1';
@@ -60,6 +61,12 @@ initializeCache(cache);
 
 app.use(helmet());
 app.use(cors(corsManager.getCorsOptions()));
+
+if (process.env.NODE_ENV === 'production') {
+  app.use(httpsRedirect);
+  app.use(hstsHeaders);
+}
+
 app.use(express.json());
 app.use(sanitizeInputs);
 app.use(requestIdMiddleware);

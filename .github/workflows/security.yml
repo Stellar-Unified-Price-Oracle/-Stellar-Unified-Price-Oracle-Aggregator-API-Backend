@@ -1,0 +1,121 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  packages: read
+
+jobs:
+  codeql:
+    name: SAST — CodeQL
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        language: [javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+
+  npm-audit:
+    name: SCA — npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Audit aggregator
+        working-directory: services/aggregator
+        run: npm ci --ignore-scripts && npm audit --audit-level=high
+
+      - name: Audit API
+        working-directory: api
+        run: npm ci --ignore-scripts && npm audit --audit-level=high
+
+  cargo-audit:
+    name: SCA — cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        working-directory: contracts/price-oracle
+        run: cargo audit
+
+  trivy-aggregator:
+    name: Container scan — aggregator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build aggregator image
+        run: docker build -t stellar-oracle-aggregator:scan services/aggregator
+
+      - name: Scan aggregator image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: stellar-oracle-aggregator:scan
+          format: sarif
+          output: trivy-aggregator.sarif
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload aggregator scan results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-aggregator.sarif
+          category: trivy-aggregator
+
+  trivy-api:
+    name: Container scan — api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -t stellar-oracle-api:scan api
+
+      - name: Scan API image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: stellar-oracle-api:scan
+          format: sarif
+          output: trivy-api.sarif
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload API scan results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-api.sarif
+          category: trivy-api

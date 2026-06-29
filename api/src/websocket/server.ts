@@ -4,6 +4,8 @@ import { logger } from '../middleware/logger';
 import { validateWebSocketApiKey } from '../middleware/auth';
 import { HybridCache } from '../services/cache';
 import { validateWsAssets } from '../middleware/sanitization';
+import { verifyWsSignature } from '../middleware/ws-signing';
+import { config } from '../config';
 
 export class PriceWebSocketServer {
   private wss: WsServer | null = null;
@@ -26,6 +28,13 @@ export class PriceWebSocketServer {
       if (!auth.valid) {
         ws.send(JSON.stringify({ type: 'error', code: 'UNAUTHORIZED', message: auth.error }));
         ws.close(1008, auth.error || 'Unauthorized');
+        return;
+      }
+
+      const sigCheck = verifyWsSignature(req, config.ws.hmacSecret);
+      if (!sigCheck.valid) {
+        ws.send(JSON.stringify({ type: 'error', code: 'SIGNATURE_INVALID', message: sigCheck.error }));
+        ws.close(1008, sigCheck.error || 'Invalid signature');
         return;
       }
 
