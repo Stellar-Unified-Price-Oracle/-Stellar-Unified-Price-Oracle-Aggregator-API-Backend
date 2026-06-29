@@ -24,6 +24,48 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL ? decryptSecret(process.env.DATABASE_URL) : undefined,
   // TimescaleDB hypertable support (issue #42).
   useTimescale: process.env.USE_TIMESCALEDB !== 'false',
+  // Connection pooling, retry and circuit breaker (issue #44).
+  db: {
+    poolMin: parseInt(process.env.DATABASE_POOL_MIN || '2', 10),
+    poolMax: parseInt(process.env.DATABASE_POOL_MAX || '20', 10),
+    idleTimeoutMs: parseInt(process.env.DATABASE_IDLE_TIMEOUT_MS || '30000', 10),
+    connectionTimeoutMs: parseInt(process.env.DATABASE_CONNECTION_TIMEOUT_MS || '5000', 10),
+    statementTimeoutMs: parseInt(process.env.DATABASE_STATEMENT_TIMEOUT_MS || '15000', 10),
+    // Exponential-backoff retry for transient failures.
+    retry: {
+      maxRetries: parseInt(process.env.DATABASE_RETRY_MAX || '3', 10),
+      baseDelayMs: parseInt(process.env.DATABASE_RETRY_BASE_DELAY_MS || '100', 10),
+      maxDelayMs: parseInt(process.env.DATABASE_RETRY_MAX_DELAY_MS || '2000', 10),
+    },
+    // Circuit breaker to prevent thundering-herd against an unhealthy DB.
+    circuitBreaker: {
+      enabled: process.env.DATABASE_CIRCUIT_BREAKER_ENABLED !== 'false',
+      failureThreshold: parseInt(process.env.DATABASE_CB_FAILURE_THRESHOLD || '5', 10),
+      successThreshold: parseInt(process.env.DATABASE_CB_SUCCESS_THRESHOLD || '2', 10),
+      openMs: parseInt(process.env.DATABASE_CB_OPEN_MS || '10000', 10),
+    },
+    // Read replicas for horizontal read scaling (issue #45).
+    replica: {
+      urls: (process.env.DATABASE_REPLICA_URLS || '')
+        .split(',')
+        .map((u) => u.trim())
+        .filter(Boolean)
+        .map((u) => decryptSecret(u)),
+      // How long a replica may lag the primary before reads fall back to the
+      // primary (0 disables the lag check).
+      maxLagMs: parseInt(process.env.DATABASE_REPLICA_MAX_LAG_MS || '0', 10),
+      healthCheckIntervalMs: parseInt(process.env.DATABASE_REPLICA_HEALTHCHECK_MS || '10000', 10),
+    },
+    // Data archival / retention (issue #43).
+    archival: {
+      enabled: process.env.DATABASE_ARCHIVAL_ENABLED === 'true',
+      retentionDays: parseInt(process.env.HISTORY_RETENTION_DAYS || '0', 10),
+      archiveAfterDays: parseInt(process.env.HISTORY_ARCHIVE_AFTER_DAYS || '90', 10),
+      coldStorageDir: process.env.COLD_STORAGE_DIR || './data/archive',
+      batchSize: parseInt(process.env.ARCHIVAL_BATCH_SIZE || '5000', 10),
+      intervalMs: parseInt(process.env.ARCHIVAL_INTERVAL_MS || '86400000', 10),
+    },
+  },
   // WebSocket upgrade hardening (issue #40).
   ws: {
     allowedOrigins: (process.env.WS_ALLOWED_ORIGINS || '')
