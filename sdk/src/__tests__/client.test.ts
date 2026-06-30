@@ -1,4 +1,4 @@
-import { PriceOracleClient, PriceOracleError } from '../index';
+import { PriceOracleClient, PriceOracleError, createStellarOracleApiClient, StellarOracleApiClient } from '../index';
 
 describe('PriceOracleClient', () => {
   let client: PriceOracleClient;
@@ -61,9 +61,7 @@ describe('PriceOracleClient', () => {
       const options = {
         limit: 50,
       };
-      expect(() => {
-        client.getHistory('XLM', options);
-      }).not.toThrow();
+      await expect(client.getHistory('XLM', options)).rejects.toThrow(PriceOracleError);
     });
   });
 
@@ -115,6 +113,13 @@ describe('PriceOracleClient', () => {
       const error = new PriceOracleError('TEST', 'Test error');
       expect(error).toBeInstanceOf(PriceOracleError);
       expect(error.code).toBe('TEST');
+    });
+  });
+
+  describe('generated client', () => {
+    it('should create StellarOracleApiClient via factory', () => {
+      const client = createStellarOracleApiClient({ baseUrl: 'http://localhost:3000' });
+      expect(client).toBeInstanceOf(StellarOracleApiClient);
     });
   });
 
