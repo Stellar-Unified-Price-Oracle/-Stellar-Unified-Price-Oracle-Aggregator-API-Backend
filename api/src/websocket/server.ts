@@ -15,6 +15,22 @@ import {
   wsSubscribeEventsTotal,
 } from '../middleware/metrics';
 
+// Circular message buffer per asset for replay support
+const MESSAGE_BUFFER_SIZE = parseInt(process.env.WS_BUFFER_SIZE || '200', 10);
+
+interface BufferedMessage {
+  sequenceId: number;
+  asset: string;
+  timestamp: number;
+  data: any;
+}
+
+let globalSequence = 0;
+
+function nextSeq(): number {
+  return ++globalSequence;
+}
+
 export class PriceWebSocketServer {
   private wss: WsServer | null = null;
   private port: number;
@@ -22,6 +38,8 @@ export class PriceWebSocketServer {
   private subscriptions: Map<WebSocket, Set<string>> = new Map();
   private cache: HybridCache<any> | null = null;
   private sweepTimer: NodeJS.Timeout | null = null;
+  // Per-asset circular message buffer for replay on reconnect
+  private messageBuffers: Map<string, BufferedMessage[]> = new Map();
 
   constructor(port: number) {
     this.port = port;
@@ -79,7 +97,13 @@ export class PriceWebSocketServer {
         this.subscriptions.delete(ws);
       });
 
-      ws.send(JSON.stringify({ type: 'connected', clientCount: this.clients.size }));
+      ws.send(JSON.stringify({
+        type: 'connected',
+        clientCount: this.clients.size,
+        sequenceId: globalSequence,
+        replaySupported: true,
+        bufferSize: MESSAGE_BUFFER_SIZE,
+      }));
     });
 
     logger.info(`WebSocket server on port ${this.port}`);
@@ -103,9 +127,7 @@ export class PriceWebSocketServer {
         {
           const subs = this.subscriptions.get(ws);
           (m.assets as string[]).forEach((a) => subs?.add(a.toUpperCase()));
-          wsSubscribeEventsTotal.inc({ action: 'subscribe' });
-          wsMessagesTotal.inc({ direction: 'inbound', type: 'subscribe' });
-          ws.send(JSON.stringify({ type: 'subscribed', assets: m.assets }));
+          ws.send(JSON.stringify({ type: 'subscribed', assets: m.assets, sequenceId: globalSequence }));
         }
         break;
       case 'unsubscribe':
@@ -121,10 +143,50 @@ export class PriceWebSocketServer {
           ws.send(JSON.stringify({ type: 'unsubscribed', assets: m.assets }));
         }
         break;
+      case 'replay': {
+        // Client reconnected and wants missed messages since lastSequenceId
+        const lastSeqRaw = m.lastSequenceId;
+        const assets = m.assets;
+        if (typeof lastSeqRaw !== 'number' || lastSeqRaw < 0) {
+          ws.send(JSON.stringify({ type: 'error', message: 'replay requires numeric lastSequenceId' }));
+          return;
+        }
+        if (assets !== undefined && !validateWsAssets(assets)) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Invalid assets for replay' }));
+          return;
+        }
+
+        const requestedAssets = assets
+          ? (assets as string[]).map((a) => a.toUpperCase())
+          : null;
+
+        let replayed = 0;
+        const bufferSources = requestedAssets
+          ? requestedAssets.map((a) => ({ asset: a, buf: this.messageBuffers.get(a) || [] }))
+          : Array.from(this.messageBuffers.entries()).map(([asset, buf]) => ({ asset, buf }));
+
+        const missed: BufferedMessage[] = [];
+        for (const { buf } of bufferSources) {
+          for (const entry of buf) {
+            if (entry.sequenceId > lastSeqRaw) {
+              missed.push(entry);
+            }
+          }
+        }
+        missed.sort((a, b) => a.sequenceId - b.sequenceId);
+
+        for (const entry of missed) {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'price_update', replayed: true, sequenceId: entry.sequenceId, data: entry.data }));
+            replayed++;
+          }
+        }
+
+        ws.send(JSON.stringify({ type: 'replay_complete', replayed, sequenceId: globalSequence }));
+        break;
+      }
       case 'ping':
-        wsMessagesTotal.inc({ direction: 'inbound', type: 'ping' });
-        ws.send(JSON.stringify({ type: 'pong', timestamp: Math.floor(Date.now() / 1000) }));
-        wsMessagesTotal.inc({ direction: 'outbound', type: 'pong' });
+        ws.send(JSON.stringify({ type: 'pong', timestamp: Math.floor(Date.now() / 1000), sequenceId: globalSequence }));
         break;
       default:
         wsErrorsTotal.inc();
@@ -132,9 +194,25 @@ export class PriceWebSocketServer {
     }
   }
 
+  private bufferMessage(asset: string, data: any): number {
+    const seq = nextSeq();
+    const entry: BufferedMessage = { sequenceId: seq, asset, timestamp: Math.floor(Date.now() / 1000), data };
+
+    if (!this.messageBuffers.has(asset)) {
+      this.messageBuffers.set(asset, []);
+    }
+    const buf = this.messageBuffers.get(asset)!;
+    buf.push(entry);
+    if (buf.length > MESSAGE_BUFFER_SIZE) {
+      buf.shift();
+    }
+    return seq;
+  }
+
   broadcast(data: any): void {
-    const message = JSON.stringify({ type: 'price_update', ...data });
-    let sent = 0;
+    const asset = data?.asset?.toUpperCase() || '_global';
+    const seq = this.bufferMessage(asset, data);
+    const message = JSON.stringify({ type: 'price_update', sequenceId: seq, ...data });
     this.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(message);
@@ -146,8 +224,8 @@ export class PriceWebSocketServer {
 
   broadcastToSubscribers(priceUpdate: any): void {
     const asset = priceUpdate?.asset?.toUpperCase();
-    const message = JSON.stringify({ type: 'price_update', data: priceUpdate });
-    let sent = 0;
+    const seq = this.bufferMessage(asset || '_global', priceUpdate);
+    const message = JSON.stringify({ type: 'price_update', sequenceId: seq, data: priceUpdate });
 
     this.clients.forEach((client) => {
       if (client.readyState !== WebSocket.OPEN) return;
@@ -181,5 +259,6 @@ export class PriceWebSocketServer {
     this.wss?.close();
     this.clients.clear();
     this.subscriptions.clear();
+    this.messageBuffers.clear();
   }
 }
