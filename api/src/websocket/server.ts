@@ -5,6 +5,7 @@ import { validateWebSocketApiKey } from '../middleware/auth';
 import { HybridCache } from '../services/cache';
 import { validateWsAssets } from '../middleware/sanitization';
 import { verifyWsSignature } from '../middleware/ws-signing';
+import { webhookService } from '../services/webhook-service';
 import { config } from '../config';
 
 export class PriceWebSocketServer {
@@ -129,6 +130,11 @@ export class PriceWebSocketServer {
     });
 
     this.invalidateCache(asset);
+
+    // Fan out to registered webhooks for consumers without a WS connection.
+    if (asset && typeof priceUpdate?.price === 'number') {
+      void webhookService.handlePriceUpdate(asset, priceUpdate.price);
+    }
   }
 
   setCache(cache: HybridCache<any>): void {

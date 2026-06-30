@@ -96,4 +96,12 @@ export const config = {
     threshold: parseInt(process.env.COMPRESSION_THRESHOLD_BYTES || '1024', 10),
     level: parseInt(process.env.COMPRESSION_LEVEL || '6', 10),
   },
+  // Webhook delivery for consumers that can't hold a WebSocket connection.
+  webhooks: {
+    maxRetries: parseInt(process.env.WEBHOOK_MAX_RETRIES || '5', 10),
+    baseDelayMs: parseInt(process.env.WEBHOOK_RETRY_BASE_DELAY_MS || '500', 10),
+    maxDelayMs: parseInt(process.env.WEBHOOK_RETRY_MAX_DELAY_MS || '30000', 10),
+    timeoutMs: parseInt(process.env.WEBHOOK_TIMEOUT_MS || '5000', 10),
+    minIntervalMs: parseInt(process.env.WEBHOOK_MIN_INTERVAL_MS || '5000', 10),
+  },
 };

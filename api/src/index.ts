@@ -25,6 +25,7 @@ import { setDatabase } from './services/price-store';
 import { initializeTracing } from './services/tracing';
 import adminRoutes from './routes/admin';
 import usageRoutes from './routes/usage';
+import webhookRoutes from './routes/webhooks';
 import { AppError } from './errors/app-error';
 import { ErrorCode } from './errors/catalog';
 
@@ -113,6 +114,7 @@ app.use('/api/v1/health', optionalAuthMiddleware);
 app.use('/api/v1', v1Routes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/usage', optionalAuthMiddleware, usageRoutes);
+app.use('/api/v1/webhooks', authMiddleware, webhookRoutes);
 
 // Documentation and metrics
 app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
