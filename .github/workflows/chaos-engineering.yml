@@ -1,0 +1,84 @@
+name: Chaos Engineering
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'k8s/chaos/**'
+      - 'scripts/chaos/**'
+      - 'scripts/validate-k8s.sh'
+      - 'monitoring/prometheus-rules-chaos.yml'
+      - 'monitoring/alertmanager-chaos.yml'
+      - 'docs/chaos-engineering/**'
+      - '.github/workflows/chaos-engineering.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'k8s/chaos/**'
+      - 'scripts/chaos/**'
+      - 'scripts/validate-k8s.sh'
+      - 'monitoring/prometheus-rules-chaos.yml'
+      - 'monitoring/alertmanager-chaos.yml'
+      - 'docs/chaos-engineering/**'
+      - '.github/workflows/chaos-engineering.yml'
+  schedule:
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+
+env:
+  CHAOS_TARGET_ENV: staging
+
+jobs:
+  validate-manifests:
+    name: Validate chaos manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.29.0
+
+      - name: Install kustomize
+        run: |
+          curl -sL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Install kubeconform
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Validate manifests
+        run: |
+          chmod +x scripts/validate-k8s.sh scripts/chaos/*.sh
+          ./scripts/validate-k8s.sh
+
+      - name: Verify weekly schedule
+        run: |
+          kubectl kustomize k8s/chaos | grep 'weekly-chaos-schedule'
+          kubectl kustomize k8s/chaos | grep '0 3 \* \* 0'
+
+  generate-report:
+    name: Generate chaos report
+    needs: validate-manifests
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate report
+        run: |
+          chmod +x scripts/chaos/generate-report.sh
+          mkdir -p docs/chaos-engineering/reports
+          ./scripts/chaos/generate-report.sh docs/chaos-engineering/reports/ci-report.md
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-report
+          path: docs/chaos-engineering/reports/ci-report.md

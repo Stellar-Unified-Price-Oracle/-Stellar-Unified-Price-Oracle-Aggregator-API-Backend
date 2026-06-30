@@ -19,6 +19,7 @@ resources:
   - schedules/weekly-resilience-workflow.yaml
   - reporting/report-cronjob.yaml
   - reporting/alertmanager-config.yaml
+  - reporting/alertmanager-config.yaml
 
 commonLabels:
   app.kubernetes.io/part-of: stellar-oracle
