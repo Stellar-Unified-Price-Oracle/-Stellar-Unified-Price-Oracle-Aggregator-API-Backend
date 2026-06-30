@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Env, String, Vec};
 
 use crate::errors::OracleError;
-use crate::types::{DataKey, PriceDataPoint};
+use crate::types::{DataKey, GovernanceConfig, Proposal, PriceDataPoint};
 
 pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
@@ -143,4 +143,53 @@ pub fn is_trusted_asset(env: &Env, asset: &String) -> bool {
         .instance()
         .get(&DataKey::TrustedAsset(asset.clone()))
         .unwrap_or(false)
+}
+
+// ── Governance storage ────────────────────────────────────────────────────────
+
+pub fn set_gov_config(env: &Env, config: &GovernanceConfig) {
+    env.storage().instance().set(&DataKey::GovConfig, config);
+}
+
+pub fn get_gov_config(env: &Env) -> Option<GovernanceConfig> {
+    env.storage().instance().get(&DataKey::GovConfig)
+}
+
+pub fn get_proposal_count(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::ProposalCount)
+        .unwrap_or(0)
+}
+
+pub fn increment_proposal_count(env: &Env) -> u32 {
+    let next = get_proposal_count(env) + 1;
+    env.storage()
+        .instance()
+        .set(&DataKey::ProposalCount, &next);
+    next
+}
+
+pub fn set_proposal(env: &Env, proposal: &Proposal) {
+    env.storage()
+        .instance()
+        .set(&DataKey::Proposal(proposal.id), proposal);
+}
+
+pub fn get_proposal(env: &Env, id: u32) -> Option<Proposal> {
+    env.storage()
+        .instance()
+        .get(&DataKey::Proposal(id))
+}
+
+pub fn has_voted(env: &Env, proposal_id: u32, voter: &Address) -> bool {
+    env.storage()
+        .instance()
+        .has(&DataKey::Vote(proposal_id, voter.clone()))
+}
+
+pub fn record_vote(env: &Env, proposal_id: u32, voter: &Address, support: bool) {
+    env.storage()
+        .instance()
+        .set(&DataKey::Vote(proposal_id, voter.clone()), &support);
 }
