@@ -146,108 +146,46 @@ export const dbRecordsArchivedTotal = new client.Counter({
 });
 register.registerMetric(dbRecordsArchivedTotal);
 
-// ── Business metrics (issue #59) ─────────────────────────────────────────────
+// ── WebSocket connection analytics (issue #63) ───────────────────────────────
 
-export const activeSubscribersPerAsset = new client.Gauge({
-  name: 'stellar_oracle_active_subscribers',
-  help: 'Number of active WebSocket subscribers per asset',
-  labelNames: ['asset'],
+export const wsConnectionsActive = new client.Gauge({
+  name: 'ws_api_connections_active',
+  help: 'Current number of active WebSocket connections on the API server',
 });
-register.registerMetric(activeSubscribersPerAsset);
-
-export const priceUpdateFrequency = new client.Counter({
-  name: 'stellar_oracle_price_updates_total',
-  help: 'Total number of price updates pushed, segmented by asset and source',
-  labelNames: ['asset', 'source'],
-});
-register.registerMetric(priceUpdateFrequency);
-
-export const oracleSourceParticipation = new client.Gauge({
-  name: 'stellar_oracle_source_participation',
-  help: 'Whether a given source contributed to the latest aggregation (1=yes, 0=no)',
-  labelNames: ['asset', 'source'],
-});
-register.registerMetric(oracleSourceParticipation);
-
-export const apiCallsByEndpoint = new client.Counter({
-  name: 'stellar_oracle_api_calls_total',
-  help: 'Total API calls segmented by endpoint and method',
-  labelNames: ['endpoint', 'method', 'status'],
-});
-register.registerMetric(apiCallsByEndpoint);
+register.registerMetric(wsConnectionsActive);
 
 export const wsConnectionsTotal = new client.Counter({
-  name: 'stellar_ws_connections_total',
-  help: 'Total WebSocket connections established',
+  name: 'ws_api_connections_total',
+  help: 'Total WebSocket connections ever established on the API server',
 });
 register.registerMetric(wsConnectionsTotal);
 
-export const wsDisconnectionsTotal = new client.Counter({
-  name: 'stellar_ws_disconnections_total',
-  help: 'Total WebSocket disconnections',
+export const wsMessagesTotal = new client.Counter({
+  name: 'ws_api_messages_total',
+  help: 'Total WebSocket messages on the API server',
+  labelNames: ['direction', 'type'],
 });
-register.registerMetric(wsDisconnectionsTotal);
+register.registerMetric(wsMessagesTotal);
 
-export const wsMessagesSentTotal = new client.Counter({
-  name: 'stellar_ws_messages_sent_total',
-  help: 'Total WebSocket messages sent to clients',
-  labelNames: ['type'],
+export const wsConnectionDuration = new client.Histogram({
+  name: 'ws_api_connection_duration_seconds',
+  help: 'Duration of API WebSocket connections in seconds',
+  buckets: [1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600],
 });
-register.registerMetric(wsMessagesSentTotal);
+register.registerMetric(wsConnectionDuration);
 
-export const wsActiveConnections = new client.Gauge({
-  name: 'stellar_ws_active_connections',
-  help: 'Current number of active WebSocket connections',
+export const wsErrorsTotal = new client.Counter({
+  name: 'ws_api_errors_total',
+  help: 'Total WebSocket errors on the API server',
 });
-register.registerMetric(wsActiveConnections);
+register.registerMetric(wsErrorsTotal);
 
-// ── Anomaly detection metrics (issue #61) ────────────────────────────────────
-
-export const anomalyDetectedTotal = new client.Counter({
-  name: 'stellar_oracle_anomalies_detected_total',
-  help: 'Total anomalies detected per asset and detection method',
-  labelNames: ['asset', 'method'],
+export const wsSubscribeEventsTotal = new client.Counter({
+  name: 'ws_api_subscribe_events_total',
+  help: 'Total subscribe/unsubscribe events on the API WebSocket server',
+  labelNames: ['action'],
 });
-register.registerMetric(anomalyDetectedTotal);
-
-export const anomalyScore = new client.Gauge({
-  name: 'stellar_oracle_anomaly_score',
-  help: 'Latest anomaly score per asset and method',
-  labelNames: ['asset', 'method'],
-});
-register.registerMetric(anomalyScore);
-
-// ── Soroban contract metrics (issue #62) ─────────────────────────────────────
-
-export const contractCallsTotal = new client.Counter({
-  name: 'stellar_soroban_contract_calls_total',
-  help: 'Total Soroban contract calls, by function and outcome',
-  labelNames: ['function', 'status'],
-});
-register.registerMetric(contractCallsTotal);
-
-export const contractGasUsed = new client.Histogram({
-  name: 'stellar_soroban_contract_gas_used',
-  help: 'Gas (fee) used per successful Soroban contract call',
-  labelNames: ['function'],
-  buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000],
-});
-register.registerMetric(contractGasUsed);
-
-export const contractCallDuration = new client.Histogram({
-  name: 'stellar_soroban_contract_call_duration_seconds',
-  help: 'End-to-end duration of Soroban contract calls',
-  labelNames: ['function'],
-  buckets: [0.1, 0.5, 1, 2, 5, 10, 30],
-});
-register.registerMetric(contractCallDuration);
-
-export const contractEventsTotal = new client.Counter({
-  name: 'stellar_soroban_contract_events_total',
-  help: 'Total contract events captured, by event type',
-  labelNames: ['event_type'],
-});
-register.registerMetric(contractEventsTotal);
+register.registerMetric(wsSubscribeEventsTotal);
 
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();

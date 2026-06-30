@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { DatabaseClient } from './database';
 import { decrypt, isEncrypted } from './crypto';
+import { decodeCursor } from './pagination';
 
 const DATA_DIR = path.resolve(__dirname, '../../data');
 let db: DatabaseClient | null = null;
@@ -88,6 +89,53 @@ export async function readPriceHistory(
     if (from) history = history.filter((h: any) => h.timestamp >= from);
     if (to) history = history.filter((h: any) => h.timestamp <= to);
     return history.slice(-limit);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Cursor-based history fetch. The cursor encodes the timestamp of the last
+ * returned record; the next page starts strictly after that timestamp.
+ * Results are sorted ascending by timestamp.
+ */
+export async function readPriceHistoryCursor(
+  asset: string,
+  cursor: string | undefined,
+  limit: number,
+  to?: number,
+): Promise<any[]> {
+  let afterTs: number | undefined;
+  if (cursor) {
+    const decoded = decodeCursor(cursor);
+    afterTs = decoded?.ts;
+  }
+
+  if (db && db.isInitialized()) {
+    try {
+      // Use afterTs as from (exclusive) when cursor is present
+      const from = afterTs !== undefined ? afterTs + 1 : undefined;
+      const history = await db.getHistoricalPrices(asset, from, to, limit);
+      return history.map((h) => ({
+        price: h.price,
+        decimals: h.decimals,
+        source: h.source,
+        timestamp: h.timestamp,
+      }));
+    } catch (err) {
+      console.error('Failed to read from database for cursor query, falling back to files', err);
+    }
+  }
+
+  const filePath = path.join(DATA_DIR, `history-${asset.toLowerCase()}.json`);
+  if (!fs.existsSync(filePath)) return [];
+
+  try {
+    let history: any[] = readHistoryFile(filePath);
+    history.sort((a, b) => a.timestamp - b.timestamp);
+    if (afterTs !== undefined) history = history.filter((h) => h.timestamp > afterTs!);
+    if (to !== undefined) history = history.filter((h) => h.timestamp <= to);
+    return history.slice(0, limit);
   } catch {
     return [];
   }
