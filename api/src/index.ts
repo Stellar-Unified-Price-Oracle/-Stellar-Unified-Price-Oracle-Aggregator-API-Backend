@@ -13,6 +13,7 @@ import { metricsMiddleware, metricsHandler } from './middleware/metrics';
 import { authMiddleware, optionalAuthMiddleware } from './middleware/auth';
 import { sanitizeInputs, cspHeaders } from './middleware/sanitization';
 import { httpsRedirect, hstsHeaders } from './middleware/https';
+import { usageTrackingMiddleware } from './middleware/usage-tracking';
 import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
 import v1Routes, { initializeCache } from './routes/v1';
@@ -22,6 +23,7 @@ import { ArchivalService } from './services/archival';
 import { setDatabase } from './services/price-store';
 import { initializeTracing } from './services/tracing';
 import adminRoutes from './routes/admin';
+import usageRoutes from './routes/usage';
 import { AppError } from './errors/app-error';
 import { ErrorCode } from './errors/catalog';
 
@@ -77,6 +79,7 @@ app.use(sanitizeInputs);
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
+app.use(usageTrackingMiddleware);
 app.use(
   rateLimit({
     windowMs: config.rateLimitWindowMs,
@@ -107,6 +110,7 @@ app.use('/api/v1/health', optionalAuthMiddleware);
 // Routes
 app.use('/api/v1', v1Routes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/usage', optionalAuthMiddleware, usageRoutes);
 
 // Documentation and metrics
 app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
