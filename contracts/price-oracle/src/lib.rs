@@ -11,6 +11,8 @@ mod types;
 mod test;
 #[cfg(test)]
 mod fuzz;
+#[cfg(test)]
+mod governance_test;
 
 pub use contract::PriceOracleContract;
 pub use multisig::MultiSigAdminContract;
