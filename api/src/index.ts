@@ -18,6 +18,8 @@ import { usageTrackingMiddleware } from './middleware/usage-tracking';
 import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
 import v1Routes, { initializeCache } from './routes/v1';
+import v2Routes, { initializeCacheV2 } from './routes/v2';
+import { v1DeprecationHeaders, v2Headers } from './middleware/versioning';
 import { HybridCache } from './services/cache';
 import { DatabaseClient, setDb } from './services/database';
 import { ArchivalService } from './services/archival';
@@ -67,6 +69,7 @@ const cache = new HybridCache<any>(logger, {
 });
 
 initializeCache(cache);
+initializeCacheV2(cache);
 
 app.use(helmet());
 app.use(cors(corsManager.getCorsOptions()));
@@ -105,16 +108,19 @@ app.use(
 // Apply authentication to price endpoints
 app.use('/api/v1/prices', authMiddleware);
 app.use('/api/v1/history', authMiddleware);
+app.use('/api/v2/prices', authMiddleware);
+app.use('/api/v2/history', authMiddleware);
 
 // Optional auth for general info endpoints
 app.use('/api/v1/sources', optionalAuthMiddleware);
 app.use('/api/v1/health', optionalAuthMiddleware);
+app.use('/api/v2/sources', optionalAuthMiddleware);
+app.use('/api/v2/health', optionalAuthMiddleware);
 
-// Routes
-app.use('/api/v1', v1Routes);
+// Routes — v1 tagged as deprecated, v2 is current
+app.use('/api/v1', v1DeprecationHeaders, v1Routes);
 app.use('/api/v1/admin', adminRoutes);
-app.use('/api/v1/usage', optionalAuthMiddleware, usageRoutes);
-app.use('/api/v1/webhooks', authMiddleware, webhookRoutes);
+app.use('/api/v2', v2Headers, v2Routes);
 
 // Documentation and metrics
 app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));

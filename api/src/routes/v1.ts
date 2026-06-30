@@ -1,11 +1,32 @@
-import { AssetQuerySchema, HistoryQuerySchema, formatValidationResponse } from '../services/validation';
-import { readAssetPrices, readPriceHistory } from '../services/price-store';
+import {
+  AssetQuerySchema,
+  HistoryQuerySchema,
+  CursorHistoryQuerySchema,
+  OffsetQuerySchema,
+  formatValidationResponse,
+} from '../services/validation';
+import { readAssetPrices, readPriceHistory, readPriceHistoryCursor } from '../services/price-store';
+import { buildCursorMeta, applyOffsetPagination } from '../services/pagination';
 import { HybridCache } from '../services/cache';
 import { cacheHitTotal, cacheMissTotal, lastPriceTimestamp, priceQueriesTotal } from '../middleware/metrics';
 import { issueWsCsrfToken, isCsrfEnabled } from '../websocket/csrf';
 import { config } from '../config';
 import { links, withLinks } from '../services/hypermedia';
 import { Router, Request, Response } from 'express';
+
+const BATCH_MAX_ASSETS = 50;
+
+const BatchQuerySchema = z.object({
+  assets: z
+    .array(
+      z.string().min(1).refine(
+        (val) => /^[A-Z0-9]{1,12}$/.test(val) || (val.startsWith('C') && val.length === 56),
+        { message: 'Invalid asset symbol' },
+      ),
+    )
+    .min(1, 'At least one asset required')
+    .max(BATCH_MAX_ASSETS, `Maximum ${BATCH_MAX_ASSETS} assets per batch request`),
+});
 
 const router = Router();
 let pricesCache: HybridCache<any>;
@@ -29,17 +50,28 @@ router.get('/', (_req: Request, res: Response) => {
       docs: '/api/v1/docs',
       metrics: '/metrics',
     },
-    _links: links.root(),
+    pagination: {
+      history: 'cursor-based (?cursor=<token>&limit=50)',
+      sources: 'offset-based (?page=1&limit=20)',
+      prices: 'offset-based (?page=1&limit=20)',
+    },
   });
 });
 
+// GET /prices — offset-paginated list of all asset prices
 router.get('/prices', async (req: Request, res: Response) => {
-  const query = AssetQuerySchema.safeParse(req.query);
-  if (!query.success) {
-    return res.status(400).json(formatValidationResponse(query.error));
+  const assetQuery = AssetQuerySchema.safeParse(req.query);
+  if (!assetQuery.success) {
+    return res.status(400).json(formatValidationResponse(assetQuery.error));
   }
 
-  const cacheKey = `prices:${query.data.asset || '*'}`;
+  const pageQuery = OffsetQuerySchema.safeParse(req.query);
+  if (!pageQuery.success) {
+    return res.status(400).json(formatValidationResponse(pageQuery.error));
+  }
+
+  const { page, limit } = pageQuery.data;
+  const cacheKey = `prices:${assetQuery.data.asset || '*'}:p${page}:l${limit}`;
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
@@ -48,19 +80,21 @@ router.get('/prices', async (req: Request, res: Response) => {
   cacheMissTotal.inc();
 
   const prices = await readAssetPrices();
-  const result = query.data.asset
-    ? prices.filter((p) => p.asset === query.data.asset?.toUpperCase())
+  const filtered = assetQuery.data.asset
+    ? prices.filter((p) => p.asset === assetQuery.data.asset?.toUpperCase())
     : prices;
 
-  for (const p of result) {
+  for (const p of filtered) {
     priceQueriesTotal.inc({ asset: p.asset });
     lastPriceTimestamp.set({ asset: p.asset }, p.timestamp);
   }
 
+  const { items: paged, meta: pagination } = applyOffsetPagination(filtered, page, limit);
+
   const aggregated = {
     timestamp: Math.floor(Date.now() / 1000),
-    count: result.length,
-    prices: result,
+    prices: paged,
+    pagination,
   };
 
   await pricesCache.set(cacheKey, aggregated, 'prices');
@@ -83,7 +117,7 @@ router.get('/prices/:asset', async (req: Request, res: Response) => {
   if (!price) {
     return res.status(404).json({
       success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch price' }
+      error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch price' },
     });
   }
 
@@ -93,14 +127,46 @@ router.get('/prices/:asset', async (req: Request, res: Response) => {
   res.json({ success: true, data: withLinks(price, links.asset(asset)) });
 });
 
+// GET /history/:asset — cursor-paginated time-series
 router.get('/history/:asset', async (req: Request, res: Response) => {
+  const cursorParams = CursorHistoryQuerySchema.safeParse({ ...req.params, ...req.query });
+  if (!cursorParams.success) {
+    return res.status(400).json(formatValidationResponse(cursorParams.error));
+  }
+
+  const { asset, cursor, limit, to } = cursorParams.data;
+  const upperAsset = asset.toUpperCase();
+  const cacheKey = `history:${upperAsset}:c${cursor || ''}:l${limit}:t${to || 0}`;
+  const cached = await pricesCache.get(cacheKey);
+  if (cached) {
+    cacheHitTotal.inc();
+    return res.json({ success: true, data: cached, cached: true });
+  }
+  cacheMissTotal.inc();
+
+  const history = await readPriceHistoryCursor(upperAsset, cursor, limit, to);
+  const pagination = buildCursorMeta(history, limit, 'timestamp');
+
+  const response = {
+    asset: upperAsset,
+    to: to || null,
+    prices: history,
+    pagination,
+  };
+
+  await pricesCache.set(cacheKey, response, 'history');
+  res.json({ success: true, data: response });
+});
+
+// GET /history/:asset/legacy — original non-paginated endpoint kept for backward compatibility
+router.get('/history/:asset/legacy', async (req: Request, res: Response) => {
   const params = HistoryQuerySchema.safeParse({ ...req.params, ...req.query });
   if (!params.success) {
     return res.status(400).json(formatValidationResponse(params.error));
   }
 
   const { asset, from, to, limit } = params.data;
-  const cacheKey = `history:${asset.toUpperCase()}:${from || 0}:${to || 0}:${limit}`;
+  const cacheKey = `history:legacy:${asset.toUpperCase()}:${from || 0}:${to || 0}:${limit}`;
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
@@ -121,8 +187,15 @@ router.get('/history/:asset', async (req: Request, res: Response) => {
   res.json({ success: true, data: withLinks(response, links.history(asset)) });
 });
 
-router.get('/sources', async (_req: Request, res: Response) => {
-  const cacheKey = 'sources:all';
+// GET /sources — offset-paginated
+router.get('/sources', async (req: Request, res: Response) => {
+  const pageQuery = OffsetQuerySchema.safeParse(req.query);
+  if (!pageQuery.success) {
+    return res.status(400).json(formatValidationResponse(pageQuery.error));
+  }
+
+  const { page, limit } = pageQuery.data;
+  const cacheKey = `sources:p${page}:l${limit}`;
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
@@ -130,14 +203,15 @@ router.get('/sources', async (_req: Request, res: Response) => {
   }
   cacheMissTotal.inc();
 
-  const data = {
-    sources: [
-      { name: 'Chainlink', active: true, type: 'off-chain', website: 'https://chain.link' },
-      { name: 'Redstone', active: true, type: 'off-chain', website: 'https://redstone.finance' },
-      { name: 'Band Protocol', active: true, type: 'off-chain', website: 'https://bandprotocol.com' },
-      { name: 'Reflector', active: true, type: 'off-chain', website: 'https://reflector.xyz' },
-    ],
-  };
+  const allSources = [
+    { name: 'Chainlink', active: true, type: 'off-chain', website: 'https://chain.link' },
+    { name: 'Redstone', active: true, type: 'off-chain', website: 'https://redstone.finance' },
+    { name: 'Band Protocol', active: true, type: 'off-chain', website: 'https://bandprotocol.com' },
+    { name: 'Reflector', active: true, type: 'off-chain', website: 'https://reflector.xyz' },
+  ];
+
+  const { items: sources, meta: pagination } = applyOffsetPagination(allSources, page, limit);
+  const data = { sources, pagination };
 
   await pricesCache.set(cacheKey, data, 'sources');
   res.json({ success: true, data });
