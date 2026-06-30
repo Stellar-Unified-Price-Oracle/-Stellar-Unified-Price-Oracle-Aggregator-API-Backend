@@ -29,6 +29,7 @@ router.get('/', (_req: Request, res: Response) => {
       healthLive: '/api/v1/health/live',
       healthReady: '/api/v1/health/ready',
       docs: '/api/v1/docs',
+      portal: '/portal',
       metrics: '/metrics',
     },
   });
