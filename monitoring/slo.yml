@@ -1,0 +1,42 @@
+# Service Level Objectives for the Stellar Unified Price Oracle Aggregator
+#
+# Each SLO defines a target over a rolling 30-day window and the Prometheus
+# expressions used to compute the good/total event ratio that feeds the
+# burn-rate alerting rules in slo-burn-rate-rules.yml.
+
+slos:
+  - name: api-availability
+    description: "Percentage of API requests that do not return a 5xx error"
+    target: 99.9
+    window: 30d
+    sli:
+      good_events: 'sum(rate(http_requests_total{job="stellar-api",status_code!~"5.."}[5m]))'
+      total_events: 'sum(rate(http_requests_total{job="stellar-api"}[5m]))'
+
+  - name: api-latency
+    description: "Percentage of API requests served under 1s (p95 target)"
+    target: 99.0
+    window: 30d
+    sli:
+      good_events: 'sum(rate(http_request_duration_seconds_bucket{job="stellar-api",le="1"}[5m]))'
+      total_events: 'sum(rate(http_request_duration_seconds_count{job="stellar-api"}[5m]))'
+
+  - name: price-freshness
+    description: "Percentage of time published asset prices are younger than the staleness threshold"
+    target: 99.5
+    window: 30d
+    sli:
+      good_events: 'sum(rate(stellar_oracle_price_checks_total{stale="false"}[5m]))'
+      total_events: 'sum(rate(stellar_oracle_price_checks_total[5m]))'
+
+error_budget_policy:
+  fast_burn:
+    burn_rate_threshold: 14.4   # consumes 2% of 30d budget in 1h
+    long_window: 1h
+    short_window: 5m
+    severity: critical
+  slow_burn:
+    burn_rate_threshold: 6
+    long_window: 6h
+    short_window: 30m
+    severity: warning
