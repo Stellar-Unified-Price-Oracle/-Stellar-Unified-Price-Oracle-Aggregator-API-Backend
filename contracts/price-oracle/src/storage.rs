@@ -251,3 +251,29 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
 pub fn get_proposal(env: &Env, id: u32) -> Option<Proposal> {
     env.storage().instance().get(&DataKey::Proposal(id))
 }
+
+pub fn get_stake(env: &Env, addr: &Address) -> i128 {
+env.storage()
+.instance()
+.get(&DataKey::StakeInfo(addr.clone()))
+.unwrap_or(0)
+}
+
+pub fn set_stake(env: &Env, addr: &Address, amount: &i128) {
+env.storage()
+.instance()
+.set(&DataKey::StakeInfo(addr.clone()), amount);
+}
+
+pub fn get_slash_count(env: &Env, addr: &Address) -> u32 {
+env.storage()
+.instance()
+.get(&DataKey::SlashCount(addr.clone()))
+.unwrap_or(0)
+}
+
+pub fn set_slash_count(env: &Env, addr: &Address, count: &u32) {
+env.storage()
+.instance()
+.set(&DataKey::SlashCount(addr.clone()), count);
+}

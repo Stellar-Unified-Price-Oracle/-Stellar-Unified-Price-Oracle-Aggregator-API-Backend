@@ -577,3 +577,29 @@ token.transfer(&env.current_contract_address(), &to, &balance);
 }
 }
 }
+
+impl PriceOracleContract {
+pub fn stake(env: Env, source: Address, amount: i128, token: Address) {
+source.require_auth();
+let token_client = soroban_sdk::token::Client::new(&env, &token);
+token_client.transfer(&source, &env.current_contract_address(), &amount);
+let current = storage::get_stake(&env, &source);
+storage::set_stake(&env, &source, &(current + amount));
+env.events().publish(("source_staked", source), amount);
+}
+
+pub fn slash(env: Env, source: Address, amount: i128, reason: String) {
+let admin = storage::get_admin(&env);
+admin.require_auth();
+let current = storage::get_stake(&env, &source);
+let slashed = if amount > current { current } else { amount };
+storage::set_stake(&env, &source, &(current - slashed));
+let count = storage::get_slash_count(&env, &source);
+storage::set_slash_count(&env, &source, &(count + 1));
+env.events().publish(("source_slashed", source, reason), slashed);
+}
+
+pub fn get_stake_balance(env: Env, source: Address) -> i128 {
+storage::get_stake(&env, &source)
+}
+}
