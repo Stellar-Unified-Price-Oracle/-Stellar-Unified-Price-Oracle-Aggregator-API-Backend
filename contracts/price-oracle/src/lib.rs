@@ -1,11 +1,16 @@
 #![no_std]
 
-mod contract;
+pub mod contract;
 mod errors;
 mod proxy;
-mod storage;
-mod test;
+pub mod storage;
 mod types;
+
+#[cfg(test)]
+mod test;
+#[cfg(test)]
+mod fuzz;
 
 pub use contract::PriceOracleContract;
 pub use proxy::ProxyContract;
+pub use types::{AssetPrice, PriceDataPoint};
