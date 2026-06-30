@@ -1,7 +1,15 @@
-import { Keypair, SorobanRpc, TransactionBuilder, Operation, nativeToScVal, xdr } from '@stellar/stellar-sdk';
+import {
+  Keypair,
+  SorobanRpc,
+  TransactionBuilder,
+  Operation,
+  nativeToScVal,
+  xdr,
+} from '@stellar/stellar-sdk';
 import { config } from './config';
 import { logger } from './utils/logger';
 import { AggregatedPrice } from './types';
+import { MerkleTree, BatchPriceEntry } from './utils/merkle';
 
 interface ContractCallLog {
   txHash: string;
@@ -60,6 +68,8 @@ export class ContractPublisher {
     this.contractId = config.soroban.contractId;
     this.networkPassphrase = config.soroban.networkPassphrase;
   }
+
+  // ── Individual submission (unchanged) ──────────────────────────────────────
 
   async submitPrice(
     asset: string,
@@ -201,6 +211,75 @@ export class ContractPublisher {
         price.decimals,
         price.timestamp,
       );
+    }
+  }
+
+  // ── Internal helpers ────────────────────────────────────────────────────────
+
+  private async fetchBatchNonce(): Promise<number | null> {
+    try {
+      const account = await this.server.getAccount(this.keypair.publicKey());
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: this.contractId,
+            function: 'get_batch_nonce',
+            args: [],
+          }),
+        )
+        .setTimeout(30)
+        .build();
+
+      const sim: any = await this.server.simulateTransaction(tx);
+      if (sim.error || !sim.result) return null;
+
+      const val = sim.result.retval;
+      if (val.switch().name === 'scvU64') {
+        return Number(val.u64().toBigInt());
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async callContract(
+    fn: string,
+    args: xdr.ScVal[],
+  ): Promise<boolean> {
+    try {
+      const account = await this.server.getAccount(this.keypair.publicKey());
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: this.contractId,
+            function: fn,
+            args,
+          }),
+        )
+        .setTimeout(30)
+        .build();
+
+      tx.sign(this.keypair);
+
+      const sim: any = await this.server.simulateTransaction(tx);
+      if (sim.error) {
+        logger.error(`[Publisher] ${fn} simulate error: ${sim.error}`);
+        return false;
+      }
+
+      const resp = await this.server.sendTransaction(tx);
+      logger.debug(`[Publisher] ${fn} tx: ${resp.hash}`);
+      return true;
+    } catch (err) {
+      logger.error(`[Publisher] ${fn} failed`, err);
+      return false;
     }
   }
 }

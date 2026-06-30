@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env, String, Vec};
+use soroban_sdk::{Address, Bytes, Env, String, Vec};
 
 use crate::errors::OracleError;
 use crate::types::{DataKey, MultiSigConfig, Proposal, PriceDataPoint, SourceReputation};

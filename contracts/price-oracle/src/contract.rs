@@ -1,6 +1,7 @@
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, String, Vec};
 
 use crate::errors::OracleError;
+use crate::merkle;
 use crate::storage;
 use crate::types::{AssetPrice, MultiSigConfig, Proposal, ProposalAction, PriceDataPoint, SourceReputation};
 
@@ -63,6 +64,9 @@ impl PriceOracleContract {
         update_reputation(&env, &source, price, &asset, timestamp);
 
         storage::set_latest_price(&env, &asset, &data_point);
+        append_history(&env, &asset, data_point.clone());
+        Ok(data_point)
+    }
 
         // Cap history at MAX_HISTORY_LEN to keep persistent-storage entry size
         // bounded.  Evict the oldest entry when the cap is reached rather than
@@ -84,6 +88,50 @@ impl PriceOracleContract {
             storage::set_price_history(&env, &asset, &history);
         }
 
+        if !storage::is_authorized_source(&env, &source) {
+            return Err(OracleError::UnauthorizedSource);
+        }
+        if root.len() != 32 {
+            return Err(OracleError::InvalidMerkleProof);
+        }
+        if nonce != storage::get_batch_nonce(&env) {
+            return Err(OracleError::BatchNonceMismatch);
+        }
+
+        storage::set_batch_root(&env, nonce, &root);
+        let new_nonce = storage::increment_batch_nonce(&env);
+        Ok(new_nonce)
+    }
+
+    /// Apply a single price entry from an already-committed batch.
+    ///
+    /// The Merkle proof is verified against the stored root; no additional
+    /// source auth is required because the root was already committed by an
+    /// authorized source.  Anyone can submit proofs — the cryptographic proof
+    /// is the authorization.
+    pub fn apply_batch_entry(
+        env: Env,
+        batch_nonce: u64,
+        entry: BatchPriceEntry,
+        proof: MerkleProof,
+    ) -> Result<PriceDataPoint, OracleError> {
+        let root = storage::get_batch_root(&env, batch_nonce)
+            .ok_or(OracleError::BatchRootNotFound)?;
+
+        if !merkle::verify_proof(&env, &entry, proof.leaf_index, &proof.siblings, &root) {
+            return Err(OracleError::InvalidMerkleProof);
+        }
+
+        let data_point = PriceDataPoint {
+            asset: entry.asset.clone(),
+            price: entry.price,
+            decimals: entry.decimals,
+            timestamp: entry.timestamp,
+            source: entry.source.clone(),
+        };
+
+        storage::set_latest_price(&env, &entry.asset, &data_point);
+        append_history(&env, &entry.asset, data_point.clone());
         Ok(data_point)
     }
 
@@ -295,6 +343,8 @@ impl PriceOracleContract {
         }
         result
     }
+
+    // ── Admin functions ───────────────────────────────────────────────────────
 
     pub fn add_oracle_source(
         env: Env,
