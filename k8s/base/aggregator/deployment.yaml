@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aggregator
+  labels:
+    app: aggregator
+    version: stable
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aggregator
+      version: stable
+  template:
+    metadata:
+      labels:
+        app: aggregator
+        version: stable
+    spec:
+      containers:
+        - name: aggregator
+          image: stellar-oracle-aggregator:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http-metrics
+              containerPort: 4000
+            - name: ws-internal
+              containerPort: 4001
+            - name: http-health
+              containerPort: 4002
+          envFrom:
+            - configMapRef:
+                name: stellar-oracle-config
+          env:
+            - name: PORT
+              value: "4000"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http-health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http-health
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

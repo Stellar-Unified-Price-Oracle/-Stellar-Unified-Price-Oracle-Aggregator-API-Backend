@@ -2,38 +2,26 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CHAOS_DIR="${ROOT}/k8s/chaos"
-CHAOS_OUT="/tmp/stellar-oracle-chaos.yaml"
+K8S_DIR="${ROOT}/k8s"
+STAGING_OUT="/tmp/stellar-oracle-staging.yaml"
+ISTIO_OUT="/tmp/stellar-oracle-istio.yaml"
 
 kustomize_build() {
   local src="$1"
   local out="$2"
   if command -v kubectl >/dev/null 2>&1; then
     kubectl kustomize "${src}" > "${out}"
-    return
-  fi
-  if command -v kustomize >/dev/null 2>&1; then
+  elif command -v kustomize >/dev/null 2>&1; then
     kustomize build "${src}" > "${out}"
-    return
-  fi
-  echo "Neither kubectl nor kustomize found; install one to validate manifests."
-  exit 1
-}
-
-kubeconform_bin() {
-  if command -v kubeconform >/dev/null 2>&1; then
-    echo kubeconform
-  elif [[ -x "${ROOT}/kubeconform-bin" ]]; then
-    echo "${ROOT}/kubeconform-bin"
-  elif [[ -x "${ROOT}/kubeconform" ]]; then
-    echo "${ROOT}/kubeconform"
   else
-    return 1
+    echo "Neither kubectl nor kustomize found; install one to validate manifests."
+    exit 1
   fi
 }
 
-echo "==> Building k8s/chaos kustomization"
-kustomize_build "${CHAOS_DIR}" "${CHAOS_OUT}"
+echo "==> Building kustomize overlays"
+kustomize_build "${K8S_DIR}/overlays/staging" "${STAGING_OUT}"
+kustomize_build "${K8S_DIR}/istio" "${ISTIO_OUT}"
 
 echo "==> Validating YAML syntax"
 python3 - <<'PY'
@@ -44,26 +32,28 @@ except ImportError:
     print("PyYAML not installed; skipping YAML parse check")
     sys.exit(0)
 
-path = "/tmp/stellar-oracle-chaos.yaml"
-docs = list(yaml.safe_load_all(pathlib.Path(path).read_text()))
-if not docs:
-    raise SystemExit(f"No documents in {path}")
-print(f"  OK: {path} ({len(docs)} documents)")
+for path in ["/tmp/stellar-oracle-staging.yaml", "/tmp/stellar-oracle-istio.yaml"]:
+    docs = list(yaml.safe_load_all(pathlib.Path(path).read_text()))
+    if not docs:
+        raise SystemExit(f"No documents in {path}")
+    print(f"  OK: {path} ({len(docs)} documents)")
 PY
 
-if bin="$(kubeconform_bin)"; then
+if command -v kubeconform >/dev/null 2>&1; then
   echo "==> Running kubeconform"
   SCHEMA_FLAGS=(
     -schema-location default
     -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
     -ignore-missing-schemas
   )
-  "${bin}" "${SCHEMA_FLAGS[@]}" "${CHAOS_OUT}"
+  kubeconform "${SCHEMA_FLAGS[@]}" "${STAGING_OUT}"
+  kubeconform "${SCHEMA_FLAGS[@]}" "${ISTIO_OUT}"
 elif command -v kubectl >/dev/null 2>&1; then
   echo "==> Running kubectl dry-run"
-  kubectl apply --dry-run=client -f "${CHAOS_OUT}"
+  kubectl apply --dry-run=client -f "${STAGING_OUT}"
+  kubectl apply --dry-run=client -f "${ISTIO_OUT}"
 else
   echo "kubeconform/kubectl not available; YAML syntax validation passed."
 fi
 
-echo "Chaos Kubernetes manifests validated successfully."
+echo "All Kubernetes manifests validated successfully."

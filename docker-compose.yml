@@ -17,6 +17,20 @@ services:
       timeout: 5s
       retries: 5
 
+  # Jaeger all-in-one: collects traces exported by the API's OpenTelemetry SDK
+  # (see api/src/services/tracing.ts) and provides a UI to visualize and
+  # correlate distributed traces across service boundaries.
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "14268:14268" # Jaeger collector (HTTP, thrift) - matches JAEGER_ENDPOINT default
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+    restart: unless-stopped
+
   aggregator:
     build:
       context: ./services/aggregator
@@ -49,6 +63,9 @@ services:
       - "3001:3001"
     env_file:
       - .env
+    environment:
+      TRACING_ENABLED: "true"
+      JAEGER_ENDPOINT: http://jaeger:14268/api/traces
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -58,6 +75,8 @@ services:
         condition: service_started
       timescaledb:
         condition: service_healthy
+      jaeger:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/v1/health"]
       interval: 30s

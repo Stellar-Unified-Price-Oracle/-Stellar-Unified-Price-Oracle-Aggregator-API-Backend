@@ -1,0 +1,25 @@
+apiVersion: jaegertracing.io/v1
+kind: Jaeger
+metadata:
+  name: jaeger
+  namespace: istio-system
+spec:
+  strategy: production
+  storage:
+    type: memory
+    options:
+      memory:
+        max-traces: 50000
+  ingress:
+    enabled: false
+  collector:
+    maxReplicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  query:
+    replicas: 1
+    options:
+      query:
+        base-path: /jaeger

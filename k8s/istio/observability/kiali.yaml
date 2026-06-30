@@ -1,0 +1,25 @@
+apiVersion: kiali.io/v1alpha1
+kind: Kiali
+metadata:
+  name: kiali
+  namespace: istio-system
+spec:
+  auth:
+    strategy: anonymous
+  deployment:
+    accessible_namespaces:
+      - stellar-oracle
+      - istio-system
+  external_services:
+    prometheus:
+      url: http://prometheus.istio-system.svc.cluster.local:9090
+    tracing:
+      enabled: true
+      in_cluster_url: http://jaeger-query.istio-system.svc.cluster.local:16686/jaeger
+      use_grpc: false
+    grafana:
+      enabled: true
+      in_cluster_url: http://grafana.istio-system.svc.cluster.local:3000
+      auth:
+        type: none
+  istio_namespace: istio-system

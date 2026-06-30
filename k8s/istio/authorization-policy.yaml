@@ -1,0 +1,22 @@
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: stellar-oracle-workload-access
+  namespace: stellar-oracle
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces:
+              - stellar-oracle
+              - istio-system
+      to:
+        - operation:
+            ports:
+              - "3000"
+              - "3001"
+              - "4000"
+              - "4001"
+              - "4002"
+              - "5432"

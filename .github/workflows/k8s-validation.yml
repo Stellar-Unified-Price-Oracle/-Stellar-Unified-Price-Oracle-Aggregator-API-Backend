@@ -4,21 +4,21 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - 'k8s/chaos/**'
+      - 'k8s/**'
       - 'scripts/validate-k8s.sh'
       - 'scripts/chaos/**'
       - '.github/workflows/k8s-validation.yml'
   pull_request:
     branches: [main, develop]
     paths:
-      - 'k8s/chaos/**'
+      - 'k8s/**'
       - 'scripts/validate-k8s.sh'
       - 'scripts/chaos/**'
       - '.github/workflows/k8s-validation.yml'
 
 jobs:
   validate:
-    name: Validate chaos Kubernetes manifests
+    name: Validate Kubernetes manifests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,5 +43,5 @@ jobs:
 
       - name: Validate manifests
         run: |
-          chmod +x scripts/validate-k8s.sh scripts/chaos/*.sh
+          chmod +x scripts/validate-k8s.sh
           ./scripts/validate-k8s.sh

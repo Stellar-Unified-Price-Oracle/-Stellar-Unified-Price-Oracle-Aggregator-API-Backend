@@ -96,9 +96,21 @@ export class CorsManager {
         cb(new Error(`CORS origin not allowed: ${origin}`));
       },
       credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-request-id'],
-      exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'Retry-After'],
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-request-id', 'If-None-Match', 'If-Modified-Since'],
+      exposedHeaders: [
+        'X-RateLimit-Limit',
+        'X-RateLimit-Remaining',
+        'X-RateLimit-Reset',
+        'Retry-After',
+        'ETag',
+        'Deprecation',
+        'Sunset',
+      ],
+      // Cache preflight responses in the browser to avoid an OPTIONS
+      // round-trip on every request (86400s is the Chromium max).
+      maxAge: 86400,
+      optionsSuccessStatus: 204,
     };
   }
 }
