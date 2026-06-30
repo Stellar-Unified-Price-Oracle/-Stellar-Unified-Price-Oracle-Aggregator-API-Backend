@@ -83,8 +83,34 @@ services:
       timeout: 10s
       retries: 3
 
+healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # --- PASTE THE VAULT CONTAINER INTEGRATION HERE ---
+  vault:
+    image: hashicorp/vault:1.15.2
+    container_name: oracle_vault
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: "dev-root-super-secret-token"
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    volumes:
+      - vault_data:/vault/file
+      - vault_logs:/vault/logs
+    cap_add:
+      - IPC_LOCK
+    networks:
+      - default
+    command: server -dev
+
 volumes:
   timescale-data:
+  vault_data:
+  vault_logs:
 
 networks:
   default:
