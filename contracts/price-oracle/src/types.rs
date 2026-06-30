@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String, Vec};
+use soroban_sdk::{contracttype, Address, String};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,6 +94,10 @@ pub enum DataKey {
     DeviationThreshold,
     // Issue #70 — reputation
     SourceReputation(Address),
+ StakeInfo(Address),
+ StakeTreasury,
+ SlashHistory(Address, u32),
+ SlashCount(Address),
     // Issue #67 — multi-sig
     MultiSigConfig,
     ProposalCount,

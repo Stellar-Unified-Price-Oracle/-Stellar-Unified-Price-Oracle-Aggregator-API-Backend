@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - istio-operator.yaml
+  - peer-authentication.yaml
+  - authorization-policy.yaml
+  - destination-rules.yaml
+  - virtual-services.yaml
+  - telemetry.yaml
+  - observability/prometheus.yaml
+  - observability/jaeger.yaml
+  - observability/kiali.yaml
+  - observability/grafana.yaml
+  - observability/service-profiles.yaml

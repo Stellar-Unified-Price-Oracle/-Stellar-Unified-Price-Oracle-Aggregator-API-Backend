@@ -1,11 +1,32 @@
-use soroban_sdk::{Address, Env, String, Vec};
+use soroban_sdk::{Address, Bytes, Env, String, Vec};
 
 use crate::errors::OracleError;
 use crate::types::{DataKey, MultiSigConfig, Proposal, PriceDataPoint, SourceReputation};
 
+// Maximum number of historical data points kept per asset.
+// Older entries beyond this cap are dropped on each write, keeping instance
+// storage size bounded and preventing unbounded ledger-entry growth.
+pub const MAX_HISTORY_LEN: u32 = 100;
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+
 pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
 }
+
+pub fn verify_admin(env: &Env, admin: &Address) -> Result<(), OracleError> {
+    let stored: Address = env
+        .storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .ok_or(OracleError::AdminOnly)?;
+    if stored != *admin {
+        return Err(OracleError::AdminOnly);
+    }
+    Ok(())
+}
+
+// ── Proxy / upgrade keys ──────────────────────────────────────────────────────
 
 pub fn set_implementation(env: &Env, implementation: &Address) {
     env.storage().instance().set(&DataKey::Implementation, implementation);
@@ -59,22 +80,32 @@ pub fn is_authorized_source(env: &Env, source: &Address) -> bool {
 }
 
 pub fn add_source(env: &Env, source: &Address, name: &String) {
-    env.storage()
-        .instance()
-        .set(&DataKey::Source(source.clone()), &true);
-    env.storage()
-        .instance()
-        .set(&DataKey::SourceName(source.clone()), name);
-    let count = get_source_count(env);
-    env.storage()
-        .instance()
-        .set(&DataKey::SourceCount, &(count + 1));
+    let key = DataKey::Source(source.clone());
+    let already_present = env.storage().instance().has(&key);
+
+    // Write the authorization flag.
+    env.storage().instance().set(&key, &true);
+
+    // Only write the name and bump the counter on the first registration.
+    // Re-registering an existing source is a no-op for count and name,
+    // saving two storage writes on the common "re-add" path.
+    if !already_present {
+        env.storage()
+            .instance()
+            .set(&DataKey::SourceName(source.clone()), name);
+        let count = get_source_count(env);
+        env.storage()
+            .instance()
+            .set(&DataKey::SourceCount, &(count + 1));
+    }
 }
 
 pub fn remove_source(env: &Env, source: &Address) {
-    env.storage()
-        .instance()
-        .remove(&DataKey::Source(source.clone()));
+    let key = DataKey::Source(source.clone());
+    if !env.storage().instance().has(&key) {
+        return;
+    }
+    env.storage().instance().remove(&key);
     env.storage()
         .instance()
         .remove(&DataKey::SourceName(source.clone()));
@@ -93,6 +124,8 @@ pub fn get_source_count(env: &Env) -> u32 {
         .unwrap_or(0)
 }
 
+// ── Price data ────────────────────────────────────────────────────────────────
+
 pub fn set_latest_price(env: &Env, asset: &String, data_point: &PriceDataPoint) {
     let is_new = !env
         .storage()
@@ -108,11 +141,9 @@ pub fn set_latest_price(env: &Env, asset: &String, data_point: &PriceDataPoint) 
             .storage()
             .instance()
             .get(&DataKey::AllAssets)
-            .unwrap_or(Vec::new(env));
+            .unwrap_or_else(|| Vec::new(env));
         assets.push_back(asset.clone());
-        env.storage()
-            .instance()
-            .set(&DataKey::AllAssets, &assets);
+        env.storage().instance().set(&DataKey::AllAssets, &assets);
     }
 }
 
@@ -122,25 +153,31 @@ pub fn get_latest_price(env: &Env, asset: &String) -> Option<PriceDataPoint> {
         .get(&DataKey::LatestPrice(asset.clone()))
 }
 
+// Price history is stored in *persistent* storage.
+// Instance storage is billed per ledger entry size on every transaction,
+// making large growing vecs very expensive.  Persistent storage charges for
+// access only when the entry is actually read or written.
 pub fn set_price_history(env: &Env, asset: &String, history: &Vec<PriceDataPoint>) {
     env.storage()
-        .instance()
+        .persistent()
         .set(&DataKey::PriceHistory(asset.clone()), history);
 }
 
 pub fn get_price_history(env: &Env, asset: &String) -> Vec<PriceDataPoint> {
     env.storage()
-        .instance()
+        .persistent()
         .get(&DataKey::PriceHistory(asset.clone()))
-        .unwrap_or(Vec::new(env))
+        .unwrap_or_else(|| Vec::new(env))
 }
 
 pub fn get_all_assets(env: &Env) -> Vec<String> {
     env.storage()
         .instance()
         .get(&DataKey::AllAssets)
-        .unwrap_or(Vec::new(env))
+        .unwrap_or_else(|| Vec::new(env))
 }
+
+// ── Trusted assets ────────────────────────────────────────────────────────────
 
 pub fn set_trusted_asset(env: &Env, asset: &String, trusted: bool) {
     env.storage()
@@ -215,41 +252,28 @@ pub fn get_proposal(env: &Env, id: u32) -> Option<Proposal> {
     env.storage().instance().get(&DataKey::Proposal(id))
 }
 
-pub fn get_twap(env: &Env, asset: &String, window_seconds: u64) -> Option<i128> {
-let history = get_price_history(env, asset);
-if history.is_empty() {
-return None;
+pub fn get_stake(env: &Env, addr: &Address) -> i128 {
+env.storage()
+.instance()
+.get(&DataKey::StakeInfo(addr.clone()))
+.unwrap_or(0)
 }
-let now = env.ledger().timestamp();
-let cutoff = now.saturating_sub(window_seconds);
-let mut points: std::vec::Vec<PriceDataPoint> = std::vec::Vec::new();
-for p in history.iter() {
-if p.timestamp >= cutoff {
-points.push(p);
+
+pub fn set_stake(env: &Env, addr: &Address, amount: &i128) {
+env.storage()
+.instance()
+.set(&DataKey::StakeInfo(addr.clone()), amount);
 }
+
+pub fn get_slash_count(env: &Env, addr: &Address) -> u32 {
+env.storage()
+.instance()
+.get(&DataKey::SlashCount(addr.clone()))
+.unwrap_or(0)
 }
-if points.is_empty() {
-return None;
-}
-points.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-if points.len() == 1 {
-return Some(points[0].price);
-}
-let mut weighted_sum: i128 = 0;
-let mut total_weight: i128 = 0;
-for i in 0..points.len() - 1 {
-let current = &points[i];
-let next = &points[i + 1];
-let duration = (next.timestamp - current.timestamp) as i128;
-weighted_sum += current.price * duration;
-total_weight += duration;
-}
-let last = &points[points.len() - 1];
-let final_duration = (now - last.timestamp) as i128;
-weighted_sum += last.price * final_duration;
-total_weight += final_duration;
-if total_weight == 0 {
-return Some(last.price);
-}
-Some(weighted_sum / total_weight)
+
+pub fn set_slash_count(env: &Env, addr: &Address, count: &u32) {
+env.storage()
+.instance()
+.set(&DataKey::SlashCount(addr.clone()), count);
 }

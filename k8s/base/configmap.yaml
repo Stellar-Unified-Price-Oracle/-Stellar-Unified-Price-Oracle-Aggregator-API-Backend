@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stellar-oracle-config
+data:
+  LOG_LEVEL: info
+  POLLING_INTERVAL_MS: "30000"
+  STALENESS_THRESHOLD_MS: "120000"
+  WATCHED_ASSETS: XLM,USDC,BTC,ETH,USDT
+  API_PORT: "3000"
+  WS_PORT: "3001"
+  RATE_LIMIT_WINDOW_MS: "60000"
+  RATE_LIMIT_MAX: "100"
+  CACHE_TTL_MS: "15000"
+  USE_TIMESCALEDB: "true"
+  AGGREGATOR_URL: http://aggregator.stellar-oracle-staging.svc.cluster.local:4000
+  DATABASE_URL: postgresql://oracle:oracle@timescaledb.stellar-oracle-staging.svc.cluster.local:5432/stellar_oracle
+  TRACING_ENABLED: "false"

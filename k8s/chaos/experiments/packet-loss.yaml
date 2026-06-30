@@ -1,0 +1,22 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: packet-loss
+  labels:
+    chaos.stellar-oracle.io/experiment: packet-loss
+    chaos.stellar-oracle.io/target: aggregator
+spec:
+  action: loss
+  mode: all
+  duration: 4m
+  selector:
+    namespaces:
+      - stellar-oracle
+    labelSelectors:
+      app: aggregator
+  loss:
+    loss: "25"
+    correlation: "25"
+  direction: to
+  externalTargets:
+    - 0.0.0.0/0

@@ -1,0 +1,125 @@
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: external-oracle-sources
+  namespace: stellar-oracle
+spec:
+  hosts:
+    - min-api.cryptocompare.com
+    - api.redstone.finance
+    - laozi1.bandchain.org
+    - api.reflector.xyz
+    - soroban-testnet.stellar.org
+  ports:
+    - number: 443
+      name: https
+      protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: oracle-egress
+  namespace: stellar-oracle
+spec:
+  hosts:
+    - min-api.cryptocompare.com
+    - api.redstone.finance
+    - laozi1.bandchain.org
+    - api.reflector.xyz
+    - soroban-testnet.stellar.org
+  gateways:
+    - mesh
+    - istio-system/istio-egressgateway
+  tls:
+    - match:
+        - port: 443
+          sniHosts:
+            - min-api.cryptocompare.com
+            - api.redstone.finance
+            - laozi1.bandchain.org
+            - api.reflector.xyz
+            - soroban-testnet.stellar.org
+      route:
+        - destination:
+            host: istio-egressgateway.istio-system.svc.cluster.local
+            port:
+              number: 443
+          weight: 100
+    - match:
+        - port: 443
+          gateways:
+            - istio-system/istio-egressgateway
+          sniHosts:
+            - min-api.cryptocompare.com
+            - api.redstone.finance
+            - laozi1.bandchain.org
+            - api.reflector.xyz
+            - soroban-testnet.stellar.org
+      route:
+        - destination:
+            host: min-api.cryptocompare.com
+            port:
+              number: 443
+          weight: 20
+        - destination:
+            host: api.redstone.finance
+            port:
+              number: 443
+          weight: 20
+        - destination:
+            host: laozi1.bandchain.org
+            port:
+              number: 443
+          weight: 20
+        - destination:
+            host: api.reflector.xyz
+            port:
+              number: 443
+          weight: 20
+        - destination:
+            host: soroban-testnet.stellar.org
+            port:
+              number: 443
+          weight: 20
+  http:
+    - match:
+        - gateways:
+            - mesh
+          port: 443
+      route:
+        - destination:
+            host: istio-egressgateway.istio-system.svc.cluster.local
+            port:
+              number: 443
+---
+apiVersion: config.istio.io/v1alpha2
+kind: ServiceProfile
+metadata:
+  name: api.stellar-oracle.svc.cluster.local
+  namespace: stellar-oracle
+spec:
+  duration:
+    fixedDelay: 500ms
+    pct: 95
+  retries:
+    attempts: 3
+    perTryTimeout: 2s
+    retryOn: 5xx,reset,connect-failure,refused-stream
+  timeout: 10s
+---
+apiVersion: config.istio.io/v1alpha2
+kind: ServiceProfile
+metadata:
+  name: aggregator.stellar-oracle.svc.cluster.local
+  namespace: stellar-oracle
+spec:
+  duration:
+    fixedDelay: 300ms
+    pct: 95
+  retries:
+    attempts: 2
+    perTryTimeout: 5s
+    retryOn: 5xx,reset,connect-failure
+  timeout: 30s

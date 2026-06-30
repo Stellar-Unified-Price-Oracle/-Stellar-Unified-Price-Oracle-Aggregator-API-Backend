@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stellar-oracle-mesh-alerts
+  namespace: istio-system
+  labels:
+    app: prometheus
+data:
+  stellar-oracle-mesh.rules.yaml: |
+    groups:
+      - name: stellar-oracle-mesh
+        rules:
+          - alert: IstioHighRequestLatency
+            expr: histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket{destination_service_namespace="stellar-oracle"}[5m])) by (le, destination_service)) > 2000
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: High p99 latency for {{ $labels.destination_service }}
+          - alert: IstioHighErrorRate
+            expr: sum(rate(istio_requests_total{destination_service_namespace="stellar-oracle",response_code!~"2.*"}[5m])) by (destination_service) / sum(rate(istio_requests_total{destination_service_namespace="stellar-oracle"}[5m])) by (destination_service) > 0.05
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Elevated 5xx rate for {{ $labels.destination_service }}
+          - alert: ApiCanaryImbalance
+            expr: abs(sum(rate(istio_requests_total{destination_service="api.stellar-oracle.svc.cluster.local",destination_version="stable"}[5m])) - 9 * sum(rate(istio_requests_total{destination_service="api.stellar-oracle.svc.cluster.local",destination_version="canary"}[5m]))) > 50
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: API canary traffic split diverging from 90/10 target
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: istio-mesh
+  namespace: istio-system
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      istio: pilot
+  namespaceSelector:
+    matchNames:
+      - istio-system
+  endpoints:
+    - port: http-monitoring
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: stellar-oracle-envoy
+  namespace: stellar-oracle
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchExpressions:
+      - key: security.istio.io/tlsMode
+        operator: Exists
+  podMetricsEndpoints:
+    - port: http-envoy-prom
+      interval: 30s
+      path: /stats/prometheus

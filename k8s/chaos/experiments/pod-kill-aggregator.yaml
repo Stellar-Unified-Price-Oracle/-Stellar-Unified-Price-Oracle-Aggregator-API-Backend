@@ -1,0 +1,16 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: pod-kill-aggregator
+  labels:
+    chaos.stellar-oracle.io/experiment: pod-kill-aggregator
+    chaos.stellar-oracle.io/target: aggregator
+spec:
+  action: pod-kill
+  mode: one
+  duration: 2m
+  selector:
+    namespaces:
+      - stellar-oracle
+    labelSelectors:
+      app: aggregator

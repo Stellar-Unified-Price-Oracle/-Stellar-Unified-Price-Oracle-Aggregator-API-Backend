@@ -3,6 +3,7 @@ import { NormalizedPrice, AggregatedPrice, DegradationLevel } from './types';
 import { config } from './config';
 import { logger } from './utils/logger';
 import { CircuitBreaker, CircuitBreakerConfig } from './circuit-breaker';
+import { anomalyDetector } from './anomaly-detector';
 
 export class PriceAggregator {
   private sources: Map<string, NormalizedPrice> = new Map();
@@ -62,6 +63,9 @@ export class PriceAggregator {
 
     const degradationLevel = this.computeDegradationLevel(pricesToUse.length, totalSources, stale);
 
+    const medianFloat = parseFloat(median.toString()) / Math.pow(10, pricesToUse[0].decimals);
+    const anomaly = anomalyDetector.detect(normalized, medianFloat) ?? undefined;
+
     return {
       asset: normalized,
       price: median.toString(),
@@ -71,6 +75,7 @@ export class PriceAggregator {
       confidence,
       degradationLevel,
       stale,
+      anomaly,
     };
   }
 

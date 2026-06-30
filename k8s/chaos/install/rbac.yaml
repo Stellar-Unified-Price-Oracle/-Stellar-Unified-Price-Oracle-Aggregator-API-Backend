@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: chaos-operator
+  namespace: stellar-oracle
+  labels:
+    app.kubernetes.io/name: chaos-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: chaos-operator
+  namespace: stellar-oracle
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["chaos-mesh.org"]
+    resources:
+      - podchaos
+      - networkchaos
+      - stresschaos
+      - dnschaos
+      - schedules
+      - workflows
+      - statuschecks
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: chaos-operator
+  namespace: stellar-oracle
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: chaos-operator
+subjects:
+  - kind: ServiceAccount
+    name: chaos-operator
+    namespace: stellar-oracle
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: chaos-reporting
+  namespace: stellar-oracle
+  labels:
+    app.kubernetes.io/name: chaos-reporting
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: chaos-reporting
+  namespace: stellar-oracle
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events", "configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["chaos-mesh.org"]
+    resources:
+      - podchaos
+      - networkchaos
+      - stresschaos
+      - dnschaos
+      - schedules
+      - workflows
+      - statuschecks
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: chaos-reporting
+  namespace: stellar-oracle
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: chaos-reporting
+subjects:
+  - kind: ServiceAccount
+    name: chaos-reporting
+    namespace: stellar-oracle

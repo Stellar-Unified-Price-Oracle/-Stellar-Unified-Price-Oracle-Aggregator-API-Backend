@@ -1,0 +1,24 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: network-partition
+  labels:
+    chaos.stellar-oracle.io/experiment: network-partition
+    chaos.stellar-oracle.io/target: api-aggregator
+spec:
+  action: partition
+  mode: all
+  duration: 3m
+  selector:
+    namespaces:
+      - stellar-oracle
+    labelSelectors:
+      app: api
+  direction: both
+  target:
+    selector:
+      namespaces:
+        - stellar-oracle
+      labelSelectors:
+        app: aggregator
+    mode: all

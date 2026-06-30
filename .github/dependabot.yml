@@ -1,40 +1,265 @@
 version: 2
 updates:
   - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - npm
+    commit-message:
+      prefix: npm
+      include: scope
+    groups:
+      npm-root-patch:
+        update-types:
+          - patch
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - npm
+    commit-message:
+      prefix: npm
+      include: scope
+    groups:
+      npm-root-minor:
+        update-types:
+          - minor
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: npm
     directory: /api
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - npm
+      - api
+    commit-message:
+      prefix: npm
+      include: scope
     groups:
-      dependencies:
-        patterns: ['*']
+      npm-api-patch:
+        update-types:
+          - patch
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: npm
+    directory: /api
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - npm
+      - api
+    commit-message:
+      prefix: npm
+      include: scope
+    groups:
+      npm-api-minor:
+        update-types:
+          - minor
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: npm
     directory: /services/aggregator
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - npm
+      - aggregator
+    commit-message:
+      prefix: npm
+      include: scope
     groups:
-      dependencies:
-        patterns: ['*']
+      npm-aggregator-patch:
+        update-types:
+          - patch
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: npm
+    directory: /services/aggregator
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - npm
+      - aggregator
+    commit-message:
+      prefix: npm
+      include: scope
+    groups:
+      npm-aggregator-minor:
+        update-types:
+          - minor
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: cargo
     directory: /contracts/price-oracle
     schedule:
       interval: weekly
+      day: monday
     open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - rust
+      - contract
+    commit-message:
+      prefix: cargo
+    groups:
+      cargo-contract-patch:
+        update-types:
+          - patch
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: cargo
+    directory: /contracts/price-oracle
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - rust
+      - contract
+    commit-message:
+      prefix: cargo
+    groups:
+      cargo-contract-minor:
+        update-types:
+          - minor
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: soroban-sdk
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: docker
     directory: /api
     schedule:
       interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - docker
+      - api
+    commit-message:
+      prefix: docker
+    groups:
+      docker-api-patch:
+        update-types:
+          - patch
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /services/aggregator
     schedule:
       interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - docker
+      - aggregator
+    commit-message:
+      prefix: docker
+    groups:
+      docker-aggregator-patch:
+        update-types:
+          - patch
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions-patch:
+        update-types:
+          - patch
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions-minor:
+        update-types:
+          - minor
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major

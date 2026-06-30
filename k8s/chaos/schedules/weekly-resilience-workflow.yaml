@@ -1,0 +1,76 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: weekly-resilience-workflow
+  labels:
+    chaos.stellar-oracle.io/schedule: weekly-guard
+spec:
+  schedule: "5 3 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: weekly-resilience-workflow
+        spec:
+          serviceAccountName: chaos-operator
+          restartPolicy: Never
+          containers:
+            - name: workflow-runner
+              image: bitnami/kubectl:1.29
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: CHAOS_TARGET_ENV
+                  value: staging
+                - name: NAMESPACE
+                  value: stellar-oracle
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -euo pipefail
+                  if [[ "${CHAOS_TARGET_ENV}" != "staging" ]]; then
+                    echo "Refusing to run: CHAOS_TARGET_ENV must be staging (got '${CHAOS_TARGET_ENV}')"
+                    exit 1
+                  fi
+                  ns_env="$(kubectl get namespace "${NAMESPACE}" -o jsonpath='{.metadata.labels.environment}' 2>/dev/null || true)"
+                  if [[ "${ns_env}" != "staging" ]]; then
+                    echo "Refusing to run: namespace ${NAMESPACE} is not labeled environment=staging"
+                    exit 1
+                  fi
+                  echo "Staging guard passed; triggering weekly chaos schedule"
+                  kubectl -n "${NAMESPACE}" patch schedule weekly-chaos-schedule \
+                    --type merge \
+                    -p '{"metadata":{"annotations":{"chaos.stellar-oracle.io/triggered-at":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}}}' \
+                    || kubectl -n "${NAMESPACE}" apply -f /manifests/weekly-chaos-schedule.yaml
+                  kubectl -n "${NAMESPACE}" get schedule weekly-chaos-schedule -o wide
+                  kubectl -n "${NAMESPACE}" get workflows.chaos-mesh.org -l chaos.stellar-oracle.io/schedule=weekly --watch=false || true
+              volumeMounts:
+                - name: schedule-manifest
+                  mountPath: /manifests
+                  readOnly: true
+          volumes:
+            - name: schedule-manifest
+              configMap:
+                name: weekly-chaos-schedule-manifest
+                optional: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: weekly-chaos-schedule-manifest
+data:
+  weekly-chaos-schedule.yaml: |
+    apiVersion: chaos-mesh.org/v1alpha1
+    kind: Schedule
+    metadata:
+      name: weekly-chaos-schedule
+    spec:
+      schedule: "0 3 * * 0"
+      type: Workflow
+      workflow:
+        entry: weekly-resilience-serial

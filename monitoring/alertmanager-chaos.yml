@@ -1,0 +1,27 @@
+route:
+  routes:
+    - match:
+        chaos: active
+      receiver: chaos-staging-info
+      continue: true
+    - match:
+        chaos: failed
+      receiver: chaos-staging-warning
+      continue: true
+    - match:
+        chaos: health-degraded
+      receiver: chaos-staging-critical
+
+receivers:
+  - name: chaos-staging-info
+    slack_configs:
+      - channel: '#oracle-chaos-staging'
+        title: 'Chaos experiment active (staging)'
+  - name: chaos-staging-warning
+    slack_configs:
+      - channel: '#stellar-oracle-ops'
+        title: 'Chaos experiment failed (staging)'
+  - name: chaos-staging-critical
+    slack_configs:
+      - channel: '#oracle-alerts'
+        title: 'CRITICAL: Service degraded during chaos (staging)'
