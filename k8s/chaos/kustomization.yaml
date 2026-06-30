@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: stellar-oracle
+
+resources:
+  - namespace.yaml
+  - install/rbac.yaml
+  - experiments/pod-kill-api.yaml
+  - experiments/pod-kill-aggregator.yaml
+  - experiments/network-latency.yaml
+  - experiments/network-partition.yaml
+  - experiments/dns-failure.yaml
+  - experiments/packet-loss.yaml
+  - experiments/cpu-stress.yaml
+  - experiments/memory-stress.yaml
+  - experiments/node-failure.yaml
+  - schedules/weekly-chaos-schedule.yaml
+  - schedules/weekly-resilience-workflow.yaml
+  - reporting/report-cronjob.yaml
+  - reporting/alertmanager-config.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: stellar-oracle
+  chaos.stellar-oracle.io/environment: staging

@@ -1,0 +1,16 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: node-failure
+  labels:
+    chaos.stellar-oracle.io/experiment: node-failure
+    chaos.stellar-oracle.io/target: node
+spec:
+  action: pod-failure
+  mode: all
+  duration: 3m
+  selector:
+    namespaces:
+      - stellar-oracle
+    labelSelectors:
+      app.kubernetes.io/part-of: stellar-oracle

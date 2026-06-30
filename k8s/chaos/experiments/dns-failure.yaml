@@ -1,0 +1,21 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: DNSChaos
+metadata:
+  name: dns-failure
+  labels:
+    chaos.stellar-oracle.io/experiment: dns-failure
+    chaos.stellar-oracle.io/target: aggregator
+spec:
+  action: error
+  mode: all
+  duration: 3m
+  selector:
+    namespaces:
+      - stellar-oracle
+    labelSelectors:
+      app: aggregator
+  patterns:
+    - chainlink.*
+    - redstone.*
+    - band.*
+    - reflector.*

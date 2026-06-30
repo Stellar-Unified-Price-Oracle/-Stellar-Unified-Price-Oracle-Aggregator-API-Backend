@@ -1,0 +1,47 @@
+name: K8s Manifest Validation
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'k8s/chaos/**'
+      - 'scripts/validate-k8s.sh'
+      - 'scripts/chaos/**'
+      - '.github/workflows/k8s-validation.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'k8s/chaos/**'
+      - 'scripts/validate-k8s.sh'
+      - 'scripts/chaos/**'
+      - '.github/workflows/k8s-validation.yml'
+
+jobs:
+  validate:
+    name: Validate chaos Kubernetes manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.29.0
+
+      - name: Install kustomize
+        run: |
+          curl -sL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Install kubeconform
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Validate manifests
+        run: |
+          chmod +x scripts/validate-k8s.sh scripts/chaos/*.sh
+          ./scripts/validate-k8s.sh

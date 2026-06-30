@@ -65,7 +65,8 @@ DeFi protocols.
 ├── data/                         # Historical price JSON files (gitignored)
 ├── logs/                         # Runtime logs (gitignored)
 ├── scripts/deploy-soroban.js     # Contract deployment script
-├── fly/                          # Fly.io deployment configs
+├── k8s/chaos/                    # Chaos Mesh experiments (staging)
+├── docs/chaos-engineering/       # Game days, findings, rollback runbooks
 ├── .github/workflows/ci.yml      # CI: backend build (aggregator + API)
 ├── Makefile                      # Build/test/run shortcuts
 ├── docker-compose.yml
@@ -97,7 +98,7 @@ Reflector ─┤    (poll 30s, median)      (on-chain storage)
 **Push to `main`** — source code only:
 - `api/src/`, `services/aggregator/src/`, `contracts/price-oracle/src/`
 - `Makefile`, `docker-compose.yml`, `package.json`, `AGENTS.md`
-- `.husky/`, `.github/workflows/`, `fly/`, `scripts/`
+- `.husky/`, `.github/workflows/`, `k8s/chaos/`, `docs/chaos-engineering/`, `scripts/`
 - Configuration: `.env.example`, `.gitignore`
 
 **Never push** (already gitignored):

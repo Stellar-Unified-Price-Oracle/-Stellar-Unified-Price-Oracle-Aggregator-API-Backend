@@ -1,0 +1,19 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: cpu-stress
+  labels:
+    chaos.stellar-oracle.io/experiment: cpu-stress
+    chaos.stellar-oracle.io/target: api
+spec:
+  mode: one
+  duration: 5m
+  selector:
+    namespaces:
+      - stellar-oracle
+    labelSelectors:
+      app: api
+  stressors:
+    cpu:
+      workers: 2
+      load: 80
