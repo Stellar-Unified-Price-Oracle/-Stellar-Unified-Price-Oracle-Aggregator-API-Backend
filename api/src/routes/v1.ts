@@ -15,20 +15,6 @@ import { links, withLinks } from '../services/hypermedia';
 import { Router, Request, Response } from 'express';
 import { conditionalCache } from '../middleware/conditional-cache';
 
-const BATCH_MAX_ASSETS = 50;
-
-const BatchQuerySchema = z.object({
-  assets: z
-    .array(
-      z.string().min(1).refine(
-        (val) => /^[A-Z0-9]{1,12}$/.test(val) || (val.startsWith('C') && val.length === 56),
-        { message: 'Invalid asset symbol' },
-      ),
-    )
-    .min(1, 'At least one asset required')
-    .max(BATCH_MAX_ASSETS, `Maximum ${BATCH_MAX_ASSETS} assets per batch request`),
-});
-
 const router = Router();
 let pricesCache: HybridCache<any>;
 

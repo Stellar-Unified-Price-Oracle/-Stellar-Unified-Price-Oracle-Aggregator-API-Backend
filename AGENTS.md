@@ -30,6 +30,15 @@ DeFi protocols.
 │   │   └── websocket/server.ts   # WS with per-asset subscriptions
 │   └── tests/services.test.ts
 │
+├── sdk/                          # TypeScript client SDK (OpenAPI-generated + WebSocket)
+│   ├── src/
+│   │   ├── index.ts              # Public exports
+│   │   ├── client.ts             # PriceOracleClient (WebSocket + REST helpers)
+│   │   ├── api-client.ts         # Factory for generated REST client
+│   │   ├── types.ts              # WebSocket / legacy types
+│   │   └── generated/            # Auto-generated from api/openapi.json (do not edit)
+│   └── openapi-codegen via `npm run generate:api-client`
+│
 ├── services/aggregator/          # Price aggregator service (TypeScript)
 │   ├── src/
 │   │   ├── index.ts              # Poll loop, WS broadcast, health server
@@ -111,28 +120,35 @@ Reflector ─┤    (poll 30s, median)      (on-chain storage)
 After any change, confirm:
 
 1. **TypeScript** — no type errors:
-   ```
-   npm run build:aggregator && npm run build:api
-   ```
-   Or individually:
-   ```
-   cd services/aggregator && npx tsc --noEmit
-   cd ../../api && npx tsc --noEmit
-   ```
-2. **Tests** — all pass:
+ ```
+ npm run build:aggregator && npm run build:api && npm run build:sdk
+ ```
+ Or individually:
+ ```
+ cd services/aggregator && npx tsc --noEmit
+ cd ../../api && npx tsc --noEmit
+ cd ../../sdk && npx tsc --noEmit
+ ```
+2. **OpenAPI client codegen** — regenerate and verify drift:
+ ```
+ npm run generate:api-client
+ npm run check:generated
+ ```
+3. **Tests** — all pass:
    ```
    npm run test:backend
    ```
    Or individually:
    ```
    cd services/aggregator && npm test
-   cd ../../api && npm test
-   cd ../../contracts/price-oracle && cargo test
-   ```
-3. **Pre-push hook** — runs automatically via Husky at `git push`:
+ cd ../../api && npm test
+ cd ../../sdk && npm test
+ cd ../../contracts/price-oracle && cargo test
+ ```
+4. **Pre-push hook** — runs automatically via Husky at `git push`:
    - Aggregator build
    - API build
-4. **CI** — `.github/workflows/ci.yml` runs backend build (aggregator + API) on push/PR.
+5. **CI** — `.github/workflows/ci.yml` runs backend build (aggregator + API + SDK) and OpenAPI codegen drift check on push/PR.
 
 ---
 
