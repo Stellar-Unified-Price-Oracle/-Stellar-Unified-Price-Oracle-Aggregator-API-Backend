@@ -11,4 +11,18 @@ pub enum OracleError {
     InvalidDecimals = 5,
     AlreadyInitialized = 6,
     SourceAlreadyExists = 7,
+    // Governance errors
+    GovernanceNotInitialized = 8,
+    GovernanceAlreadyInitialized = 9,
+    InsufficientVotingPower = 10,
+    ProposalNotFound = 11,
+    VotingNotActive = 12,
+    AlreadyVoted = 13,
+    ProposalNotQueued = 14,
+    TimeLockNotElapsed = 15,
+    ProposalDefeated = 16,
+    ProposalAlreadyExecuted = 17,
+    ProposalCancelled = 18,
+    GuardianOnly = 19,
+    InvalidGovernanceConfig = 20,
 }

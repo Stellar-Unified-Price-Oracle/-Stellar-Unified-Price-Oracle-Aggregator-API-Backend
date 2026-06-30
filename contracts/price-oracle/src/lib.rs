@@ -1,11 +1,22 @@
 #![no_std]
 
-mod contract;
+pub mod contract;
 mod errors;
+pub mod governance;
 mod proxy;
-mod storage;
-mod test;
+pub mod storage;
 mod types;
 
+#[cfg(test)]
+mod test;
+#[cfg(test)]
+mod fuzz;
+#[cfg(test)]
+mod governance_test;
+#[cfg(test)]
+mod gas_benchmarks;
+
 pub use contract::PriceOracleContract;
+pub use governance::GovernanceContract;
 pub use proxy::ProxyContract;
+pub use types::{AssetPrice, PriceDataPoint};
