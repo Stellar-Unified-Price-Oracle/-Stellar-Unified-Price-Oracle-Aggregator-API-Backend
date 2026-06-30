@@ -3,6 +3,17 @@ import BigNumber from 'bignumber.js';
 import { logger } from '../utils/logger';
 import { NormalizedPrice, OracleSourceName, SourceHealthStatus } from '../types';
 import { sourceCircuitBreaker } from '../source-circuit-breaker';
+import {
+  oracleSourceLatency,
+  oracleSourceRequestsTotal,
+  oracleSourceSlaBreaches,
+  oracleApiCallsTotal,
+  oracleApiCostTotal,
+  oracleApiBudgetUtilization,
+} from '../metrics';
+import { estimateCostUsd, recordCall, getBudgetUtilization } from '../cost-model';
+
+const SLA_THRESHOLD_SECONDS = 5;
 
 export abstract class BaseSource {
   abstract name: OracleSourceName;
@@ -46,15 +57,35 @@ export abstract class BaseSource {
     const maxAttempts = 3;
     const baseDelay = 1000;
 
+    // #64: track request latency per source
+    const timer = oracleSourceLatency.startTimer({ source: this.name, asset });
+
+    // #65: record API call and update cost metrics
+    oracleApiCallsTotal.inc({ source: this.name });
+    recordCall(this.name);
+    const costUsd = estimateCostUsd(this.name);
+    if (costUsd > 0) oracleApiCostTotal.inc({ source: this.name }, costUsd);
+    oracleApiBudgetUtilization.set({ source: this.name }, getBudgetUtilization(this.name));
+
     try {
       this.health.totalRequests++;
       const price = await this.fetchPrice(asset);
+
+      const elapsed = timer({ status: 'success' });
+      oracleSourceRequestsTotal.inc({ source: this.name, status: 'success' });
+      if (elapsed > SLA_THRESHOLD_SECONDS) {
+        oracleSourceSlaBreaches.inc({ source: this.name });
+      }
+
       this.health.lastSuccess = Math.floor(Date.now() / 1000);
       this.health.consecutiveFailures = 0;
       this.health.healthy = true;
       sourceCircuitBreaker.recordSuccess(this.name);
       return price;
     } catch (err) {
+      timer({ status: 'error' });
+      oracleSourceRequestsTotal.inc({ source: this.name, status: 'error' });
+
       this.health.totalFailures++;
       this.health.lastFailure = Math.floor(Date.now() / 1000);
       this.health.consecutiveFailures++;
