@@ -12,6 +12,23 @@ import { HealthServer } from './health-server';
 import AlertManager, { AlertThresholds } from './alert-manager';
 import { sourceCircuitBreaker } from './source-circuit-breaker';
 
+// In-process counters surfaced as structured log lines; the API /metrics
+// endpoint (prom-client) collects the canonical Prometheus metrics.
+const internalCounters = {
+  priceUpdates: new Map<string, number>(),
+  anomalies: new Map<string, number>(),
+};
+
+function incPriceUpdate(asset: string, source: string): void {
+  const key = `${asset}:${source}`;
+  internalCounters.priceUpdates.set(key, (internalCounters.priceUpdates.get(key) ?? 0) + 1);
+}
+
+function incAnomaly(asset: string, method: string): void {
+  const key = `${asset}:${method}`;
+  internalCounters.anomalies.set(key, (internalCounters.anomalies.get(key) ?? 0) + 1);
+}
+
 const aggregator = new PriceAggregator();
 const alertManager = new AlertManager();
 
@@ -26,6 +43,7 @@ async function poll(): Promise<AggregatedPrice[]> {
     const prices = await source.fetchAll(config.assets);
     for (const price of prices) {
       aggregator.updateSourcePrice(price);
+      incPriceUpdate(price.asset, price.source);
 
       if (db && db.isInitialized()) {
         await db.appendHistoricalPrice(
@@ -42,6 +60,7 @@ async function poll(): Promise<AggregatedPrice[]> {
   }
 
   const aggregated = aggregator.getAllPrices();
+  const allSourceNames = ['chainlink', 'redstone', 'band', 'reflector'];
   for (const ap of aggregated) {
     const usdPrice = BigInt(ap.price) / BigInt(10n ** BigInt(ap.decimals));
     const healthStatuses = sources.map((s) => ({
@@ -51,6 +70,21 @@ async function poll(): Promise<AggregatedPrice[]> {
       consecutiveFailures: s.health.consecutiveFailures,
     }));
     logger.info(`Aggregated ${ap.asset}: ~$${usdPrice} (sources: ${ap.sources.join(', ')}, confidence: ${(ap.confidence * 100).toFixed(0)}%)`, { health: healthStatuses });
+
+    for (const src of ap.sources) {
+      incPriceUpdate(ap.asset, src);
+    }
+
+    const participation: Record<string, number> = {};
+    for (const src of allSourceNames) {
+      participation[src] = ap.sources.includes(src as any) ? 1 : 0;
+    }
+    logger.debug(`[Metrics] Source participation for ${ap.asset}`, participation);
+
+    if (ap.anomaly) {
+      incAnomaly(ap.asset, ap.anomaly.method);
+      logger.warn(`[Anomaly] ${ap.asset} score=${ap.anomaly.score.toFixed(3)} method=${ap.anomaly.method}: ${ap.anomaly.details}`);
+    }
 
     // Check price against alert thresholds
     await alertManager.checkPrice(ap);

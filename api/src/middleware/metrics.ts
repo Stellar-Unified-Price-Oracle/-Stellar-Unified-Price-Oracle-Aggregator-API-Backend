@@ -192,6 +192,7 @@ export function metricsMiddleware(req: Request, res: Response, next: NextFunctio
   res.on('finish', () => {
     const route = req.route?.path || req.path;
     httpRequestsTotal.inc({ method: req.method, route, status: res.statusCode });
+    apiCallsByEndpoint.inc({ endpoint: route, method: req.method, status: res.statusCode });
     end({ method: req.method, route, status: res.statusCode });
   });
   next();
