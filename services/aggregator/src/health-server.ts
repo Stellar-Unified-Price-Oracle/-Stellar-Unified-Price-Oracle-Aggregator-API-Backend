@@ -1,5 +1,6 @@
 import http from 'http';
 import { logger } from './utils/logger';
+import { withCorrelation, correlationHeaders } from './utils/correlation';
 import { SourceCBStatus } from './source-circuit-breaker';
 
 interface HealthSnapshot {
@@ -23,8 +24,20 @@ export class HealthServer {
 
   start(): void {
     this.server = http.createServer((req, res) => {
+      withCorrelation(req.headers, () => this.handleRequest(req, res));
+    });
+
+    this.server.listen(this.port, () => {
+      logger.info(`Health server listening on port ${this.port}`);
+    });
+  }
+
+  private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
       const url = new URL(req.url || '/', `http://localhost:${this.port}`);
       const verbose = url.searchParams.get('verbose') === 'true';
+      const ids = correlationHeaders();
+      res.setHeader('x-request-id', ids['x-request-id'] || '');
+      res.setHeader('x-trace-id', ids['x-trace-id'] || '');
 
       if (url.pathname === '/health/live') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -92,11 +105,6 @@ export class HealthServer {
 
       res.writeHead(404);
       res.end();
-    });
-
-    this.server.listen(this.port, () => {
-      logger.info(`Health server listening on port ${this.port}`);
-    });
   }
 
   stop(): void {
