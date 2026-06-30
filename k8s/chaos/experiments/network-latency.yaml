@@ -1,0 +1,28 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: network-latency
+  labels:
+    chaos.stellar-oracle.io/experiment: network-latency
+    chaos.stellar-oracle.io/target: api-aggregator
+spec:
+  action: delay
+  mode: all
+  duration: 5m
+  selector:
+    namespaces:
+      - stellar-oracle
+    labelSelectors:
+      app: api
+  delay:
+    latency: 500ms
+    jitter: 100ms
+    correlation: "50"
+  direction: to
+  target:
+    selector:
+      namespaces:
+        - stellar-oracle
+      labelSelectors:
+        app: aggregator
+    mode: all

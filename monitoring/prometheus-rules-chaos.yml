@@ -1,0 +1,89 @@
+groups:
+  - name: chaos_engineering_alerts
+    interval: 30s
+    rules:
+      - alert: ChaosExperimentActive
+        expr: |
+          count(chaos_mesh_experiments{namespace="stellar-oracle", phase="Running"}) > 0
+        for: 0m
+        labels:
+          severity: info
+          service: stellar-oracle
+          chaos: active
+        annotations:
+          summary: "Chaos experiment running in staging"
+          description: "At least one Chaos Mesh experiment is active in stellar-oracle"
+
+      - alert: ChaosExperimentFailed
+        expr: |
+          count(chaos_mesh_experiments{namespace="stellar-oracle", phase="Failed"}) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: stellar-oracle
+          chaos: failed
+        annotations:
+          summary: "Chaos experiment failed in staging"
+          description: "A Chaos Mesh experiment failed in namespace stellar-oracle"
+
+      - alert: ChaosWorkflowFailed
+        expr: |
+          count(chaos_mesh_workflows{namespace="stellar-oracle", phase="Failed"}) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: stellar-oracle
+          chaos: failed
+        annotations:
+          summary: "Weekly chaos workflow failed"
+          description: "Chaos Mesh workflow did not complete successfully"
+
+      - alert: ChaosWeeklyReportJobFailed
+        expr: |
+          kube_job_status_failed{namespace="stellar-oracle", job_name=~"chaos-weekly-report-.*"} > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: stellar-oracle
+          chaos: failed
+        annotations:
+          summary: "Chaos weekly report job failed"
+          description: "Report CronJob failed; check chaos-reporting logs"
+
+      - alert: ChaosResilienceGuardFailed
+        expr: |
+          kube_job_status_failed{namespace="stellar-oracle", job_name=~"weekly-resilience-workflow-.*"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: stellar-oracle
+          chaos: failed
+        annotations:
+          summary: "Chaos staging guard failed"
+          description: "Weekly resilience CronJob failed before experiments could run safely"
+
+      - alert: ChaosHealthDegradedDuringExperiment
+        expr: |
+          count(chaos_mesh_experiments{namespace="stellar-oracle", phase="Running"}) > 0
+          and (up{job="stellar-api"} == 0 or up{job="stellar-aggregator"} == 0)
+        for: 2m
+        labels:
+          severity: critical
+          service: stellar-oracle
+          chaos: health-degraded
+        annotations:
+          summary: "Service unavailable during chaos experiment"
+          description: "API or aggregator is down while chaos is running"
+
+      - alert: PriceFeedStaleDuringChaos
+        expr: |
+          (time() - stellar_oracle_price_timestamp{asset="XLM"} > 180)
+          and on() (count(chaos_mesh_experiments{namespace="stellar-oracle", phase="Running"}) > 0)
+        for: 3m
+        labels:
+          severity: critical
+          service: stellar-oracle
+          chaos: health-degraded
+        annotations:
+          summary: "Price feed stale during chaos experiment"
+          description: "XLM price stale for >180s while chaos is active"

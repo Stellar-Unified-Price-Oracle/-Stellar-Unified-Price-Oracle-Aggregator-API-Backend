@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stellar-oracle
+  labels:
+    environment: staging
+    app.kubernetes.io/part-of: stellar-oracle
+    chaos-mesh.org/inject: enabled

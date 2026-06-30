@@ -1,0 +1,172 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: weekly-chaos-schedule
+  labels:
+    chaos.stellar-oracle.io/schedule: weekly
+spec:
+  schedule: "0 3 * * 0"
+  historyLimit: 8
+  concurrencyPolicy: Forbid
+  type: Workflow
+  workflow:
+    entry: weekly-resilience-serial
+    templates:
+      - name: weekly-resilience-serial
+        templateType: Serial
+        deadline: 6h
+        children:
+          - step-pod-kill-api
+          - step-pod-kill-aggregator
+          - step-network-latency
+          - step-network-partition
+          - step-dns-failure
+          - step-packet-loss
+          - step-cpu-stress
+          - step-memory-stress
+          - step-node-failure
+      - name: step-pod-kill-api
+        templateType: PodChaos
+        deadline: 15m
+        podChaos:
+          action: pod-kill
+          mode: one
+          duration: 2m
+          selector:
+            namespaces:
+              - stellar-oracle
+            labelSelectors:
+              app: api
+      - name: step-pod-kill-aggregator
+        templateType: PodChaos
+        deadline: 15m
+        podChaos:
+          action: pod-kill
+          mode: one
+          duration: 2m
+          selector:
+            namespaces:
+              - stellar-oracle
+            labelSelectors:
+              app: aggregator
+      - name: step-network-latency
+        templateType: NetworkChaos
+        deadline: 15m
+        networkChaos:
+          action: delay
+          mode: all
+          duration: 5m
+          selector:
+            namespaces:
+              - stellar-oracle
+            labelSelectors:
+              app: api
+          delay:
+            latency: 500ms
+            jitter: 100ms
+            correlation: "50"
+          direction: to
+          target:
+            selector:
+              namespaces:
+                - stellar-oracle
+              labelSelectors:
+                app: aggregator
+            mode: all
+      - name: step-network-partition
+        templateType: NetworkChaos
+        deadline: 15m
+        networkChaos:
+          action: partition
+          mode: all
+          duration: 3m
+          selector:
+            namespaces:
+              - stellar-oracle
+            labelSelectors:
+              app: api
+          direction: both
+          target:
+            selector:
+              namespaces:
+                - stellar-oracle
+              labelSelectors:
+                app: aggregator
+            mode: all
+      - name: step-dns-failure
+        templateType: DNSChaos
+        deadline: 15m
+        dnsChaos:
+          action: error
+          mode: all
+          duration: 3m
+          selector:
+            namespaces:
+              - stellar-oracle
+            labelSelectors:
+              app: aggregator
+          patterns:
+            - chainlink.*
+            - redstone.*
+            - band.*
+            - reflector.*
+      - name: step-packet-loss
+        templateType: NetworkChaos
+        deadline: 15m
+        networkChaos:
+          action: loss
+          mode: all
+          duration: 4m
+          selector:
+            namespaces:
+              - stellar-oracle
+            labelSelectors:
+              app: aggregator
+          loss:
+            loss: "25"
+            correlation: "25"
+          direction: to
+          externalTargets:
+            - 0.0.0.0/0
+      - name: step-cpu-stress
+        templateType: StressChaos
+        deadline: 15m
+        stressChaos:
+          mode: one
+          duration: 5m
+          selector:
+            namespaces:
+              - stellar-oracle
+            labelSelectors:
+              app: api
+          stressors:
+            cpu:
+              workers: 2
+              load: 80
+      - name: step-memory-stress
+        templateType: StressChaos
+        deadline: 15m
+        stressChaos:
+          mode: one
+          duration: 5m
+          selector:
+            namespaces:
+              - stellar-oracle
+            labelSelectors:
+              app: aggregator
+          stressors:
+            memory:
+              workers: 1
+              size: 256MB
+      - name: step-node-failure
+        templateType: PodChaos
+        deadline: 15m
+        podChaos:
+          action: pod-failure
+          mode: all
+          duration: 3m
+          selector:
+            namespaces:
+              - stellar-oracle
+            labelSelectors:
+              app.kubernetes.io/part-of: stellar-oracle
