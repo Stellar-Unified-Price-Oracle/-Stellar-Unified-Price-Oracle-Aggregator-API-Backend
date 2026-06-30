@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: stellar-oracle
+
+resources:
+  - ../../base
+  - secrets.example.yaml
+
+patches:
+  - target:
+      kind: Deployment
+      name: api-stable
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target:
+      kind: Deployment
+      name: api-canary
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 1
