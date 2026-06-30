@@ -13,6 +13,8 @@ import { metricsMiddleware, metricsHandler } from './middleware/metrics';
 import { authMiddleware, optionalAuthMiddleware } from './middleware/auth';
 import { sanitizeInputs, cspHeaders } from './middleware/sanitization';
 import { httpsRedirect, hstsHeaders } from './middleware/https';
+import { compressionMiddleware } from './middleware/compression';
+import { usageTrackingMiddleware } from './middleware/usage-tracking';
 import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
 import v1Routes, { initializeCache } from './routes/v1';
@@ -109,11 +111,13 @@ if (process.env.NODE_ENV === 'production') {
   app.use(hstsHeaders);
 }
 
+app.use(compressionMiddleware());
 app.use(express.json());
 app.use(sanitizeInputs);
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
+app.use(usageTrackingMiddleware);
 app.use(
   rateLimit({
     windowMs: config.rateLimitWindowMs,

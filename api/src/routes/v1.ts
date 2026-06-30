@@ -11,6 +11,7 @@ import { HybridCache } from '../services/cache';
 import { cacheHitTotal, cacheMissTotal, lastPriceTimestamp, priceQueriesTotal } from '../middleware/metrics';
 import { issueWsCsrfToken, isCsrfEnabled } from '../websocket/csrf';
 import { config } from '../config';
+import { links, withLinks } from '../services/hypermedia';
 import { Router, Request, Response } from 'express';
 
 const BATCH_MAX_ASSETS = 50;
@@ -97,7 +98,7 @@ router.get('/prices', async (req: Request, res: Response) => {
   };
 
   await pricesCache.set(cacheKey, aggregated, 'prices');
-  res.json({ success: true, data: aggregated });
+  res.json({ success: true, data: withLinks(aggregated, links.prices()) });
 });
 
 router.get('/prices/:asset', async (req: Request, res: Response) => {
@@ -123,7 +124,7 @@ router.get('/prices/:asset', async (req: Request, res: Response) => {
   priceQueriesTotal.inc({ asset });
   lastPriceTimestamp.set({ asset }, price.timestamp);
   await pricesCache.set(cacheKey, price, 'price');
-  res.json({ success: true, data: price });
+  res.json({ success: true, data: withLinks(price, links.asset(asset)) });
 });
 
 // GET /history/:asset — cursor-paginated time-series
@@ -183,7 +184,7 @@ router.get('/history/:asset/legacy', async (req: Request, res: Response) => {
   };
 
   await pricesCache.set(cacheKey, response, 'history');
-  res.json({ success: true, data: response });
+  res.json({ success: true, data: withLinks(response, links.history(asset)) });
 });
 
 // GET /sources — offset-paginated
