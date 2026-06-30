@@ -1,4 +1,5 @@
 import { z, ZodError } from 'zod';
+import { PAGINATION_DEFAULTS } from './pagination';
 
 const assetValidator = z.string().min(1).refine(
   (val) => {
@@ -18,6 +19,35 @@ export const HistoryQuerySchema = z.object({
   from: z.coerce.number().int().positive().optional().describe('Unix timestamp (seconds) for range start'),
   to: z.coerce.number().int().positive().optional().describe('Unix timestamp (seconds) for range end'),
   limit: z.coerce.number().int().min(1, 'limit must be at least 1').max(1000, 'limit cannot exceed 1000').default(100),
+});
+
+// Cursor-based pagination (history / time-series endpoints)
+export const CursorHistoryQuerySchema = z.object({
+  asset: assetValidator,
+  cursor: z.string().optional().describe('Opaque base64url cursor from a previous response nextCursor'),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1, 'limit must be at least 1')
+    .max(PAGINATION_DEFAULTS.MAX_PAGE_SIZE, `limit cannot exceed ${PAGINATION_DEFAULTS.MAX_PAGE_SIZE}`)
+    .default(PAGINATION_DEFAULTS.PAGE_SIZE),
+  from: z.coerce.number().int().positive().optional().describe('Unix timestamp lower bound (ignored when cursor is provided)'),
+  to: z.coerce.number().int().positive().optional().describe('Unix timestamp upper bound'),
+});
+
+// Offset-based pagination (sources, prices list)
+export const OffsetQuerySchema = z.object({
+  page: z.coerce
+    .number()
+    .int()
+    .min(1, 'page must be at least 1')
+    .default(1),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1, 'limit must be at least 1')
+    .max(PAGINATION_DEFAULTS.MAX_OFFSET_PAGE_SIZE, `limit cannot exceed ${PAGINATION_DEFAULTS.MAX_OFFSET_PAGE_SIZE}`)
+    .default(PAGINATION_DEFAULTS.OFFSET_PAGE_SIZE),
 });
 
 export const HealthResponseSchema = z.object({

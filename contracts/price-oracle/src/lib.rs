@@ -2,7 +2,7 @@
 
 pub mod contract;
 mod errors;
-pub mod governance;
+mod multisig;
 mod proxy;
 pub mod storage;
 mod types;
@@ -15,6 +15,6 @@ mod fuzz;
 mod governance_test;
 
 pub use contract::PriceOracleContract;
-pub use governance::GovernanceContract;
+pub use multisig::MultiSigAdminContract;
 pub use proxy::ProxyContract;
 pub use types::{AssetPrice, PriceDataPoint};

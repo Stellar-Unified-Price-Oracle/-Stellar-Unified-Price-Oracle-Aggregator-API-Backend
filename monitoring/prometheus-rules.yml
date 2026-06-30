@@ -11,6 +11,7 @@ groups:
         annotations:
           summary: "Oracle source {{ $labels.instance }} is down"
           description: "Oracle source {{ $labels.instance }} has been down for more than 60 seconds"
+          runbook_url: "https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/oracle-source-down.md"
 
       - alert: SourceHealthDegraded
         expr: |
@@ -26,6 +27,7 @@ groups:
         annotations:
           summary: "Oracle source {{ $labels.source }} has high failure rate"
           description: "Source {{ $labels.source }} failure rate is {{ $value | humanizePercentage }}"
+          runbook_url: "https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/oracle-source-down.md"
 
       - alert: CacheHitRatioCritical
         expr: |
@@ -52,6 +54,7 @@ groups:
         annotations:
           summary: "Price feed for {{ $labels.asset }} is stale"
           description: "Last price update for {{ $labels.asset }} was {{ $value }} seconds ago"
+          runbook_url: "https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/price-feed-stale.md"
 
       - alert: PriceDeviation
         expr: |
@@ -71,6 +74,7 @@ groups:
         annotations:
           summary: "Price deviation detected for {{ $labels.asset }}"
           description: "Price deviation for {{ $labels.asset }} is {{ $value | humanizePercentage }}"
+          runbook_url: "https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/price-anomaly.md"
 
       - alert: APILatencyHigh
         expr: |
@@ -82,6 +86,7 @@ groups:
         annotations:
           summary: "API p95 latency is high"
           description: "95th percentile latency for {{ $labels.path }} is {{ $value }}s"
+          runbook_url: "https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/high-error-rate.md"
 
       - alert: HighErrorRate
         expr: |
@@ -97,6 +102,7 @@ groups:
         annotations:
           summary: "API error rate is high"
           description: "5xx error rate is {{ $value | humanizePercentage }}"
+          runbook_url: "https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/high-error-rate.md"
 
       - alert: NoOracleSourcesHealthy
         expr: |
@@ -108,10 +114,11 @@ groups:
         annotations:
           summary: "No oracle sources are healthy"
           description: "All oracle sources are currently unhealthy"
+          runbook_url: "https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/oracle-source-down.md"
 
       - alert: ContractCallFailures
         expr: |
-          rate(stellar_soroban_contract_calls_failed_total[5m]) > 0
+          rate(stellar_soroban_contract_calls_total{status="failed"}[5m]) > 0
         for: 3m
         labels:
           severity: warning
@@ -119,6 +126,19 @@ groups:
         annotations:
           summary: "Soroban contract calls are failing"
           description: "Contract call failures detected for {{ $labels.function }}"
+          runbook_url: "https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/contract-failures.md"
+
+      - alert: ContractHighGasUsage
+        expr: |
+          histogram_quantile(0.95, rate(stellar_soroban_contract_gas_used_bucket[10m])) > 50000
+        for: 5m
+        labels:
+          severity: warning
+          service: stellar-oracle
+        annotations:
+          summary: "Soroban contract gas usage is high for {{ $labels.function }}"
+          description: "p95 gas used is {{ $value }} — exceeds alert threshold of 50000"
+          runbook_url: "https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/contract-failures.md"
 
       - alert: DatabaseConnectionPoolExhausted
         expr: |
@@ -130,3 +150,133 @@ groups:
         annotations:
           summary: "Database connection pool nearly exhausted"
           description: "{{ $value | humanizePercentage }} of database connections are in use"
+
+  # ── Issue #63: WebSocket connection monitoring ──────────────────────────────
+  - name: websocket_alerts
+    interval: 30s
+    rules:
+      - alert: WebSocketHighErrorRate
+        expr: |
+          rate(ws_api_errors_total[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: stellar-api
+        annotations:
+          summary: "High WebSocket error rate on API server"
+          description: "WebSocket errors are occurring at {{ $value }} per second over the last 5 minutes"
+
+      - alert: WebSocketConnectionSpike
+        expr: |
+          ws_api_connections_active > 500
+        for: 2m
+        labels:
+          severity: warning
+          service: stellar-api
+        annotations:
+          summary: "Unusually high WebSocket connection count"
+          description: "{{ $value }} active WebSocket connections — possible connection leak or traffic spike"
+
+      - alert: WebSocketConnectionsDrop
+        expr: |
+          delta(ws_api_connections_active[5m]) < -50
+        for: 2m
+        labels:
+          severity: warning
+          service: stellar-api
+        annotations:
+          summary: "Large WebSocket connection drop detected"
+          description: "Active connections dropped by {{ $value }} in 5 minutes — possible service disruption"
+
+  # ── Issue #64: Oracle source latency tracking ───────────────────────────────
+  - name: oracle_latency_alerts
+    interval: 30s
+    rules:
+      - alert: OracleSourceLatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            rate(oracle_source_request_duration_seconds_bucket[10m])
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: stellar-aggregator
+        annotations:
+          summary: "Oracle source {{ $labels.source }} p95 latency exceeds SLA"
+          description: "p95 latency for {{ $labels.source }}/{{ $labels.asset }} is {{ $value | humanizeDuration }} (threshold: 5 s)"
+
+      - alert: OracleSourceLatencyP99Critical
+        expr: |
+          histogram_quantile(0.99,
+            rate(oracle_source_request_duration_seconds_bucket[10m])
+          ) > 15
+        for: 5m
+        labels:
+          severity: critical
+          service: stellar-aggregator
+        annotations:
+          summary: "Oracle source {{ $labels.source }} p99 latency is critically high"
+          description: "p99 latency for {{ $labels.source }}/{{ $labels.asset }} is {{ $value | humanizeDuration }}"
+
+      - alert: OracleSourceSlaBreachRateHigh
+        expr: |
+          rate(oracle_source_sla_breaches_total[15m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: stellar-aggregator
+        annotations:
+          summary: "Oracle source {{ $labels.source }} is breaching SLA frequently"
+          description: "SLA breaches for {{ $labels.source }}: {{ $value | humanize }} per second over 15 m"
+
+      - alert: OracleSourceHighFailureRate
+        expr: |
+          (
+            rate(oracle_source_requests_total{status="error"}[5m])
+            /
+            rate(oracle_source_requests_total[5m])
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          service: stellar-aggregator
+        annotations:
+          summary: "Oracle source {{ $labels.source }} error rate exceeds 20%"
+          description: "Error rate for {{ $labels.source }} is {{ $value | humanizePercentage }}"
+
+  # ── Issue #65: Cost tracking and budget alerts ──────────────────────────────
+  - name: oracle_cost_alerts
+    interval: 60s
+    rules:
+      - alert: OracleApiBudgetExceeded
+        expr: |
+          oracle_api_budget_utilization_ratio > 1.0
+        for: 5m
+        labels:
+          severity: critical
+          service: stellar-aggregator
+        annotations:
+          summary: "Oracle source {{ $labels.source }} has exceeded its daily API call budget"
+          description: "Budget utilization for {{ $labels.source }} is {{ $value | humanizePercentage }} of daily limit"
+
+      - alert: OracleApiBudgetWarning
+        expr: |
+          oracle_api_budget_utilization_ratio > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: stellar-aggregator
+        annotations:
+          summary: "Oracle source {{ $labels.source }} approaching daily API budget limit"
+          description: "Budget utilization for {{ $labels.source }} is {{ $value | humanizePercentage }} — approaching daily limit"
+
+      - alert: OracleApiCallSpike
+        expr: |
+          rate(oracle_api_calls_total[5m]) > 10
+        for: 3m
+        labels:
+          severity: warning
+          service: stellar-aggregator
+        annotations:
+          summary: "Unexpected API call spike for {{ $labels.source }}"
+          description: "API call rate for {{ $labels.source }} is {{ $value | humanize }}/s — verify polling config"

@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Env, String, Vec};
 
 use crate::errors::OracleError;
-use crate::types::{DataKey, GovernanceConfig, Proposal, PriceDataPoint};
+use crate::types::{DataKey, MultiSigConfig, Proposal, PriceDataPoint, SourceReputation};
 
 pub fn set_admin(env: &Env, admin: &Address) {
     env.storage().instance().set(&DataKey::Admin, admin);
@@ -29,6 +29,15 @@ pub fn set_contract_version(env: &Env, version: u32) {
 
 pub fn get_contract_version(env: &Env) -> u32 {
     env.storage().instance().get(&DataKey::ContractVersion).unwrap_or(0)
+}
+
+// Issue #68 — storage layout version for migration safety
+pub fn set_storage_layout_version(env: &Env, version: u32) {
+    env.storage().instance().set(&DataKey::StorageLayoutVersion, &version);
+}
+
+pub fn get_storage_layout_version(env: &Env) -> u32 {
+    env.storage().instance().get(&DataKey::StorageLayoutVersion).unwrap_or(1)
 }
 
 pub fn verify_admin(env: &Env, admin: &Address) -> Result<(), OracleError> {
@@ -85,15 +94,16 @@ pub fn get_source_count(env: &Env) -> u32 {
 }
 
 pub fn set_latest_price(env: &Env, asset: &String, data_point: &PriceDataPoint) {
+    let is_new = !env
+        .storage()
+        .instance()
+        .has(&DataKey::LatestPrice(asset.clone()));
+
     env.storage()
         .instance()
         .set(&DataKey::LatestPrice(asset.clone()), data_point);
 
-    if !env
-        .storage()
-        .instance()
-        .has(&DataKey::LatestPrice(asset.clone()))
-    {
+    if is_new {
         let mut assets: Vec<String> = env
             .storage()
             .instance()
@@ -145,14 +155,43 @@ pub fn is_trusted_asset(env: &Env, asset: &String) -> bool {
         .unwrap_or(false)
 }
 
-// ── Governance storage ────────────────────────────────────────────────────────
-
-pub fn set_gov_config(env: &Env, config: &GovernanceConfig) {
-    env.storage().instance().set(&DataKey::GovConfig, config);
+// Issue #69 — deviation threshold
+pub fn set_deviation_threshold(env: &Env, threshold_bps: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::DeviationThreshold, &threshold_bps);
 }
 
-pub fn get_gov_config(env: &Env) -> Option<GovernanceConfig> {
-    env.storage().instance().get(&DataKey::GovConfig)
+pub fn get_deviation_threshold(env: &Env) -> Option<u32> {
+    env.storage().instance().get(&DataKey::DeviationThreshold)
+}
+
+// Issue #70 — source reputation
+pub fn set_source_reputation(env: &Env, source: &Address, reputation: &SourceReputation) {
+    env.storage()
+        .instance()
+        .set(&DataKey::SourceReputation(source.clone()), reputation);
+}
+
+pub fn get_source_reputation(env: &Env, source: &Address) -> Option<SourceReputation> {
+    env.storage()
+        .instance()
+        .get(&DataKey::SourceReputation(source.clone()))
+}
+
+pub fn remove_source_reputation(env: &Env, source: &Address) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::SourceReputation(source.clone()));
+}
+
+// Issue #67 — multi-sig
+pub fn set_multisig_config(env: &Env, config: &MultiSigConfig) {
+    env.storage().instance().set(&DataKey::MultiSigConfig, config);
+}
+
+pub fn get_multisig_config(env: &Env) -> Option<MultiSigConfig> {
+    env.storage().instance().get(&DataKey::MultiSigConfig)
 }
 
 pub fn get_proposal_count(env: &Env) -> u32 {
@@ -162,12 +201,8 @@ pub fn get_proposal_count(env: &Env) -> u32 {
         .unwrap_or(0)
 }
 
-pub fn increment_proposal_count(env: &Env) -> u32 {
-    let next = get_proposal_count(env) + 1;
-    env.storage()
-        .instance()
-        .set(&DataKey::ProposalCount, &next);
-    next
+pub fn set_proposal_count(env: &Env, count: u32) {
+    env.storage().instance().set(&DataKey::ProposalCount, &count);
 }
 
 pub fn set_proposal(env: &Env, proposal: &Proposal) {
@@ -177,19 +212,5 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
 }
 
 pub fn get_proposal(env: &Env, id: u32) -> Option<Proposal> {
-    env.storage()
-        .instance()
-        .get(&DataKey::Proposal(id))
-}
-
-pub fn has_voted(env: &Env, proposal_id: u32, voter: &Address) -> bool {
-    env.storage()
-        .instance()
-        .has(&DataKey::Vote(proposal_id, voter.clone()))
-}
-
-pub fn record_vote(env: &Env, proposal_id: u32, voter: &Address, support: bool) {
-    env.storage()
-        .instance()
-        .set(&DataKey::Vote(proposal_id, voter.clone()), &support);
+    env.storage().instance().get(&DataKey::Proposal(id))
 }
