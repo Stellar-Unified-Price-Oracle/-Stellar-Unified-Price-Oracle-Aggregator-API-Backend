@@ -11,18 +11,14 @@ pub enum OracleError {
     InvalidDecimals = 5,
     AlreadyInitialized = 6,
     SourceAlreadyExists = 7,
-    // Governance errors
-    GovernanceNotInitialized = 8,
-    GovernanceAlreadyInitialized = 9,
-    InsufficientVotingPower = 10,
-    ProposalNotFound = 11,
-    VotingNotActive = 12,
-    AlreadyVoted = 13,
-    ProposalNotQueued = 14,
-    TimeLockNotElapsed = 15,
-    ProposalDefeated = 16,
-    ProposalAlreadyExecuted = 17,
-    ProposalCancelled = 18,
-    GuardianOnly = 19,
-    InvalidGovernanceConfig = 20,
+    // Issue #69 — price deviation validation
+    PriceDeviationTooLarge = 8,
+    // Issue #67 — multi-sig admin
+    NotASigner = 9,
+    ProposalNotFound = 10,
+    ProposalAlreadyExecuted = 11,
+    AlreadyApproved = 12,
+    InvalidThreshold = 13,
+    ThresholdNotMet = 14,
+    MultiSigNotInitialized = 15,
 }

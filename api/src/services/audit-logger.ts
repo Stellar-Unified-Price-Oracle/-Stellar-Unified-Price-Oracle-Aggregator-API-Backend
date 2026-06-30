@@ -15,7 +15,11 @@ export type AuditEvent =
   | 'key.rotation_started'
   | 'key.rotation_completed'
   | 'archival.run'
-  | 'archival.restore';
+  | 'archival.restore'
+  | 'consistency.check'
+  | 'backup.run'
+  | 'backup.test-restore'
+  | 'backup.restore';
 
 interface AuditEntry {
   event: AuditEvent;

@@ -29,10 +29,13 @@ const options: swaggerJsdoc.Options = {
       { name: 'Sources', description: 'Oracle source information' },
       { name: 'Health', description: 'Service health checks' },
       { name: 'Metrics', description: 'Prometheus monitoring' },
+      { name: 'Usage', description: 'API usage analytics, reports, and anomaly detection' },
+      { name: 'Webhooks', description: 'Webhook registration and delivery for price updates' },
     ],
     paths: {
       '/api/v1': {
         get: {
+          operationId: 'getApiRoot',
           tags: ['Prices'],
           summary: 'API root — list available endpoints',
           responses: {
@@ -42,6 +45,7 @@ const options: swaggerJsdoc.Options = {
       },
       '/api/v1/prices': {
         get: {
+          operationId: 'getPrices',
           tags: ['Prices'],
           summary: 'Get all current prices',
           parameters: [
@@ -50,6 +54,18 @@ const options: swaggerJsdoc.Options = {
               name: 'asset',
               schema: { type: 'string' },
               description: 'Filter by asset symbol (e.g. XLM, BTC)',
+            },
+            {
+              in: 'query',
+              name: 'page',
+              schema: { type: 'integer', minimum: 1, default: 1 },
+              description: 'Page number for offset pagination',
+            },
+            {
+              in: 'query',
+              name: 'limit',
+              schema: { type: 'integer', minimum: 1, default: 20 },
+              description: 'Items per page',
             },
           ],
           responses: {
@@ -83,6 +99,7 @@ const options: swaggerJsdoc.Options = {
       },
       '/api/v1/prices/{asset}': {
         get: {
+          operationId: 'getPriceByAsset',
           tags: ['Prices'],
           summary: 'Get current price for a specific asset',
           parameters: [
@@ -115,6 +132,7 @@ const options: swaggerJsdoc.Options = {
       },
       '/api/v1/history/{asset}': {
         get: {
+          operationId: 'getPriceHistory',
           tags: ['Prices'],
           summary: 'Get historical prices for an asset',
           parameters: [
@@ -124,6 +142,12 @@ const options: swaggerJsdoc.Options = {
               required: true,
               schema: { type: 'string' },
               description: 'Asset symbol',
+            },
+            {
+              in: 'query',
+              name: 'cursor',
+              schema: { type: 'string' },
+              description: 'Opaque cursor from a previous response',
             },
             {
               in: 'query',
@@ -145,15 +169,42 @@ const options: swaggerJsdoc.Options = {
             },
           ],
           responses: {
-            200: { description: 'Historical price data' },
+            200: {
+              description: 'Historical price data',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      success: { type: 'boolean' },
+                      data: { $ref: '#/components/schemas/HistoryData' },
+                      cached: { type: 'boolean' },
+                    },
+                  },
+                },
+              },
+            },
             400: { description: 'Invalid parameters' },
           },
         },
       },
       '/api/v1/sources': {
         get: {
+          operationId: 'getSources',
           tags: ['Sources'],
           summary: 'List all oracle sources',
+          parameters: [
+            {
+              in: 'query',
+              name: 'page',
+              schema: { type: 'integer', minimum: 1, default: 1 },
+            },
+            {
+              in: 'query',
+              name: 'limit',
+              schema: { type: 'integer', minimum: 1, default: 20 },
+            },
+          ],
           responses: {
             200: {
               description: 'Active oracle sources',
@@ -180,8 +231,51 @@ const options: swaggerJsdoc.Options = {
           },
         },
       },
+      '/api/v1/health/live': {
+        get: {
+          operationId: 'getHealthLive',
+          tags: ['Health'],
+          summary: 'Liveness probe',
+          responses: {
+            200: {
+              description: 'Service is alive',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/LivenessCheck' },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/api/v1/health/ready': {
+        get: {
+          operationId: 'getHealthReady',
+          tags: ['Health'],
+          summary: 'Readiness probe',
+          responses: {
+            200: {
+              description: 'Service is ready',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/ReadinessCheck' },
+                },
+              },
+            },
+            503: {
+              description: 'Service is not ready',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/ReadinessCheck' },
+                },
+              },
+            },
+          },
+        },
+      },
       '/api/v1/health': {
         get: {
+          operationId: 'getHealth',
           tags: ['Health'],
           summary: 'Health check endpoint',
           responses: {
@@ -204,6 +298,7 @@ const options: swaggerJsdoc.Options = {
       },
       '/api/v1/docs': {
         get: {
+          operationId: 'getDocs',
           tags: ['Docs'],
           summary: 'Swagger UI documentation',
           responses: {
@@ -213,6 +308,7 @@ const options: swaggerJsdoc.Options = {
       },
       '/metrics': {
         get: {
+          operationId: 'getMetrics',
           tags: ['Metrics'],
           summary: 'Prometheus metrics endpoint',
           responses: {
@@ -220,9 +316,88 @@ const options: swaggerJsdoc.Options = {
           },
         },
       },
+      '/api/v1/usage/reports': {
+        get: {
+          tags: ['Usage'],
+          summary: 'Usage report for a period',
+          parameters: [
+            { in: 'query', name: 'period', schema: { type: 'string', enum: ['daily', 'weekly', 'monthly'] } },
+          ],
+          responses: { 200: { description: 'Usage report' } },
+        },
+      },
+      '/api/v1/usage/dashboard': {
+        get: {
+          tags: ['Usage'],
+          summary: 'Usage dashboard (daily/weekly/monthly overview)',
+          responses: { 200: { description: 'Usage dashboard' } },
+        },
+      },
+      '/api/v1/usage/anomalies': {
+        get: {
+          tags: ['Usage'],
+          summary: 'Detected usage anomalies (request-volume spikes)',
+          responses: { 200: { description: 'Anomaly list' } },
+        },
+      },
+      '/api/v1/webhooks': {
+        get: {
+          tags: ['Webhooks'],
+          summary: 'List registered webhooks',
+          responses: { 200: { description: 'Webhook list' } },
+        },
+        post: {
+          tags: ['Webhooks'],
+          summary: 'Register a webhook',
+          requestBody: {
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/WebhookRegistration' } },
+            },
+          },
+          responses: { 201: { description: 'Webhook created' } },
+        },
+      },
+      '/api/v1/webhooks/{id}': {
+        get: { tags: ['Webhooks'], summary: 'Get a webhook', responses: { 200: { description: 'Webhook' } } },
+        delete: { tags: ['Webhooks'], summary: 'Delete a webhook', responses: { 204: { description: 'Deleted' } } },
+      },
+      '/api/v1/webhooks/{id}/deliveries': {
+        get: {
+          tags: ['Webhooks'],
+          summary: 'Webhook delivery log',
+          responses: { 200: { description: 'Delivery log entries' } },
+        },
+      },
     },
     components: {
       schemas: {
+        HalLink: {
+          type: 'object',
+          properties: {
+            href: { type: 'string', example: '/api/v1/prices/XLM' },
+            method: { type: 'string', example: 'GET' },
+            title: { type: 'string' },
+          },
+        },
+        HalLinks: {
+          type: 'object',
+          description: 'Map of relation name to hypermedia link (self, related, action links)',
+          additionalProperties: { $ref: '#/components/schemas/HalLink' },
+        },
+        WebhookRegistration: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', example: 'https://example.com/webhook' },
+            trigger: {
+              type: 'object',
+              properties: {
+                type: { type: 'string', enum: ['threshold', 'interval'] },
+                asset: { type: 'string', example: 'XLM' },
+                value: { type: 'number', example: 1.5 },
+              },
+            },
+          },
+        },
         AssetPrice: {
           type: 'object',
           properties: {
@@ -231,6 +406,7 @@ const options: swaggerJsdoc.Options = {
             decimals: { type: 'integer', example: 7 },
             source: { type: 'string', example: 'chainlink' },
             timestamp: { type: 'number', example: 1719000000 },
+            _links: { $ref: '#/components/schemas/HalLinks' },
           },
         },
         OracleSource: {
@@ -250,6 +426,67 @@ const options: swaggerJsdoc.Options = {
             uptime: { type: 'number', example: 3600 },
             timestamp: { type: 'number', example: 1719000000 },
             assetsTracked: { type: 'integer', example: 5 },
+          },
+        },
+        LivenessCheck: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', example: 'alive' },
+            uptime: { type: 'number', example: 3600 },
+          },
+        },
+        ReadinessCheck: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['ready', 'not_ready'] },
+            assetsTracked: { type: 'integer', example: 5 },
+          },
+        },
+        PaginationMeta: {
+          type: 'object',
+          properties: {
+            page: { type: 'integer' },
+            limit: { type: 'integer' },
+            total: { type: 'integer' },
+            totalPages: { type: 'integer' },
+            hasNext: { type: 'boolean' },
+            hasPrev: { type: 'boolean' },
+          },
+        },
+        CursorPaginationMeta: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer' },
+            nextCursor: { type: 'string', nullable: true },
+            hasMore: { type: 'boolean' },
+          },
+        },
+        HistoryEntry: {
+          type: 'object',
+          properties: {
+            price: { type: 'string' },
+            decimals: { type: 'integer' },
+            source: { type: 'string' },
+            timestamp: { type: 'number' },
+          },
+        },
+        HistoryData: {
+          type: 'object',
+          properties: {
+            asset: { type: 'string' },
+            to: { type: 'number', nullable: true },
+            prices: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/HistoryEntry' },
+            },
+            pagination: { $ref: '#/components/schemas/CursorPaginationMeta' },
+          },
+        },
+        ErrorResponse: {
+          type: 'object',
+          properties: {
+            code: { type: 'string' },
+            message: { type: 'string' },
           },
         },
       },

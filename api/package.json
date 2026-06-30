@@ -16,7 +16,8 @@
     "migrate:create": "node-pg-migrate create -m migrations -j ts",
     "archive:run": "tsx scripts/archive.ts run",
     "archive:dry-run": "tsx scripts/archive.ts run --dry-run",
-    "archive:restore": "tsx scripts/archive.ts restore"
+    "archive:restore": "tsx scripts/archive.ts restore",
+    "generate:openapi": "tsx scripts/export-openapi.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.7.0",
