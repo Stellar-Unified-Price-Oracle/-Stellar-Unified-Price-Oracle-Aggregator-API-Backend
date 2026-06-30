@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -157,6 +158,9 @@ app.use('/api/v2', v2Headers, v2Routes);
 // Documentation and metrics
 app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.get('/metrics', metricsHandler);
+
+// Developer portal: API explorer, key management, usage/billing UI
+app.use('/portal', express.static(path.join(__dirname, '..', 'public', 'portal')));
 
 app.use(notFoundHandler);
 app.use(errorHandler);
