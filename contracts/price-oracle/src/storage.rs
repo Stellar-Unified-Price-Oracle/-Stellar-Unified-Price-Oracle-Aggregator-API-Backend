@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env, String, Vec};
+use soroban_sdk::{Address, Bytes, Env, String, Vec};
 
 use crate::errors::OracleError;
 use crate::types::{DataKey, PriceDataPoint};
@@ -143,4 +143,29 @@ pub fn is_trusted_asset(env: &Env, asset: &String) -> bool {
         .instance()
         .get(&DataKey::TrustedAsset(asset.clone()))
         .unwrap_or(false)
+}
+
+// ── Merkle batch storage ──────────────────────────────────────────────────────
+
+pub fn get_batch_nonce(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::BatchNonce)
+        .unwrap_or(0u64)
+}
+
+pub fn increment_batch_nonce(env: &Env) -> u64 {
+    let next = get_batch_nonce(env) + 1;
+    env.storage().instance().set(&DataKey::BatchNonce, &next);
+    next
+}
+
+pub fn set_batch_root(env: &Env, nonce: u64, root: &Bytes) {
+    env.storage()
+        .instance()
+        .set(&DataKey::BatchRoot(nonce), root);
+}
+
+pub fn get_batch_root(env: &Env, nonce: u64) -> Option<Bytes> {
+    env.storage().instance().get(&DataKey::BatchRoot(nonce))
 }

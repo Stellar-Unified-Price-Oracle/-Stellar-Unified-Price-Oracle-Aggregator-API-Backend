@@ -11,4 +11,10 @@ pub enum OracleError {
     InvalidDecimals = 5,
     AlreadyInitialized = 6,
     SourceAlreadyExists = 7,
+    // Merkle batch errors
+    InvalidMerkleProof = 8,
+    BatchNonceMismatch = 9,
+    BatchRootNotFound = 10,
+    BatchEmpty = 11,
+    BatchTooLarge = 12,
 }
