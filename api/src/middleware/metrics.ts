@@ -146,11 +146,53 @@ export const dbRecordsArchivedTotal = new client.Counter({
 });
 register.registerMetric(dbRecordsArchivedTotal);
 
+// ── WebSocket connection analytics (issue #63) ───────────────────────────────
+
+export const wsConnectionsActive = new client.Gauge({
+  name: 'ws_api_connections_active',
+  help: 'Current number of active WebSocket connections on the API server',
+});
+register.registerMetric(wsConnectionsActive);
+
+export const wsConnectionsTotal = new client.Counter({
+  name: 'ws_api_connections_total',
+  help: 'Total WebSocket connections ever established on the API server',
+});
+register.registerMetric(wsConnectionsTotal);
+
+export const wsMessagesTotal = new client.Counter({
+  name: 'ws_api_messages_total',
+  help: 'Total WebSocket messages on the API server',
+  labelNames: ['direction', 'type'],
+});
+register.registerMetric(wsMessagesTotal);
+
+export const wsConnectionDuration = new client.Histogram({
+  name: 'ws_api_connection_duration_seconds',
+  help: 'Duration of API WebSocket connections in seconds',
+  buckets: [1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600],
+});
+register.registerMetric(wsConnectionDuration);
+
+export const wsErrorsTotal = new client.Counter({
+  name: 'ws_api_errors_total',
+  help: 'Total WebSocket errors on the API server',
+});
+register.registerMetric(wsErrorsTotal);
+
+export const wsSubscribeEventsTotal = new client.Counter({
+  name: 'ws_api_subscribe_events_total',
+  help: 'Total subscribe/unsubscribe events on the API WebSocket server',
+  labelNames: ['action'],
+});
+register.registerMetric(wsSubscribeEventsTotal);
+
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();
   res.on('finish', () => {
     const route = req.route?.path || req.path;
     httpRequestsTotal.inc({ method: req.method, route, status: res.statusCode });
+    apiCallsByEndpoint.inc({ endpoint: route, method: req.method, status: res.statusCode });
     end({ method: req.method, route, status: res.statusCode });
   });
   next();

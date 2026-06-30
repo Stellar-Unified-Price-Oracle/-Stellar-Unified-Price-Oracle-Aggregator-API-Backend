@@ -1,6 +1,8 @@
 import http from 'http';
 import { logger } from './utils/logger';
 import { SourceCBStatus } from './source-circuit-breaker';
+import { register } from './metrics';
+import { getDailyCounts } from './cost-model';
 
 interface HealthSnapshot {
   sourceHealth: Record<string, any>;
@@ -22,9 +24,22 @@ export class HealthServer {
   }
 
   start(): void {
-    this.server = http.createServer((req, res) => {
+    this.server = http.createServer(async (req, res) => {
       const url = new URL(req.url || '/', `http://localhost:${this.port}`);
       const verbose = url.searchParams.get('verbose') === 'true';
+
+      // #64 #65 — Prometheus metrics endpoint for aggregator
+      if (url.pathname === '/metrics') {
+        try {
+          const metrics = await register.metrics();
+          res.writeHead(200, { 'Content-Type': register.contentType });
+          res.end(metrics);
+        } catch {
+          res.writeHead(500);
+          res.end();
+        }
+        return;
+      }
 
       if (url.pathname === '/health/live') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -73,6 +88,8 @@ export class HealthServer {
                 totalTrips: s.totalTrips,
               }))
             : [],
+          // #65 — include daily API call counts
+          dailyApiCalls: getDailyCounts(),
         };
 
         if (verbose) {
@@ -96,6 +113,7 @@ export class HealthServer {
 
     this.server.listen(this.port, () => {
       logger.info(`Health server listening on port ${this.port}`);
+      logger.info(`Metrics endpoint: http://localhost:${this.port}/metrics`);
     });
   }
 
