@@ -12,6 +12,7 @@ import { cacheHitTotal, cacheMissTotal, lastPriceTimestamp, priceQueriesTotal } 
 import { issueWsCsrfToken, isCsrfEnabled } from '../websocket/csrf';
 import { config } from '../config';
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 
 const BATCH_MAX_ASSETS = 50;
 
