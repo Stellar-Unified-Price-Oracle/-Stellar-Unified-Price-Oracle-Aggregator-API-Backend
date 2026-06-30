@@ -1,0 +1,51 @@
+# Central log aggregation stack: Loki + Promtail + Grafana.
+# Run alongside the main docker-compose.yml:
+#   docker compose -f docker-compose.yml -f monitoring/logging/docker-compose.logging.yml up -d
+#
+# Promtail tails the JSON logs already written by services/aggregator/src/utils/logger.ts
+# (logs/combined.log, logs/error.log) and the API service's log output, and ships
+# them to Loki. Grafana is pre-provisioned with Loki as a datasource.
+
+services:
+  loki:
+    image: grafana/loki:2.9.6
+    container_name: stellar-oracle-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:2.9.6
+    container_name: stellar-oracle-promtail
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - ../../api/logs:/var/log/stellar-api:ro
+      - ../../services/aggregator/logs:/var/log/stellar-aggregator:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  grafana-logs:
+    image: grafana/grafana:10.4.2
+    container_name: stellar-oracle-grafana-logs
+    ports:
+      - "3300:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+    volumes:
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+      - grafana-logs-data:/var/lib/grafana
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+volumes:
+  loki-data:
+  grafana-logs-data:

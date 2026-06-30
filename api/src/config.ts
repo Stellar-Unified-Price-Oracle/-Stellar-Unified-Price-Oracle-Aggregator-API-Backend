@@ -90,18 +90,20 @@ export const config = {
     samplingRate: parseFloat(process.env.TRACING_SAMPLING_RATE || '1.0'),
     serviceName: process.env.TRACING_SERVICE_NAME || 'stellar-oracle-api',
   },
-  // Response compression (gzip/brotli content negotiation).
-  compression: {
-    enabled: process.env.COMPRESSION_ENABLED !== 'false',
-    threshold: parseInt(process.env.COMPRESSION_THRESHOLD_BYTES || '1024', 10),
-    level: parseInt(process.env.COMPRESSION_LEVEL || '6', 10),
+  backup: {
+    enabled: process.env.BACKUP_ENABLED === 'true',
+    dir: process.env.BACKUP_DIR || './data/backups',
+    // 64-char hex key; if omitted backups are stored unencrypted
+    encryptionKeyHex: process.env.BACKUP_ENCRYPTION_KEY || '',
   },
-  // Webhook delivery for consumers that can't hold a WebSocket connection.
-  webhooks: {
-    maxRetries: parseInt(process.env.WEBHOOK_MAX_RETRIES || '5', 10),
-    baseDelayMs: parseInt(process.env.WEBHOOK_RETRY_BASE_DELAY_MS || '500', 10),
-    maxDelayMs: parseInt(process.env.WEBHOOK_RETRY_MAX_DELAY_MS || '30000', 10),
-    timeoutMs: parseInt(process.env.WEBHOOK_TIMEOUT_MS || '5000', 10),
-    minIntervalMs: parseInt(process.env.WEBHOOK_MIN_INTERVAL_MS || '5000', 10),
+  consistency: {
+    enabled: process.env.CONSISTENCY_CHECK_ENABLED !== 'false',
+    checkIntervalMs: parseInt(process.env.CONSISTENCY_CHECK_INTERVAL_MS || '60000', 10),
+  },
+  dbHealth: {
+    checkIntervalMs: parseInt(process.env.DB_HEALTH_CHECK_INTERVAL_MS || '15000', 10),
+    connectionExhaustionThreshold: parseFloat(process.env.DB_HEALTH_EXHAUSTION_THRESHOLD || '0.8'),
+    slowQueryThresholdMs: parseInt(process.env.DB_HEALTH_SLOW_QUERY_MS || '5000', 10),
+    replicationLagAlertMs: parseInt(process.env.DB_HEALTH_REPLICA_LAG_ALERT_MS || '30000', 10),
   },
 };

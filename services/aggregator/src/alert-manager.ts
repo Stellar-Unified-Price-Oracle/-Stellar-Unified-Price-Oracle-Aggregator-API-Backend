@@ -28,6 +28,15 @@ export interface AlertConfig {
   enableConsoleLog?: boolean;
   enableFileLog?: boolean;
   alertHistoryPath?: string;
+  /** Slack incoming webhook URL */
+  slackWebhookUrl?: string;
+  /** PagerDuty Events API v2 integration/routing key */
+  pagerDutyRoutingKey?: string;
+  /** Generic transactional email API webhook (e.g. SendGrid/Mailgun) */
+  emailWebhookUrl?: string;
+  emailRecipients?: string[];
+  /** Cross-source disagreement threshold, percent */
+  sourceDisagreementThresholdPercent?: number;
 }
 
 class AlertManager {
@@ -125,6 +134,37 @@ class AlertManager {
     }
   }
 
+  /**
+   * Detects disagreement between live oracle sources for the same asset,
+   * independent of the temporal deviation check in checkPrice().
+   */
+  async checkSourceDisagreement(
+    asset: string,
+    sourcePrices: { source: string; price: string }[],
+  ): Promise<void> {
+    const threshold = this.config.sourceDisagreementThresholdPercent ?? 5;
+    if (sourcePrices.length < 2) return;
+
+    const values = sourcePrices.map((s) => parseFloat(s.price)).filter((v) => Number.isFinite(v));
+    if (values.length < 2) return;
+
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    if (min <= 0) return;
+
+    const deviationPercent = ((max - min) / min) * 100;
+    if (deviationPercent > threshold) {
+      await this.emitAlert({
+        timestamp: Math.floor(Date.now() / 1000),
+        asset: asset.toUpperCase(),
+        type: 'deviation',
+        message: `Oracle source disagreement for ${asset.toUpperCase()}: ${deviationPercent.toFixed(2)}% spread across sources`,
+        deviationPercent,
+        affectedSources: sourcePrices.map((s) => s.source),
+      });
+    }
+  }
+
   private async emitAlert(alert: AlertEvent): Promise<void> {
     this.alertHistory.push(alert);
 
@@ -138,6 +178,79 @@ class AlertManager {
 
     if (this.config.webhookUrl) {
       await this.sendWebhook(alert);
+    }
+
+    if (this.config.slackWebhookUrl) {
+      await this.sendSlack(alert);
+    }
+
+    if (this.config.pagerDutyRoutingKey) {
+      await this.sendPagerDuty(alert);
+    }
+
+    if (this.config.emailWebhookUrl) {
+      await this.sendEmail(alert);
+    }
+  }
+
+  private async sendSlack(alert: AlertEvent): Promise<void> {
+    try {
+      const response = await fetch(this.config.slackWebhookUrl!, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: `:rotating_light: *${alert.type.toUpperCase()}* — ${alert.message}`,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+    } catch (error) {
+      logger.error('Failed to deliver Slack alert:', (error as Error).message);
+    }
+  }
+
+  private async sendPagerDuty(alert: AlertEvent): Promise<void> {
+    try {
+      const response = await fetch('https://events.pagerduty.com/v2/enqueue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          routing_key: this.config.pagerDutyRoutingKey,
+          event_action: 'trigger',
+          dedup_key: `${alert.asset}:${alert.type}`,
+          payload: {
+            summary: alert.message,
+            source: 'price-oracle-aggregator',
+            severity: alert.type === 'source_down' ? 'critical' : 'warning',
+            custom_details: alert,
+          },
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+    } catch (error) {
+      logger.error('Failed to deliver PagerDuty alert:', (error as Error).message);
+    }
+  }
+
+  private async sendEmail(alert: AlertEvent): Promise<void> {
+    try {
+      const response = await fetch(this.config.emailWebhookUrl!, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: this.config.emailRecipients || [],
+          subject: `[Price Oracle Alert] ${alert.type} for ${alert.asset}`,
+          text: alert.message,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+    } catch (error) {
+      logger.error('Failed to deliver email alert:', (error as Error).message);
     }
   }
 
