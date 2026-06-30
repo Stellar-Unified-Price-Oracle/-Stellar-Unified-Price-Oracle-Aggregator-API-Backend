@@ -29,6 +29,8 @@ const options: swaggerJsdoc.Options = {
       { name: 'Sources', description: 'Oracle source information' },
       { name: 'Health', description: 'Service health checks' },
       { name: 'Metrics', description: 'Prometheus monitoring' },
+      { name: 'Usage', description: 'API usage analytics, reports, and anomaly detection' },
+      { name: 'Webhooks', description: 'Webhook registration and delivery for price updates' },
     ],
     paths: {
       '/api/v1': {
@@ -314,9 +316,88 @@ const options: swaggerJsdoc.Options = {
           },
         },
       },
+      '/api/v1/usage/reports': {
+        get: {
+          tags: ['Usage'],
+          summary: 'Usage report for a period',
+          parameters: [
+            { in: 'query', name: 'period', schema: { type: 'string', enum: ['daily', 'weekly', 'monthly'] } },
+          ],
+          responses: { 200: { description: 'Usage report' } },
+        },
+      },
+      '/api/v1/usage/dashboard': {
+        get: {
+          tags: ['Usage'],
+          summary: 'Usage dashboard (daily/weekly/monthly overview)',
+          responses: { 200: { description: 'Usage dashboard' } },
+        },
+      },
+      '/api/v1/usage/anomalies': {
+        get: {
+          tags: ['Usage'],
+          summary: 'Detected usage anomalies (request-volume spikes)',
+          responses: { 200: { description: 'Anomaly list' } },
+        },
+      },
+      '/api/v1/webhooks': {
+        get: {
+          tags: ['Webhooks'],
+          summary: 'List registered webhooks',
+          responses: { 200: { description: 'Webhook list' } },
+        },
+        post: {
+          tags: ['Webhooks'],
+          summary: 'Register a webhook',
+          requestBody: {
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/WebhookRegistration' } },
+            },
+          },
+          responses: { 201: { description: 'Webhook created' } },
+        },
+      },
+      '/api/v1/webhooks/{id}': {
+        get: { tags: ['Webhooks'], summary: 'Get a webhook', responses: { 200: { description: 'Webhook' } } },
+        delete: { tags: ['Webhooks'], summary: 'Delete a webhook', responses: { 204: { description: 'Deleted' } } },
+      },
+      '/api/v1/webhooks/{id}/deliveries': {
+        get: {
+          tags: ['Webhooks'],
+          summary: 'Webhook delivery log',
+          responses: { 200: { description: 'Delivery log entries' } },
+        },
+      },
     },
     components: {
       schemas: {
+        HalLink: {
+          type: 'object',
+          properties: {
+            href: { type: 'string', example: '/api/v1/prices/XLM' },
+            method: { type: 'string', example: 'GET' },
+            title: { type: 'string' },
+          },
+        },
+        HalLinks: {
+          type: 'object',
+          description: 'Map of relation name to hypermedia link (self, related, action links)',
+          additionalProperties: { $ref: '#/components/schemas/HalLink' },
+        },
+        WebhookRegistration: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', example: 'https://example.com/webhook' },
+            trigger: {
+              type: 'object',
+              properties: {
+                type: { type: 'string', enum: ['threshold', 'interval'] },
+                asset: { type: 'string', example: 'XLM' },
+                value: { type: 'number', example: 1.5 },
+              },
+            },
+          },
+        },
         AssetPrice: {
           type: 'object',
           properties: {
@@ -325,6 +406,7 @@ const options: swaggerJsdoc.Options = {
             decimals: { type: 'integer', example: 7 },
             source: { type: 'string', example: 'chainlink' },
             timestamp: { type: 'number', example: 1719000000 },
+            _links: { $ref: '#/components/schemas/HalLinks' },
           },
         },
         OracleSource: {

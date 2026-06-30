@@ -2,6 +2,7 @@ import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import { logger } from './logger';
 import { config } from '../config';
 import { getSecureAgents, validateOutboundUrl, SsrfError } from './ssrf';
+import { correlationHeaders } from './correlation';
 
 /**
  * Hardened axios instance for all outbound oracle-source requests.
@@ -22,6 +23,8 @@ function buildClient(): AxiosInstance {
   });
 
   instance.interceptors.request.use((requestConfig) => {
+    requestConfig.headers = { ...requestConfig.headers, ...correlationHeaders() };
+
     if (!config.security.ssrf.enabled) return requestConfig;
 
     const fullUrl = buildFullUrl(requestConfig);

@@ -3,6 +3,51 @@ import { config } from './config';
 import { logger } from './utils/logger';
 import { AggregatedPrice } from './types';
 
+interface ContractCallLog {
+  txHash: string;
+  function: string;
+  asset: string;
+  params: Record<string, unknown>;
+  simulationFee?: string;
+  actualFee?: string;
+  status: 'success' | 'failed' | 'simulation_failed';
+  error?: string;
+  durationMs: number;
+  timestamp: number;
+}
+
+interface GasAlert {
+  txHash: string;
+  function: string;
+  fee: number;
+  threshold: number;
+}
+
+const GAS_ALERT_THRESHOLD = parseInt(process.env.CONTRACT_GAS_ALERT_THRESHOLD || '50000', 10);
+
+function emitContractLog(entry: ContractCallLog): void {
+  const level = entry.status === 'success' ? 'info' : 'error';
+  logger.log(level, `[Contract] ${entry.function} ${entry.asset} — ${entry.status}`, {
+    txHash: entry.txHash,
+    function: entry.function,
+    asset: entry.asset,
+    params: entry.params,
+    simulationFee: entry.simulationFee,
+    actualFee: entry.actualFee,
+    durationMs: entry.durationMs,
+    error: entry.error,
+  });
+}
+
+function checkGasAlert(alert: GasAlert): void {
+  logger.warn(`[Contract] High gas usage detected for ${alert.function}`, {
+    txHash: alert.txHash,
+    function: alert.function,
+    fee: alert.fee,
+    threshold: alert.threshold,
+  });
+}
+
 export class ContractPublisher {
   private server: SorobanRpc.Server;
   private keypair: Keypair;
@@ -22,6 +67,11 @@ export class ContractPublisher {
     decimals: number,
     timestamp: number,
   ): Promise<string | null> {
+    const startMs = Date.now();
+    const fnName = 'submit_price';
+    const params = { asset, price: price.toString(), decimals, timestamp };
+
+    let txHash = '';
     try {
       const account = await this.server.getAccount(this.keypair.publicKey());
 
@@ -32,7 +82,7 @@ export class ContractPublisher {
         .addOperation(
           Operation.invokeContractFunction({
             contract: this.contractId,
-            function: 'submit_price',
+            function: fnName,
             args: [
               nativeToScVal(this.keypair.publicKey(), { type: 'address' }),
               nativeToScVal(asset, { type: 'string' }),
@@ -46,22 +96,101 @@ export class ContractPublisher {
         .build();
 
       tx.sign(this.keypair);
-      const txHash = tx.hash().toString('hex');
+      txHash = tx.hash().toString('hex');
 
       const simulateResponse: any = await this.server.simulateTransaction(tx);
+      const simulationFee = simulateResponse?.minResourceFee ?? simulateResponse?.cost?.feeCharged ?? 'unknown';
+
+      logger.debug(`[Contract] Simulation result for ${fnName} ${asset}`, {
+        txHash,
+        minResourceFee: simulateResponse?.minResourceFee,
+        cost: simulateResponse?.cost,
+        results: simulateResponse?.results?.length ?? 0,
+      });
+
       if (simulateResponse.error) {
-        logger.error(`[Publisher] Simulate error: ${simulateResponse.error}`);
+        emitContractLog({
+          txHash,
+          function: fnName,
+          asset,
+          params,
+          simulationFee: String(simulationFee),
+          status: 'simulation_failed',
+          error: String(simulateResponse.error),
+          durationMs: Date.now() - startMs,
+          timestamp: Math.floor(Date.now() / 1000),
+        });
         return null;
       }
 
-      const sendResponse = await this.server.sendTransaction(tx);
-      logger.info(`[Publisher] Submitted ${asset}: ${price} (tx: ${txHash})`);
+      const sendResponse: any = await this.server.sendTransaction(tx);
+      const actualFee = sendResponse?.fee ?? simulationFee;
+      const feeNum = parseInt(String(actualFee), 10);
+
+      emitContractLog({
+        txHash,
+        function: fnName,
+        asset,
+        params,
+        simulationFee: String(simulationFee),
+        actualFee: String(actualFee),
+        status: 'success',
+        durationMs: Date.now() - startMs,
+        timestamp: Math.floor(Date.now() / 1000),
+      });
+
+      if (!isNaN(feeNum) && feeNum > GAS_ALERT_THRESHOLD) {
+        checkGasAlert({ txHash, function: fnName, fee: feeNum, threshold: GAS_ALERT_THRESHOLD });
+      }
+
+      await this.captureContractEvents(txHash);
 
       return txHash;
     } catch (err) {
-      logger.error(`[Publisher] Failed to submit ${asset}`, err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      emitContractLog({
+        txHash: txHash || 'unknown',
+        function: fnName,
+        asset,
+        params,
+        status: 'failed',
+        error: errMsg,
+        durationMs: Date.now() - startMs,
+        timestamp: Math.floor(Date.now() / 1000),
+      });
+      logger.error(`[Contract] Failed to submit ${asset}: ${errMsg}`, { txHash });
       return null;
     }
+  }
+
+  private async captureContractEvents(txHash: string): Promise<void> {
+    try {
+      const response: any = await this.server.getTransaction(txHash);
+      if (!response || response.status === 'NOT_FOUND') return;
+
+      const events: xdr.DiagnosticEvent[] = response?.resultMetaXdr
+        ? this.extractEvents(response.resultMetaXdr)
+        : [];
+
+      for (const event of events) {
+        const eventType = this.parseEventType(event);
+        logger.info(`[Contract] Event captured: ${eventType}`, { txHash, eventType });
+      }
+
+      if (events.length > 0) {
+        logger.info(`[Contract] Captured ${events.length} event(s) from tx ${txHash}`);
+      }
+    } catch (err) {
+      logger.debug(`[Contract] Could not capture events for ${txHash}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  private extractEvents(_resultMetaXdr: unknown): xdr.DiagnosticEvent[] {
+    return [];
+  }
+
+  private parseEventType(_event: xdr.DiagnosticEvent): string {
+    return 'contract_event';
   }
 
   async publishAggregated(prices: AggregatedPrice[]): Promise<void> {

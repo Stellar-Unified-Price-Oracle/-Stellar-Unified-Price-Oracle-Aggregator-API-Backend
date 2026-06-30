@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    { "id": "timescaledb", "type": "database" },
+    { "id": "aggregator", "type": "service", "healthCheckUrl": "http://localhost:4002/health" },
+    { "id": "api", "type": "service", "healthCheckUrl": "http://localhost:3000/api/v1/health" },
+    { "id": "chainlink", "type": "external-oracle" },
+    { "id": "redstone", "type": "external-oracle" },
+    { "id": "band", "type": "external-oracle" },
+    { "id": "reflector", "type": "external-oracle" },
+    { "id": "soroban-contract", "type": "blockchain" }
+  ],
+  "edges": [
+    { "from": "aggregator", "to": "timescaledb" },
+    { "from": "api", "to": "aggregator" },
+    { "from": "api", "to": "timescaledb" },
+    { "from": "aggregator", "to": "chainlink" },
+    { "from": "aggregator", "to": "redstone" },
+    { "from": "aggregator", "to": "band" },
+    { "from": "aggregator", "to": "reflector" },
+    { "from": "aggregator", "to": "soroban-contract" }
+  ]
+}

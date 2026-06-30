@@ -1,16 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import axios from 'axios';
+import { httpClient } from '../src/utils/http-client';
 import { ChainlinkSource } from '../src/sources/chainlink';
 import { RedstoneSource } from '../src/sources/redstone';
 import { BandSource } from '../src/sources/band';
 import { ReflectorSource } from '../src/sources/reflector';
 import { PriceAggregator } from '../src/aggregator';
 
-vi.mock('axios');
-const mockedAxios = vi.mocked(axios, true);
+vi.mock('../src/utils/http-client', () => ({
+  httpClient: {
+    get: vi.fn(),
+  },
+}));
 
-function mockGet(url: string, data: any) {
-  (mockedAxios.get as any).mockResolvedValue({ data });
+vi.mock('../src/source-circuit-breaker', () => ({
+  sourceCircuitBreaker: {
+    isAllowed: vi.fn(() => true),
+    recordSuccess: vi.fn(),
+    recordFailure: vi.fn(),
+  },
+}));
+
+const mockedHttpClient = vi.mocked(httpClient);
+
+function mockGet(_url: string, data: unknown) {
+  mockedHttpClient.get.mockResolvedValue({ data } as never);
 }
 
 beforeEach(() => {
@@ -34,7 +47,7 @@ describe('ChainlinkSource', () => {
   });
 
   it('returns null on API failure', async () => {
-    (mockedAxios.get as any).mockRejectedValue(new Error('Network error'));
+    mockedHttpClient.get.mockRejectedValue(new Error('Network error'));
     const source = new ChainlinkSource();
     const price = await source.fetchWithBackoff('XLM');
     expect(price).toBeNull();
@@ -133,32 +146,32 @@ describe('PriceAggregator', () => {
 
 describe('Exponential Backoff', () => {
   it('retries on failure', async () => {
-    (mockedAxios.get as any)
+    mockedHttpClient.get
       .mockRejectedValueOnce(new Error('Fail 1'))
       .mockRejectedValueOnce(new Error('Fail 2'))
-      .mockResolvedValueOnce({ data: { USD: { PRICE: 0.12 } } });
+      .mockResolvedValueOnce({ data: { USD: { PRICE: 0.12 } } } as never);
 
     const source = new ChainlinkSource();
     const price = await source.fetchWithBackoff('XLM', 1);
 
     expect(price).not.toBeNull();
-    expect(mockedAxios.get).toHaveBeenCalledTimes(3);
+    expect(mockedHttpClient.get).toHaveBeenCalledTimes(3);
   });
 
   it('gives up after max retries', async () => {
-    (mockedAxios.get as any).mockRejectedValue(new Error('Persistent failure'));
+    mockedHttpClient.get.mockRejectedValue(new Error('Persistent failure'));
 
     const source = new ChainlinkSource();
     const price = await source.fetchWithBackoff('XLM', 1);
 
     expect(price).toBeNull();
-    expect(mockedAxios.get).toHaveBeenCalledTimes(3);
+    expect(mockedHttpClient.get).toHaveBeenCalledTimes(3);
   });
 
   it('tracks health metrics', async () => {
-    (mockedAxios.get as any)
+    mockedHttpClient.get
       .mockRejectedValueOnce(new Error('Fail'))
-      .mockResolvedValueOnce({ data: { USD: { PRICE: 0.12 } } });
+      .mockResolvedValueOnce({ data: { USD: { PRICE: 0.12 } } } as never);
 
     const source = new ChainlinkSource();
     await source.fetchWithBackoff('XLM', 1);

@@ -1,0 +1,23 @@
+# Loki ruler alert rules, evaluated against ingested log streams.
+groups:
+  - name: stellar_oracle_log_alerts
+    rules:
+      - alert: ElevatedErrorLogRate
+        expr: |
+          sum by (service) (rate({job=~"stellar-aggregator|stellar-api"} | json | level="error" [5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated error log rate for {{ $labels.service }}"
+          description: "{{ $labels.service }} is logging errors at {{ $value }}/s over the last 5 minutes"
+
+      - alert: NoLogsReceived
+        expr: |
+          absent_over_time({job=~"stellar-aggregator|stellar-api"}[10m])
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No logs received from stellar-oracle services"
+          description: "Promtail has not shipped any logs in the last 10 minutes — check log shipping pipeline"

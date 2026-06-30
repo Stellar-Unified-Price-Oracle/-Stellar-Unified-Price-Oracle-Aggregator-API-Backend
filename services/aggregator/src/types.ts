@@ -10,6 +10,13 @@ export type OracleSourceName = 'chainlink' | 'redstone' | 'band' | 'reflector';
 
 export type DegradationLevel = 'healthy' | 'degraded' | 'critical';
 
+export interface AnomalyScore {
+  isAnomaly: boolean;
+  score: number;
+  method: 'zscore' | 'moving_average' | 'volatility';
+  details: string;
+}
+
 export interface AggregatedPrice {
   asset: string;
   price: string;
@@ -19,6 +26,7 @@ export interface AggregatedPrice {
   confidence: number;
   degradationLevel: DegradationLevel;
   stale: boolean;
+  anomaly?: AnomalyScore;
 }
 
 export interface SourceHealthStatus {
