@@ -1,0 +1,42 @@
+{
+  "title": "Stellar Oracle - Log Search",
+  "uid": "stellar-oracle-logs",
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "tags": ["stellar-oracle", "logs"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Error rate by service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "datasource": "Loki",
+      "targets": [
+        { "expr": "sum by (service) (rate({job=~\"stellar-aggregator|stellar-api\"} | json | level=\"error\" [5m]))", "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Live log stream",
+      "type": "logs",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 8 },
+      "datasource": "Loki",
+      "targets": [
+        { "expr": "{job=~\"stellar-aggregator|stellar-api\"}", "refId": "A" }
+      ],
+      "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+    },
+    {
+      "id": 3,
+      "title": "Errors only",
+      "type": "logs",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 20 },
+      "datasource": "Loki",
+      "targets": [
+        { "expr": "{job=~\"stellar-aggregator|stellar-api\"} | json | level=\"error\"", "refId": "A" }
+      ]
+    }
+  ],
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s"
+}
