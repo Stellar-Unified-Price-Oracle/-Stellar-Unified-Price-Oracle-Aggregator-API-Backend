@@ -64,9 +64,25 @@ impl PriceOracleContract {
 
         storage::set_latest_price(&env, &asset, &data_point);
 
+        // Cap history at MAX_HISTORY_LEN to keep persistent-storage entry size
+        // bounded.  Evict the oldest entry when the cap is reached rather than
+        // reading, appending, and writing the full vector unconditionally.
         let mut history = storage::get_price_history(&env, &asset);
-        history.push_back(data_point.clone());
-        storage::set_price_history(&env, &asset, &history);
+        if history.len() >= MAX_HISTORY_LEN {
+            // Drop the oldest entry (index 0) by rebuilding from index 1.
+            // Soroban Vec has no remove(), so we shift manually.
+            let mut trimmed: Vec<PriceDataPoint> = Vec::new(&env);
+            for i in 1..history.len() {
+                if let Some(dp) = history.get(i) {
+                    trimmed.push_back(dp);
+                }
+            }
+            trimmed.push_back(data_point.clone());
+            storage::set_price_history(&env, &asset, &trimmed);
+        } else {
+            history.push_back(data_point.clone());
+            storage::set_price_history(&env, &asset, &history);
+        }
 
         Ok(data_point)
     }
@@ -473,7 +489,14 @@ fn calculate_usd_price(env: &Env, asset: &String, price: i128, decimals: u32) ->
         }
     }
 
-    None
+    let usdc_anchor = storage::get_latest_price(env, &usdc)?;
+    let xlm_price = storage::get_latest_price(env, &xlm)?;
+
+    // Simplified: (price_in_xlm * xlm_usd_price) / 10^usdc_decimals
+    // The 10^asset_decimals factors cancel out completely.
+    let usd_value = (price * xlm_price.price)
+        .checked_div(10i128.pow(usdc_anchor.decimals))?;
+    Some(usd_value)
 }
 
 impl PriceOracleContract {
