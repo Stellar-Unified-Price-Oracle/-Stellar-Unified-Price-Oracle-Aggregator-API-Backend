@@ -38,6 +38,34 @@ Comprehensive dashboard showing:
 - **Cache Hit Ratio**: Percentage of cache hits vs misses
 - **Oracle Source Success Rate**: Success percentage for each oracle source
 
+### 3. Grafana Dashboards (`dashboards/`)
+
+Per-service and per-concern dashboards (API, Aggregator, Contract, price feed
+health, system resources, business metrics) — see
+[dashboards/README.md](./dashboards/README.md).
+
+### 4. Distributed Trace Visualization (Jaeger)
+
+Logs carry `requestId`/`traceId` (see `api/src/middleware/request-id.ts` and
+`services/aggregator/src/utils/correlation.ts`), but correlating them across
+services by hand doesn't show causality or timing — there was no trace
+visualization backend. `docker-compose.yml` now runs a `jaeger` service
+(`jaegertracing/all-in-one`), and the `api` service is configured with
+`TRACING_ENABLED=true` and `JAEGER_ENDPOINT=http://jaeger:14268/api/traces`
+so spans emitted by `api/src/services/tracing.ts` are collected automatically.
+
+To inspect a trace:
+
+```bash
+docker compose up -d jaeger api aggregator timescaledb
+# open the Jaeger UI
+open http://localhost:16686
+```
+
+Search by service name (`stellar-oracle-api`) or by the `requestId`/`traceId`
+returned in the `x-request-id`/`x-trace-id` response headers to see the full
+span tree for a single request, including downstream calls.
+
 ## Installation
 
 ### Prerequisites

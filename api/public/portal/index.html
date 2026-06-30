@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Stellar Price Oracle — Developer Portal</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #0b0e14; color: #e6e6e6; }
+  header { padding: 24px 32px; border-bottom: 1px solid #222; }
+  header h1 { margin: 0; font-size: 20px; }
+  nav { display: flex; gap: 4px; padding: 0 32px; border-bottom: 1px solid #222; }
+  nav button { background: none; border: none; color: #9aa; padding: 12px 16px; cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent; }
+  nav button.active { color: #fff; border-bottom-color: #5b8cff; }
+  main { padding: 24px 32px; max-width: 1000px; }
+  section { display: none; }
+  section.active { display: block; }
+  input, select, button.action { background: #161b24; border: 1px solid #333; color: #e6e6e6; padding: 8px 10px; border-radius: 6px; font-size: 13px; }
+  button.action { cursor: pointer; }
+  button.action:hover { border-color: #5b8cff; }
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #222; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .card { background: #11151d; border: 1px solid #222; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .muted { color: #9aa; font-size: 12px; }
+  iframe { width: 100%; height: 80vh; border: 1px solid #222; border-radius: 8px; }
+  pre { background: #161b24; padding: 12px; border-radius: 6px; overflow: auto; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Stellar Unified Price Oracle &amp; Aggregator API — Developer Portal</h1>
+  <p class="muted">Explore the API, manage your keys, and track usage in one place.</p>
+</header>
+
+<nav>
+  <button data-tab="explorer" class="active">API Explorer</button>
+  <button data-tab="keys">API Keys</button>
+  <button data-tab="usage">Usage &amp; Billing</button>
+</nav>
+
+<main>
+  <section id="explorer" class="active">
+    <div class="card">
+      <p class="muted">Interactive Swagger UI for every endpoint, including request/response schemas and live "try it out".</p>
+      <iframe src="/api/v1/docs" title="API Explorer"></iframe>
+    </div>
+  </section>
+
+  <section id="keys">
+    <div class="card">
+      <h3>Admin Key</h3>
+      <p class="muted">Key management endpoints require an admin API key. It is only kept in this browser tab.</p>
+      <div class="row">
+        <input id="admin-key" type="password" placeholder="admin_..." size="40" />
+        <button class="action" onclick="saveAdminKey()">Save</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Create API Key</h3>
+      <div class="row">
+        <input id="new-key-desc" placeholder="Description" />
+        <select id="new-key-tier">
+          <option value="free">free</option>
+          <option value="pro">pro</option>
+          <option value="enterprise">enterprise</option>
+        </select>
+        <select id="new-key-role">
+          <option value="viewer">viewer</option>
+          <option value="operator">operator</option>
+        </select>
+        <button class="action" onclick="createKey()">Generate</button>
+      </div>
+      <pre id="new-key-result" class="muted"></pre>
+    </div>
+
+    <div class="card">
+      <h3>Your API Keys</h3>
+      <button class="action" onclick="loadKeys()">Refresh</button>
+      <table id="keys-table">
+        <thead><tr><th>Prefix</th><th>Tier</th><th>Role</th><th>Rate Limit</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="usage">
+    <div class="card">
+      <h3>Usage Statistics</h3>
+      <p class="muted">Per-key request counts and last-used timestamps, pulled live from the key registry.</p>
+      <button class="action" onclick="loadUsage()">Refresh</button>
+      <table id="usage-table">
+        <thead><tr><th>Prefix</th><th>Tier</th><th>Requests</th><th>Rate Limit / min</th><th>Last Used</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Billing</h3>
+      <p class="muted">Tier determines your plan and request allowance. Contact sales to upgrade.</p>
+      <table>
+        <thead><tr><th>Tier</th><th>Rate limit (req/min)</th></tr></thead>
+        <tbody>
+          <tr><td>free</td><td>60</td></tr>
+          <tr><td>pro</td><td>600</td></tr>
+          <tr><td>enterprise</td><td>6000</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+function saveAdminKey() {
+  sessionStorage.setItem('adminKey', document.getElementById('admin-key').value.trim());
+}
+
+function adminHeaders() {
+  const key = sessionStorage.getItem('adminKey') || '';
+  return { 'Content-Type': 'application/json', 'x-api-key': key };
+}
+
+document.querySelectorAll('nav button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('main section').forEach((s) => s.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'keys') loadKeys();
+    if (btn.dataset.tab === 'usage') loadUsage();
+  });
+});
+
+async function createKey() {
+  const description = document.getElementById('new-key-desc').value;
+  const tier = document.getElementById('new-key-tier').value;
+  const role = document.getElementById('new-key-role').value;
+  const res = await fetch('/api/v1/admin/keys', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ description, tier, role }),
+  });
+  const data = await res.json();
+  document.getElementById('new-key-result').textContent = JSON.stringify(data, null, 2);
+  loadKeys();
+}
+
+async function loadKeys() {
+  const res = await fetch('/api/v1/admin/keys', { headers: adminHeaders() });
+  const data = await res.json();
+  const tbody = document.querySelector('#keys-table tbody');
+  tbody.innerHTML = '';
+  (data.data?.keys || []).forEach((k) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${k.keyPrefix}</td><td>${k.tier}</td><td>${k.role}</td><td>${k.rateLimitPerMin}</td><td>${k.isActive ? 'active' : 'revoked'}</td>
+      <td>
+        <button class="action" onclick="rotateKey('${k.keyHash}')">Rotate</button>
+        <button class="action" onclick="revokeKey('${k.keyHash}')">Revoke</button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+async function rotateKey(hash) {
+  await fetch(`/api/v1/admin/keys/${hash}/rotate`, { method: 'POST', headers: adminHeaders() });
+  loadKeys();
+}
+
+async function revokeKey(hash) {
+  await fetch(`/api/v1/admin/keys/${hash}/revoke`, { method: 'POST', headers: adminHeaders() });
+  loadKeys();
+}
+
+async function loadUsage() {
+  const res = await fetch('/api/v1/admin/keys', { headers: adminHeaders() });
+  const data = await res.json();
+  const tbody = document.querySelector('#usage-table tbody');
+  tbody.innerHTML = '';
+  (data.data?.keys || []).forEach((k) => {
+    const tr = document.createElement('tr');
+    const lastUsed = k.lastUsed ? new Date(k.lastUsed).toLocaleString() : 'never';
+    tr.innerHTML = `<td>${k.keyPrefix}</td><td>${k.tier}</td><td>${k.requestCount}</td><td>${k.rateLimitPerMin}</td><td>${lastUsed}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+</script>
+</body>
+</html>

@@ -65,3 +65,53 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  contract-fuzz:
+    name: Contract fuzz tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/price-oracle
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/price-oracle/target
+          key: fuzz-${{ runner.os }}-${{ hashFiles('contracts/price-oracle/Cargo.lock', 'contracts/price-oracle/fuzz/Cargo.toml') }}
+          restore-keys: fuzz-${{ runner.os }}-
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Run unit fuzz tests (deterministic boundary checks)
+        run: cargo test fuzz_ --lib
+
+      - name: Fuzz fuzz_submit_price (30 s)
+        run: |
+          cargo fuzz run fuzz_submit_price \
+            fuzz/corpus/fuzz_submit_price \
+            -- -max_total_time=30 -max_len=256
+
+      - name: Fuzz fuzz_get_price (30 s)
+        run: |
+          cargo fuzz run fuzz_get_price \
+            fuzz/corpus/fuzz_get_price \
+            -- -max_total_time=30 -max_len=512
+
+      - name: Upload fuzz artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: contracts/price-oracle/fuzz/artifacts/
+          if-no-files-found: ignore
