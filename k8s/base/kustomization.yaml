@@ -4,6 +4,7 @@ kind: Kustomization
 namespace: stellar-oracle
 
 resources:
+  - namespace.yaml
   - configmap.yaml
   - aggregator/deployment.yaml
   - aggregator/service.yaml
