@@ -214,3 +214,42 @@ pub fn set_proposal(env: &Env, proposal: &Proposal) {
 pub fn get_proposal(env: &Env, id: u32) -> Option<Proposal> {
     env.storage().instance().get(&DataKey::Proposal(id))
 }
+
+pub fn get_twap(env: &Env, asset: &String, window_seconds: u64) -> Option<i128> {
+let history = get_price_history(env, asset);
+if history.is_empty() {
+return None;
+}
+let now = env.ledger().timestamp();
+let cutoff = now.saturating_sub(window_seconds);
+let mut points: std::vec::Vec<PriceDataPoint> = std::vec::Vec::new();
+for p in history.iter() {
+if p.timestamp >= cutoff {
+points.push(p);
+}
+}
+if points.is_empty() {
+return None;
+}
+points.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+if points.len() == 1 {
+return Some(points[0].price);
+}
+let mut weighted_sum: i128 = 0;
+let mut total_weight: i128 = 0;
+for i in 0..points.len() - 1 {
+let current = &points[i];
+let next = &points[i + 1];
+let duration = (next.timestamp - current.timestamp) as i128;
+weighted_sum += current.price * duration;
+total_weight += duration;
+}
+let last = &points[points.len() - 1];
+let final_duration = (now - last.timestamp) as i128;
+weighted_sum += last.price * final_duration;
+total_weight += final_duration;
+if total_weight == 0 {
+return Some(last.price);
+}
+Some(weighted_sum / total_weight)
+}
