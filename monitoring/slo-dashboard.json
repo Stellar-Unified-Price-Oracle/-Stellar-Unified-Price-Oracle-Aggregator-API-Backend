@@ -1,0 +1,76 @@
+{
+  "title": "Stellar Oracle - SLO Overview",
+  "uid": "stellar-oracle-slo",
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "tags": ["stellar-oracle", "slo"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "API Availability SLO (target 99.9%)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "slo:api_availability:ratio_rate1h * 100", "legendFormat": "availability %" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "steps": [
+        { "color": "red", "value": null },
+        { "color": "yellow", "value": 99.5 },
+        { "color": "green", "value": 99.9 }
+      ] } } }
+    },
+    {
+      "id": 2,
+      "title": "API Latency SLO (p95 < 1s, target 99%)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "targets": [
+        { "expr": "(sum(rate(http_request_duration_seconds_bucket{job=\"stellar-api\",le=\"1\"}[1h])) / sum(rate(http_request_duration_seconds_count{job=\"stellar-api\"}[1h]))) * 100", "legendFormat": "under-1s %" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" } }
+    },
+    {
+      "id": 3,
+      "title": "Price Freshness SLO (target 99.5%)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "targets": [
+        { "expr": "slo:price_freshness:ratio_rate1h * 100", "legendFormat": "fresh %" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" } }
+    },
+    {
+      "id": 4,
+      "title": "Error Budget Burn Rate - API Availability",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        { "expr": "(1 - slo:api_availability:ratio_rate5m) / 0.001", "legendFormat": "5m burn rate" },
+        { "expr": "(1 - slo:api_availability:ratio_rate1h) / 0.001", "legendFormat": "1h burn rate" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Error Budget Burn Rate - Price Freshness",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        { "expr": "(1 - slo:price_freshness:ratio_rate5m) / 0.005", "legendFormat": "5m burn rate" },
+        { "expr": "(1 - slo:price_freshness:ratio_rate1h) / 0.005", "legendFormat": "1h burn rate" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "30d Error Budget Remaining",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "targets": [
+        { "expr": "(slo:api_availability:ratio_rate1h - 0.999) / (1 - 0.999) * 100", "legendFormat": "availability budget %" },
+        { "expr": "(slo:price_freshness:ratio_rate1h - 0.995) / (1 - 0.995) * 100", "legendFormat": "freshness budget %" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } }
+    }
+  ],
+  "time": { "from": "now-7d", "to": "now" },
+  "refresh": "1m"
+}

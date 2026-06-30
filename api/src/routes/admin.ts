@@ -7,6 +7,10 @@ import { logger } from '../middleware/logger';
 import { auditLog } from '../services/audit-logger';
 import { getDb, isDbAvailable } from '../services/database';
 import { ArchivalService } from '../services/archival';
+import { DbHealthMonitor } from '../services/db-health-monitor';
+import { DataConsistencyChecker } from '../services/data-consistency';
+import { BackupService } from '../services/backup';
+import { config } from '../config';
 import type { Role } from '../middleware/rbac';
 
 const router = Router();
@@ -312,6 +316,154 @@ router.post('/archival/restore', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: { code: 'RESTORE_FAILED', message: 'Failed to restore archive' },
+    });
+  }
+});
+
+// ── DB Health Monitor (Issue: connection exhaustion / slow queries / lag) ──────
+
+router.get('/db/health', async (_req: Request, res: Response) => {
+  if (!isDbAvailable()) {
+    return res.status(503).json({
+      success: false,
+      error: { code: 'DB_UNAVAILABLE', message: 'Database is not configured' },
+    });
+  }
+  try {
+    const db = await getDb();
+    const monitor = new DbHealthMonitor(db, logger, config.dbHealth);
+    const report = await monitor.runCheck();
+    const status = report.status === 'critical' ? 503 : report.status === 'degraded' ? 207 : 200;
+    res.status(status).json({ success: true, data: report });
+  } catch (err) {
+    logger.error('DB health check failed', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'HEALTH_CHECK_FAILED', message: 'Failed to run DB health check' },
+    });
+  }
+});
+
+// ── Data Consistency (Issue: no cross-layer verification) ─────────────────────
+
+router.post('/consistency/check', async (_req: Request, res: Response) => {
+  if (!isDbAvailable()) {
+    return res.status(503).json({
+      success: false,
+      error: { code: 'DB_UNAVAILABLE', message: 'Database is not configured' },
+    });
+  }
+  try {
+    const db = await getDb();
+    const checker = new DataConsistencyChecker(
+      db,
+      config.aggregatorUrl,
+      logger,
+      config.consistency.checkIntervalMs,
+    );
+    const results = await checker.checkAll();
+    const hasViolation = results.some((r) => r.status === 'violation');
+    auditLog('consistency.check', { details: { results } });
+    res.status(hasViolation ? 207 : 200).json({ success: true, data: { results } });
+  } catch (err) {
+    logger.error('Consistency check failed', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'CONSISTENCY_CHECK_FAILED', message: 'Failed to run consistency check' },
+    });
+  }
+});
+
+// ── Backup (Issue: no backup system) ──────────────────────────────────────────
+
+router.post('/backup/run', async (_req: Request, res: Response) => {
+  if (!config.databaseUrl) {
+    return res.status(503).json({
+      success: false,
+      error: { code: 'DB_UNAVAILABLE', message: 'Database is not configured' },
+    });
+  }
+  try {
+    const svc = new BackupService(config.databaseUrl, logger, {
+      backupDir: config.backup.dir,
+      encryptionKeyHex: config.backup.encryptionKeyHex || undefined,
+    });
+    const result = await svc.createBackup();
+    auditLog('backup.run', { details: { file: result.file, sizeBytes: result.sizeBytes } });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    logger.error('Backup run failed', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'BACKUP_FAILED', message: 'Failed to create backup' },
+    });
+  }
+});
+
+router.get('/backup/list', (_req: Request, res: Response) => {
+  const svc = new BackupService(config.databaseUrl || '', logger, {
+    backupDir: config.backup.dir,
+  });
+  const backups = svc.listBackups().map((b) => ({
+    file: b.file.split('/').pop(),
+    sizeBytes: b.sizeBytes,
+    createdAt: b.createdAt.toISOString(),
+    encrypted: b.encrypted,
+  }));
+  res.json({ success: true, data: { count: backups.length, backups } });
+});
+
+router.post('/backup/test-restore', async (_req: Request, res: Response) => {
+  if (!config.databaseUrl) {
+    return res.status(503).json({
+      success: false,
+      error: { code: 'DB_UNAVAILABLE', message: 'Database is not configured' },
+    });
+  }
+  try {
+    const svc = new BackupService(config.databaseUrl, logger, {
+      backupDir: config.backup.dir,
+      encryptionKeyHex: config.backup.encryptionKeyHex || undefined,
+    });
+    const result = await svc.testRestoreIntegrity();
+    auditLog('backup.test-restore', { details: result });
+    res.status(result.success ? 200 : 500).json({ success: result.success, data: result });
+  } catch (err) {
+    logger.error('Backup restore test failed', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'RESTORE_TEST_FAILED', message: 'Failed to test restore' },
+    });
+  }
+});
+
+router.post('/backup/restore', async (req: Request, res: Response) => {
+  if (!config.databaseUrl) {
+    return res.status(503).json({
+      success: false,
+      error: { code: 'DB_UNAVAILABLE', message: 'Database is not configured' },
+    });
+  }
+  const file = typeof req.body?.file === 'string' ? req.body.file : undefined;
+  if (!file) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'MISSING_FILE', message: "'file' (backup filename) is required" },
+    });
+  }
+  try {
+    const svc = new BackupService(config.databaseUrl, logger, {
+      backupDir: config.backup.dir,
+      encryptionKeyHex: config.backup.encryptionKeyHex || undefined,
+    });
+    const result = await svc.restore(file);
+    auditLog('backup.restore', { details: { file, success: result.success } });
+    res.status(result.success ? 200 : 500).json({ success: result.success, data: result });
+  } catch (err) {
+    logger.error('Backup restore failed', err);
+    res.status(500).json({
+      success: false,
+      error: { code: 'RESTORE_FAILED', message: 'Failed to restore backup' },
     });
   }
 });

@@ -5,7 +5,16 @@ import { validateWebSocketApiKey } from '../middleware/auth';
 import { HybridCache } from '../services/cache';
 import { validateWsAssets } from '../middleware/sanitization';
 import { verifyWsSignature } from '../middleware/ws-signing';
+import { webhookService } from '../services/webhook-service';
 import { config } from '../config';
+import {
+  wsConnectionsActive,
+  wsConnectionsTotal,
+  wsMessagesTotal,
+  wsConnectionDuration,
+  wsErrorsTotal,
+  wsSubscribeEventsTotal,
+} from '../middleware/metrics';
 
 // Circular message buffer per asset for replay support
 const MESSAGE_BUFFER_SIZE = parseInt(process.env.WS_BUFFER_SIZE || '200', 10);
@@ -55,26 +64,35 @@ export class PriceWebSocketServer {
         return;
       }
 
+      const connectedAt = Date.now();
       this.clients.add(ws);
       this.subscriptions.set(ws, new Set());
+
+      wsConnectionsActive.inc();
+      wsConnectionsTotal.inc();
       logger.info(`WS client connected (total: ${this.clients.size})`);
 
       ws.on('message', (raw: Buffer) => {
+        wsMessagesTotal.inc({ direction: 'inbound', type: 'raw' });
         try {
           const msg = JSON.parse(raw.toString());
           this.handleMessage(ws, msg);
         } catch {
           ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
+          wsErrorsTotal.inc();
         }
       });
 
       ws.on('close', () => {
         this.clients.delete(ws);
         this.subscriptions.delete(ws);
+        wsConnectionsActive.dec();
+        wsConnectionDuration.observe((Date.now() - connectedAt) / 1000);
         logger.info(`WS client disconnected (total: ${this.clients.size})`);
       });
 
       ws.on('error', (err) => {
+        wsErrorsTotal.inc();
         logger.error('WS error', err);
         this.clients.delete(ws);
         this.subscriptions.delete(ws);
@@ -95,6 +113,7 @@ export class PriceWebSocketServer {
   private handleMessage(ws: WebSocket, msg: unknown): void {
     if (!msg || typeof msg !== 'object') {
       ws.send(JSON.stringify({ type: 'error', message: 'Invalid message' }));
+      wsErrorsTotal.inc();
       return;
     }
 
@@ -120,6 +139,8 @@ export class PriceWebSocketServer {
         {
           const subs = this.subscriptions.get(ws);
           (m.assets as string[]).forEach((a) => subs?.delete(a.toUpperCase()));
+          wsSubscribeEventsTotal.inc({ action: 'unsubscribe' });
+          wsMessagesTotal.inc({ direction: 'inbound', type: 'unsubscribe' });
           ws.send(JSON.stringify({ type: 'unsubscribed', assets: m.assets }));
         }
         break;
@@ -169,6 +190,7 @@ export class PriceWebSocketServer {
         ws.send(JSON.stringify({ type: 'pong', timestamp: Math.floor(Date.now() / 1000), sequenceId: globalSequence }));
         break;
       default:
+        wsErrorsTotal.inc();
         ws.send(JSON.stringify({ type: 'error', message: 'Unknown message type' }));
     }
   }
@@ -195,8 +217,10 @@ export class PriceWebSocketServer {
     this.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(message);
+        sent++;
       }
     });
+    if (sent > 0) wsMessagesTotal.inc({ direction: 'outbound', type: 'price_update' }, sent);
   }
 
   broadcastToSubscribers(priceUpdate: any): void {
@@ -209,10 +233,17 @@ export class PriceWebSocketServer {
       const subs = this.subscriptions.get(client);
       if (!subs || subs.size === 0 || (asset && subs.has(asset))) {
         client.send(message);
+        sent++;
       }
     });
 
+    if (sent > 0) wsMessagesTotal.inc({ direction: 'outbound', type: 'price_update' }, sent);
     this.invalidateCache(asset);
+
+    // Fan out to registered webhooks for consumers without a WS connection.
+    if (asset && typeof priceUpdate?.price === 'number') {
+      void webhookService.handlePriceUpdate(asset, priceUpdate.price);
+    }
   }
 
   setCache(cache: HybridCache<any>): void {

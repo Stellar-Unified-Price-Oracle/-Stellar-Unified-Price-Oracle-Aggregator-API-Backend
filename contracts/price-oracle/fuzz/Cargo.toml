@@ -1,0 +1,32 @@
+[package]
+name = "price-oracle-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+price-oracle = { path = "..", features = [] }
+soroban-sdk = { version = "21.1.0", features = ["testutils"] }
+
+# Disable the default release profile opt-levels so we keep debug info
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_submit_price"
+path = "fuzz_targets/fuzz_submit_price.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_get_price"
+path = "fuzz_targets/fuzz_get_price.rs"
+test = false
+doc = false

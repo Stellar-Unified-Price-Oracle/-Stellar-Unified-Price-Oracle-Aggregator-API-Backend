@@ -50,6 +50,10 @@ npm run migrate:create -- <migration_name>
 
 This will create a new migration file in this directory with the timestamp prefix.
 
+Also add an entry to [CHANGELOG.md](./CHANGELOG.md) describing what the
+migration changes and why — the raw `up()`/`down()` code shows *what*
+changed mechanically, but not the reasoning behind it.
+
 ### Migration File Structure
 
 Each migration file exports `up()` and `down()` functions:
@@ -75,6 +79,10 @@ export async function down(pgm: MigrationBuilder): Promise<void> {
 - **price_data** - Latest price from each source
 - **price_history** - Historical aggregated prices
 - **source_health** - Source health tracking
+
+See [CHANGELOG.md](./CHANGELOG.md) for the full history of *what* changed in
+each migration and *why*, instead of inferring intent from the migration
+source.
 
 ## Environment Variables
 
