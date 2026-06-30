@@ -149,3 +149,39 @@ fn calculate_usd_price(env: &Env, asset: &String, price: i128, decimals: u32) ->
 
     None
 }
+
+pub fn pause(env: Env) {
+let admin = storage::get_admin(&env);
+admin.require_auth();
+storage::set_paused(&env, true);
+env.events().publish(("contract_paused",), admin);
+}
+
+pub fn unpause(env: Env) {
+let admin = storage::get_admin(&env);
+admin.require_auth();
+storage::set_paused(&env, false);
+env.events().publish(("contract_unpaused",), admin);
+}
+
+pub fn is_paused(env: Env) -> bool {
+storage::get_paused(&env)
+}
+
+pub fn pause(env: Env) {
+let admin = storage::get_admin(&env);
+admin.require_auth();
+storage::set_paused(&env, true);
+env.events().publish(("contract_paused",), admin);
+}
+
+pub fn unpause(env: Env) {
+let admin = storage::get_admin(&env);
+admin.require_auth();
+storage::set_paused(&env, false);
+env.events().publish(("contract_unpaused",), admin);
+}
+
+pub fn is_paused(env: Env) -> bool {
+storage::get_paused(&env)
+}

@@ -144,3 +144,11 @@ pub fn is_trusted_asset(env: &Env, asset: &String) -> bool {
         .get(&DataKey::TrustedAsset(asset.clone()))
         .unwrap_or(false)
 }
+
+pub fn set_paused(env: &Env, paused: bool) {
+env.storage().instance().set(&DataKey::Paused, &paused);
+}
+
+pub fn get_paused(env: &Env) -> bool {
+env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+}
