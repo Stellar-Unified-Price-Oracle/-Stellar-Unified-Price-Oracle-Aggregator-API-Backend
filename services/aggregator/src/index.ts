@@ -13,7 +13,14 @@ import AlertManager, { AlertThresholds } from './alert-manager';
 import { sourceCircuitBreaker } from './source-circuit-breaker';
 
 const aggregator = new PriceAggregator();
-const alertManager = new AlertManager();
+const alertManager = new AlertManager({
+  webhookUrl: process.env.ALERT_WEBHOOK_URL,
+  slackWebhookUrl: process.env.ALERT_SLACK_WEBHOOK_URL,
+  pagerDutyRoutingKey: process.env.ALERT_PAGERDUTY_ROUTING_KEY,
+  emailWebhookUrl: process.env.ALERT_EMAIL_WEBHOOK_URL,
+  emailRecipients: (process.env.ALERT_EMAIL_RECIPIENTS || '').split(',').map((s) => s.trim()).filter(Boolean),
+  sourceDisagreementThresholdPercent: parseFloat(process.env.ALERT_SOURCE_DISAGREEMENT_PERCENT || '5'),
+});
 
 let lastAggregated: AggregatedPrice[] = [];
 let db: DatabaseClient | null = null;
@@ -21,11 +28,16 @@ let pollSources: BaseSource[] = [];
 
 async function poll(): Promise<AggregatedPrice[]> {
   const sources: BaseSource[] = pollSources;
+  const sourcePricesByAsset: Map<string, { source: string; price: string }[]> = new Map();
 
   for (const source of sources) {
     const prices = await source.fetchAll(config.assets);
     for (const price of prices) {
       aggregator.updateSourcePrice(price);
+
+      const list = sourcePricesByAsset.get(price.asset) || [];
+      list.push({ source: price.source, price: price.price.toString() });
+      sourcePricesByAsset.set(price.asset, list);
 
       if (db && db.isInitialized()) {
         await db.appendHistoricalPrice(
@@ -54,6 +66,12 @@ async function poll(): Promise<AggregatedPrice[]> {
 
     // Check price against alert thresholds
     await alertManager.checkPrice(ap);
+
+    // Check for disagreement between live oracle sources
+    const sourcePrices = sourcePricesByAsset.get(ap.asset);
+    if (sourcePrices) {
+      await alertManager.checkSourceDisagreement(ap.asset, sourcePrices);
+    }
   }
 
   const unhealthy = sources.filter((s) => !s.health.healthy);
