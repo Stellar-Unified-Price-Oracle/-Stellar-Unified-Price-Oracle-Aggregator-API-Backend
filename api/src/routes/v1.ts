@@ -5,6 +5,7 @@ import { cacheHitTotal, cacheMissTotal, lastPriceTimestamp, priceQueriesTotal } 
 import { issueWsCsrfToken, isCsrfEnabled } from '../websocket/csrf';
 import { config } from '../config';
 import { Router, Request, Response } from 'express';
+import { conditionalCache } from '../middleware/conditional-cache';
 
 const router = Router();
 let pricesCache: HybridCache<any>;
@@ -12,6 +13,8 @@ let pricesCache: HybridCache<any>;
 export function initializeCache(cache: HybridCache<any>): void {
   pricesCache = cache;
 }
+
+router.use(['/prices', '/prices/:asset'], conditionalCache);
 
 router.get('/', (_req: Request, res: Response) => {
   res.json({
