@@ -1,5 +1,6 @@
 import http from 'http';
 import { logger } from './utils/logger';
+import { withCorrelation, correlationHeaders } from './utils/correlation';
 import { SourceCBStatus } from './source-circuit-breaker';
 import { register } from './metrics';
 import { getDailyCounts } from './cost-model';
@@ -27,6 +28,9 @@ export class HealthServer {
     this.server = http.createServer(async (req, res) => {
       const url = new URL(req.url || '/', `http://localhost:${this.port}`);
       const verbose = url.searchParams.get('verbose') === 'true';
+      const ids = correlationHeaders();
+      res.setHeader('x-request-id', ids['x-request-id'] || '');
+      res.setHeader('x-trace-id', ids['x-trace-id'] || '');
 
       // #64 #65 — Prometheus metrics endpoint for aggregator
       if (url.pathname === '/metrics') {

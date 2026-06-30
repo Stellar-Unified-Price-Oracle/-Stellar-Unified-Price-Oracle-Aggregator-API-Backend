@@ -1,4 +1,14 @@
 import winston from 'winston';
+import { getCorrelation } from './correlation';
+
+const correlationFormat = winston.format((info) => {
+  const ctx = getCorrelation();
+  if (ctx) {
+    info.requestId = ctx.requestId;
+    info.traceId = ctx.traceId;
+  }
+  return info;
+});
 
 function safeStringify(obj: unknown): string {
   const seen = new WeakSet();
@@ -17,6 +27,7 @@ function safeStringify(obj: unknown): string {
 export const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: winston.format.combine(
+    correlationFormat(),
     winston.format.timestamp(),
     winston.format.json({ replacer: (_key, value) => {
       if (value instanceof Error) {
