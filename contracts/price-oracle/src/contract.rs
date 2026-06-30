@@ -149,3 +149,15 @@ fn calculate_usd_price(env: &Env, asset: &String, price: i128, decimals: u32) ->
 
     None
 }
+
+pub fn get_price_for_contract(env: Env, asset: String) -> i128 {
+let data = storage::get_latest_price(&env, &asset);
+match data {
+Some(p) => p.price,
+None => 0,
+}
+}
+
+pub fn get_latest_price_cross(env: Env, asset: String) -> Option<PriceDataPoint> {
+storage::get_latest_price(&env, &asset)
+}
