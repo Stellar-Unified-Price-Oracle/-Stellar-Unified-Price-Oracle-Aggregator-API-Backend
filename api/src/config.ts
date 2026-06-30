@@ -90,4 +90,10 @@ export const config = {
     samplingRate: parseFloat(process.env.TRACING_SAMPLING_RATE || '1.0'),
     serviceName: process.env.TRACING_SERVICE_NAME || 'stellar-oracle-api',
   },
+  // Response compression (gzip/brotli content negotiation).
+  compression: {
+    enabled: process.env.COMPRESSION_ENABLED !== 'false',
+    threshold: parseInt(process.env.COMPRESSION_THRESHOLD_BYTES || '1024', 10),
+    level: parseInt(process.env.COMPRESSION_LEVEL || '6', 10),
+  },
 };
