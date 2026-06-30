@@ -1,0 +1,90 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: chaos-weekly-report
+  labels:
+    chaos.stellar-oracle.io/report: weekly
+spec:
+  schedule: "0 8 * * 1"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 4
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: chaos-weekly-report
+        spec:
+          serviceAccountName: chaos-reporting
+          restartPolicy: OnFailure
+          containers:
+            - name: report-generator
+              image: bitnami/kubectl:1.29
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: CHAOS_TARGET_ENV
+                  value: staging
+                - name: NAMESPACE
+                  value: stellar-oracle
+                - name: REPORT_DIR
+                  value: /reports
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -euo pipefail
+                  if [[ "${CHAOS_TARGET_ENV}" != "staging" ]]; then
+                    echo "Refusing to generate report outside staging"
+                    exit 1
+                  fi
+                  mkdir -p "${REPORT_DIR}"
+                  /scripts/generate-report.sh "${REPORT_DIR}/chaos-report-$(date -u +%Y%m%d).md"
+                  kubectl -n "${NAMESPACE}" create configmap "chaos-report-$(date -u +%Y%m%d)" \
+                    --from-file="${REPORT_DIR}/chaos-report-$(date -u +%Y%m%d).md" \
+                    --dry-run=client -o yaml | kubectl apply -f -
+              volumeMounts:
+                - name: report-scripts
+                  mountPath: /scripts
+                  readOnly: true
+                - name: report-output
+                  mountPath: /reports
+          volumes:
+            - name: report-scripts
+              configMap:
+                name: chaos-report-scripts
+                defaultMode: 0555
+            - name: report-output
+              emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chaos-report-scripts
+data:
+  generate-report.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    OUT="${1:-/reports/chaos-report.md}"
+    NS="${NAMESPACE:-stellar-oracle}"
+    {
+      echo "# Chaos Engineering Weekly Report"
+      echo
+      echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "Namespace: ${NS}"
+      echo "Environment: ${CHAOS_TARGET_ENV:-unknown}"
+      echo
+      echo "## Experiment status"
+      for kind in podchaos networkchaos stresschaos dnschaos; do
+        echo "### ${kind}"
+        kubectl -n "${NS}" get "${kind}" -o custom-columns=NAME:.metadata.name,PHASE:.status.experiment.phase 2>/dev/null || echo "none"
+        echo
+      done
+      echo "## Recent workflows"
+      kubectl -n "${NS}" get workflows.chaos-mesh.org --sort-by=.metadata.creationTimestamp 2>/dev/null | tail -20 || echo "none"
+      echo
+      echo "## Events (last 50)"
+      kubectl -n "${NS}" get events --sort-by=.lastTimestamp 2>/dev/null | tail -50 || true
+    } > "${OUT}"
+    echo "Report written to ${OUT}"

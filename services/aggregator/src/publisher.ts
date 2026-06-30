@@ -11,6 +11,51 @@ import { logger } from './utils/logger';
 import { AggregatedPrice } from './types';
 import { MerkleTree, BatchPriceEntry } from './utils/merkle';
 
+interface ContractCallLog {
+  txHash: string;
+  function: string;
+  asset: string;
+  params: Record<string, unknown>;
+  simulationFee?: string;
+  actualFee?: string;
+  status: 'success' | 'failed' | 'simulation_failed';
+  error?: string;
+  durationMs: number;
+  timestamp: number;
+}
+
+interface GasAlert {
+  txHash: string;
+  function: string;
+  fee: number;
+  threshold: number;
+}
+
+const GAS_ALERT_THRESHOLD = parseInt(process.env.CONTRACT_GAS_ALERT_THRESHOLD || '50000', 10);
+
+function emitContractLog(entry: ContractCallLog): void {
+  const level = entry.status === 'success' ? 'info' : 'error';
+  logger.log(level, `[Contract] ${entry.function} ${entry.asset} — ${entry.status}`, {
+    txHash: entry.txHash,
+    function: entry.function,
+    asset: entry.asset,
+    params: entry.params,
+    simulationFee: entry.simulationFee,
+    actualFee: entry.actualFee,
+    durationMs: entry.durationMs,
+    error: entry.error,
+  });
+}
+
+function checkGasAlert(alert: GasAlert): void {
+  logger.warn(`[Contract] High gas usage detected for ${alert.function}`, {
+    txHash: alert.txHash,
+    function: alert.function,
+    fee: alert.fee,
+    threshold: alert.threshold,
+  });
+}
+
 export class ContractPublisher {
   private server: SorobanRpc.Server;
   private keypair: Keypair;
@@ -32,6 +77,11 @@ export class ContractPublisher {
     decimals: number,
     timestamp: number,
   ): Promise<string | null> {
+    const startMs = Date.now();
+    const fnName = 'submit_price';
+    const params = { asset, price: price.toString(), decimals, timestamp };
+
+    let txHash = '';
     try {
       const account = await this.server.getAccount(this.keypair.publicKey());
 
@@ -42,7 +92,7 @@ export class ContractPublisher {
         .addOperation(
           Operation.invokeContractFunction({
             contract: this.contractId,
-            function: 'submit_price',
+            function: fnName,
             args: [
               nativeToScVal(this.keypair.publicKey(), { type: 'address' }),
               nativeToScVal(asset, { type: 'string' }),
@@ -56,136 +106,102 @@ export class ContractPublisher {
         .build();
 
       tx.sign(this.keypair);
-      const txHash = tx.hash().toString('hex');
+      txHash = tx.hash().toString('hex');
 
       const simulateResponse: any = await this.server.simulateTransaction(tx);
+      const simulationFee = simulateResponse?.minResourceFee ?? simulateResponse?.cost?.feeCharged ?? 'unknown';
+
+      logger.debug(`[Contract] Simulation result for ${fnName} ${asset}`, {
+        txHash,
+        minResourceFee: simulateResponse?.minResourceFee,
+        cost: simulateResponse?.cost,
+        results: simulateResponse?.results?.length ?? 0,
+      });
+
       if (simulateResponse.error) {
-        logger.error(`[Publisher] Simulate error: ${simulateResponse.error}`);
+        emitContractLog({
+          txHash,
+          function: fnName,
+          asset,
+          params,
+          simulationFee: String(simulationFee),
+          status: 'simulation_failed',
+          error: String(simulateResponse.error),
+          durationMs: Date.now() - startMs,
+          timestamp: Math.floor(Date.now() / 1000),
+        });
         return null;
       }
 
-      await this.server.sendTransaction(tx);
-      logger.info(`[Publisher] Submitted ${asset}: ${price} (tx: ${txHash})`);
+      const sendResponse: any = await this.server.sendTransaction(tx);
+      const actualFee = sendResponse?.fee ?? simulationFee;
+      const feeNum = parseInt(String(actualFee), 10);
+
+      emitContractLog({
+        txHash,
+        function: fnName,
+        asset,
+        params,
+        simulationFee: String(simulationFee),
+        actualFee: String(actualFee),
+        status: 'success',
+        durationMs: Date.now() - startMs,
+        timestamp: Math.floor(Date.now() / 1000),
+      });
+
+      if (!isNaN(feeNum) && feeNum > GAS_ALERT_THRESHOLD) {
+        checkGasAlert({ txHash, function: fnName, fee: feeNum, threshold: GAS_ALERT_THRESHOLD });
+      }
+
+      await this.captureContractEvents(txHash);
+
       return txHash;
     } catch (err) {
-      logger.error(`[Publisher] Failed to submit ${asset}`, err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      emitContractLog({
+        txHash: txHash || 'unknown',
+        function: fnName,
+        asset,
+        params,
+        status: 'failed',
+        error: errMsg,
+        durationMs: Date.now() - startMs,
+        timestamp: Math.floor(Date.now() / 1000),
+      });
+      logger.error(`[Contract] Failed to submit ${asset}: ${errMsg}`, { txHash });
       return null;
     }
   }
 
-  // ── Merkle batch submission ─────────────────────────────────────────────────
+  private async captureContractEvents(txHash: string): Promise<void> {
+    try {
+      const response: any = await this.server.getTransaction(txHash);
+      if (!response || response.status === 'NOT_FOUND') return;
 
-  /**
-   * Submit a batch of prices as a single Merkle root commitment, then apply
-   * each entry with its inclusion proof.
-   *
-   * Protocol:
-   *   1. Build off-chain Merkle tree from all entries.
-   *   2. Fetch current batch nonce from the contract.
-   *   3. Call submit_batch(source, nonce, root) — one transaction for N prices.
-   *   4. Call apply_batch_entry(nonce, entry, proof) for each entry.
-   *
-   * Gas saving: steps 3 + 4×N replaces N individual submit_price calls that
-   * each carry full auth + source-check overhead.  The saving grows with N.
-   */
-  async batchSubmit(prices: AggregatedPrice[]): Promise<void> {
-    if (prices.length === 0) return;
+      const events: xdr.DiagnosticEvent[] = response?.resultMetaXdr
+        ? this.extractEvents(response.resultMetaXdr)
+        : [];
 
-    const entries: BatchPriceEntry[] = prices.map((p) => ({
-      asset: p.asset,
-      price: BigInt(p.price),
-      decimals: p.decimals,
-      timestamp: p.timestamp,
-      source: this.keypair.publicKey(),
-    }));
-
-    const batch = MerkleTree.build(entries);
-    logger.info(
-      `[Publisher] Building Merkle batch: ${entries.length} entries, root=${batch.root.toString('hex')}`,
-    );
-
-    // Fetch current nonce
-    const nonce = await this.fetchBatchNonce();
-    if (nonce === null) {
-      logger.warn('[Publisher] Could not fetch batch nonce, falling back to individual submissions');
-      await this.publishAggregated(prices);
-      return;
-    }
-
-    // Step 1: commit the Merkle root
-    const rootCommitted = await this.callContract('submit_batch', [
-      nativeToScVal(this.keypair.publicKey(), { type: 'address' }),
-      nativeToScVal(BigInt(nonce), { type: 'u64' }),
-      xdr.ScVal.scvBytes(batch.root),
-    ]);
-
-    if (!rootCommitted) {
-      logger.warn('[Publisher] submit_batch failed, falling back to individual submissions');
-      await this.publishAggregated(prices);
-      return;
-    }
-
-    logger.info(`[Publisher] Batch root committed (nonce=${nonce})`);
-
-    // Step 2: apply each entry with its proof
-    let applied = 0;
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      const proof = batch.proofs[i];
-
-      const siblings = proof.siblings.map((s) => xdr.ScVal.scvBytes(s));
-      const proofScVal = xdr.ScVal.scvMap([
-        new xdr.ScMapEntry({
-          key: xdr.ScVal.scvSymbol('leaf_index'),
-          val: nativeToScVal(proof.leafIndex, { type: 'u32' }),
-        }),
-        new xdr.ScMapEntry({
-          key: xdr.ScVal.scvSymbol('siblings'),
-          val: xdr.ScVal.scvVec(siblings),
-        }),
-      ]);
-
-      const entryScVal = xdr.ScVal.scvMap([
-        new xdr.ScMapEntry({
-          key: xdr.ScVal.scvSymbol('asset'),
-          val: nativeToScVal(entry.asset, { type: 'string' }),
-        }),
-        new xdr.ScMapEntry({
-          key: xdr.ScVal.scvSymbol('decimals'),
-          val: nativeToScVal(entry.decimals, { type: 'u32' }),
-        }),
-        new xdr.ScMapEntry({
-          key: xdr.ScVal.scvSymbol('price'),
-          val: nativeToScVal(entry.price, { type: 'i128' }),
-        }),
-        new xdr.ScMapEntry({
-          key: xdr.ScVal.scvSymbol('source'),
-          val: nativeToScVal(entry.source, { type: 'address' }),
-        }),
-        new xdr.ScMapEntry({
-          key: xdr.ScVal.scvSymbol('timestamp'),
-          val: nativeToScVal(BigInt(entry.timestamp), { type: 'u64' }),
-        }),
-      ]);
-
-      const ok = await this.callContract('apply_batch_entry', [
-        nativeToScVal(BigInt(nonce), { type: 'u64' }),
-        entryScVal,
-        proofScVal,
-      ]);
-
-      if (ok) {
-        applied++;
-        logger.info(`[Publisher] Applied batch entry ${i + 1}/${entries.length}: ${entry.asset}`);
-      } else {
-        logger.warn(`[Publisher] Failed to apply batch entry ${i}: ${entry.asset}`);
+      for (const event of events) {
+        const eventType = this.parseEventType(event);
+        logger.info(`[Contract] Event captured: ${eventType}`, { txHash, eventType });
       }
-    }
 
-    logger.info(`[Publisher] Batch complete: ${applied}/${entries.length} entries applied`);
+      if (events.length > 0) {
+        logger.info(`[Contract] Captured ${events.length} event(s) from tx ${txHash}`);
+      }
+    } catch (err) {
+      logger.debug(`[Contract] Could not capture events for ${txHash}: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
-  // ── Original individual-submission loop ────────────────────────────────────
+  private extractEvents(_resultMetaXdr: unknown): xdr.DiagnosticEvent[] {
+    return [];
+  }
+
+  private parseEventType(_event: xdr.DiagnosticEvent): string {
+    return 'contract_event';
+  }
 
   async publishAggregated(prices: AggregatedPrice[]): Promise<void> {
     for (const price of prices) {

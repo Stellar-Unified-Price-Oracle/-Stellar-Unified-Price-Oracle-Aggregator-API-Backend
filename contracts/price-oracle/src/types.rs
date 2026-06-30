@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String, Vec};
+use soroban_sdk::{contracttype, Address, String};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -31,29 +31,47 @@ pub struct OracleSource {
     pub active: bool,
 }
 
-// ── Merkle batch types ────────────────────────────────────────────────────────
-
-/// A single price entry encoded into the Merkle leaf.
-/// leaf = SHA-256(asset || price || decimals || timestamp || source)
+// Issue #70 — source reputation tracking
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BatchPriceEntry {
-    pub asset: String,
-    pub price: i128,
-    pub decimals: u32,
-    pub timestamp: u64,
-    pub source: Address,
+pub struct SourceReputation {
+    pub score: u32,                 // 0-10000 basis points; 10000 = perfect accuracy
+    pub total_submissions: u32,
+    pub accurate_submissions: u32,
+    pub last_updated: u64,          // ledger timestamp of last submission
 }
 
-/// A Merkle inclusion proof for one leaf inside a batch.
-/// `siblings` are the co-path hashes from leaf to root, ordered leaf→root.
+// Issue #67 — multi-sig admin control
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MerkleProof {
-    /// Index of the leaf in the original ordered leaf array (0-based).
-    pub leaf_index: u32,
-    /// Co-path sibling hashes, leaf level first.
-    pub siblings: soroban_sdk::Vec<soroban_sdk::Bytes>,
+#[derive(Clone, Debug)]
+pub struct MultiSigConfig {
+    pub signers: Vec<Address>,
+    pub threshold: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub enum ProposalAction {
+    AddSource(Address, String),     // (source_address, name)
+    RemoveSource(Address),
+    SetTrustedAsset(String, u32),   // (asset, 1=trusted 0=untrusted, bool avoided for XDR compat)
+    TransferAdmin(Address),
+    SetDeviationThreshold(u32),     // new threshold in basis points
+    ResetReputation(Address),       // source address
+    AddSigner(Address),
+    RemoveSigner(Address),
+    SetThreshold(u32),
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Proposal {
+    pub id: u32,
+    pub action: ProposalAction,
+    pub approvals: Vec<Address>,
+    pub executed: u32,              // 0 = pending, 1 = executed (bool avoided for XDR compat)
+    pub created_at: u64,
+    pub proposer: Address,
 }
 
 #[contracttype]
@@ -67,13 +85,17 @@ pub enum DataKey {
     TrustedAsset(String),
     AllAssets,
     SourceCount,
-    // Proxy pattern keys
+    // Issue #68 — proxy / upgradeability
     Implementation,
     PreviousImplementation,
     ContractVersion,
-    // Merkle batch keys
-    /// Stores the accepted Merkle root for a given batch nonce.
-    BatchRoot(u64),
-    /// Monotonically increasing nonce; next batch must use this value.
-    BatchNonce,
+    StorageLayoutVersion,
+    // Issue #69 — deviation threshold
+    DeviationThreshold,
+    // Issue #70 — reputation
+    SourceReputation(Address),
+    // Issue #67 — multi-sig
+    MultiSigConfig,
+    ProposalCount,
+    Proposal(u32),
 }

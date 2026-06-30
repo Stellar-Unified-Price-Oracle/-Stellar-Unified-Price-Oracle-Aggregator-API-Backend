@@ -1,0 +1,36 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: stellar-oracle-istio
+  namespace: istio-system
+spec:
+  profile: default
+  meshConfig:
+    meshID: stellar-oracle
+    trustDomain: cluster.local
+    enableAutoMtls: true
+    defaultConfig:
+      tracing:
+        zipkin:
+          address: jaeger-collector.istio-system.svc.cluster.local:9411
+      proxyMetadata:
+        ISTIO_META_MESH_ID: stellar-oracle
+  components:
+    ingressGateways:
+      - name: istio-ingressgateway
+        enabled: true
+        k8s:
+          service:
+            type: LoadBalancer
+    egressGateways:
+      - name: istio-egressgateway
+        enabled: true
+  values:
+    global:
+      meshID: stellar-oracle
+    pilot:
+      traceSampling: 10
+    telemetry:
+      enabled: true
+      v2:
+        enabled: true

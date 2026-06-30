@@ -1,0 +1,48 @@
+clusterScoped: false
+
+targetNamespace: stellar-oracle
+
+controllerManager:
+  enableFilterNamespace: true
+  filterNamespace: stellar-oracle
+  serviceAccount: chaos-operator
+
+chaosDaemon:
+  runtime: containerd
+  socketPath: /run/containerd/containerd.sock
+
+dashboard:
+  create: true
+  securityMode: true
+  rootUrl: http://localhost:2333
+
+webhook:
+  enabled: true
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: false
+  name: chaos-operator
+
+namespacedChaosResources:
+  - PodChaos
+  - NetworkChaos
+  - StressChaos
+  - DNSChaos
+  - Schedule
+  - Workflow
+  - StatusCheck
+
+tolerations: []
+
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: environment
+              operator: In
+              values:
+                - staging

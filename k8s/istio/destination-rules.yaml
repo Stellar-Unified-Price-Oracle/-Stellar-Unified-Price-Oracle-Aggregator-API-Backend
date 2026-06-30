@@ -1,0 +1,43 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: api
+  namespace: stellar-oracle
+spec:
+  host: api.stellar-oracle.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+  subsets:
+    - name: stable
+      labels:
+        version: stable
+    - name: canary
+      labels:
+        version: canary
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: aggregator
+  namespace: stellar-oracle
+spec:
+  host: aggregator.stellar-oracle.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+  subsets:
+    - name: stable
+      labels:
+        version: stable
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: timescaledb
+  namespace: stellar-oracle
+spec:
+  host: timescaledb.stellar-oracle.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL

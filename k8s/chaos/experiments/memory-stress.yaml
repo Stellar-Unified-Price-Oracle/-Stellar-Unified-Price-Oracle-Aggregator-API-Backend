@@ -1,0 +1,19 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: memory-stress
+  labels:
+    chaos.stellar-oracle.io/experiment: memory-stress
+    chaos.stellar-oracle.io/target: aggregator
+spec:
+  mode: one
+  duration: 5m
+  selector:
+    namespaces:
+      - stellar-oracle
+    labelSelectors:
+      app: aggregator
+  stressors:
+    memory:
+      workers: 1
+      size: 256MB

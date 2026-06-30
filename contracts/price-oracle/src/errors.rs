@@ -11,10 +11,14 @@ pub enum OracleError {
     InvalidDecimals = 5,
     AlreadyInitialized = 6,
     SourceAlreadyExists = 7,
-    // Merkle batch errors
-    InvalidMerkleProof = 8,
-    BatchNonceMismatch = 9,
-    BatchRootNotFound = 10,
-    BatchEmpty = 11,
-    BatchTooLarge = 12,
+    // Issue #69 — price deviation validation
+    PriceDeviationTooLarge = 8,
+    // Issue #67 — multi-sig admin
+    NotASigner = 9,
+    ProposalNotFound = 10,
+    ProposalAlreadyExecuted = 11,
+    AlreadyApproved = 12,
+    InvalidThreshold = 13,
+    ThresholdNotMet = 14,
+    MultiSigNotInitialized = 15,
 }

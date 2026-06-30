@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chaos-alertmanager-routes
+  labels:
+    chaos.stellar-oracle.io/alerting: routes
+data:
+  alertmanager.yml: |
+    route:
+      receiver: chaos-ops-slack
+      group_by: ['alertname', 'namespace']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - matchers:
+            - chaos="true"
+          receiver: chaos-ops-slack
+          continue: true
+        - matchers:
+            - severity="critical"
+            - chaos="true"
+          receiver: chaos-ops-pagerduty
+          continue: false
+
+    receivers:
+      - name: chaos-ops-slack
+        slack_configs:
+          - channel: '#stellar-oracle-ops'
+            send_resolved: true
+            title: '[Chaos Staging] {{ .GroupLabels.alertname }}'
+            text: |
+              {{ range .Alerts }}
+              *{{ .Labels.alertname }}* ({{ .Labels.severity }})
+              {{ .Annotations.summary }}
+              {{ .Annotations.description }}
+              {{ end }}
+
+      - name: chaos-ops-pagerduty
+        pagerduty_configs:
+          - routing_key: '${PAGERDUTY_CHAOS_ROUTING_KEY}'
+            severity: '{{ if eq .CommonLabels.severity "critical" }}critical{{ else }}warning{{ end }}'
+            description: '{{ .CommonAnnotations.summary }}'
+
+    inhibit_rules:
+      - source_matchers:
+          - alertname="ChaosWorkflowFailed"
+        target_matchers:
+          - alertname="ChaosExperimentFailed"
+        equal: ['namespace']
