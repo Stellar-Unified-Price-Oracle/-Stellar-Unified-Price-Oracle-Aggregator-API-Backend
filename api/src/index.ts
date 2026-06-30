@@ -21,6 +21,9 @@ import { v1DeprecationHeaders, v2Headers } from './middleware/versioning';
 import { HybridCache } from './services/cache';
 import { DatabaseClient, setDb } from './services/database';
 import { ArchivalService } from './services/archival';
+import { DbHealthMonitor } from './services/db-health-monitor';
+import { DataConsistencyChecker } from './services/data-consistency';
+import { BackupService } from './services/backup';
 import { setDatabase } from './services/price-store';
 import { initializeTracing } from './services/tracing';
 import adminRoutes from './routes/admin';
@@ -36,6 +39,9 @@ const app = express();
 
 let db: DatabaseClient | null = null;
 let archival: ArchivalService | null = null;
+let dbHealthMonitor: DbHealthMonitor | null = null;
+let consistencyChecker: DataConsistencyChecker | null = null;
+let backupService: BackupService | null = null;
 
 async function initializeApp(): Promise<void> {
   if (config.databaseUrl) {
@@ -44,9 +50,35 @@ async function initializeApp(): Promise<void> {
       await db.initialize();
       setDatabase(db);
       setDb(db);
-      // Data lifecycle / archival of old price records (issue #43).
+
       archival = new ArchivalService(db, logger);
       archival.start();
+
+      // Issue: Database health not monitored — connection exhaustion, slow
+      // queries, and replication lag now emit alerts and Prometheus metrics.
+      dbHealthMonitor = new DbHealthMonitor(db, logger, config.dbHealth);
+      dbHealthMonitor.start();
+
+      // Issue: No data consistency verification across pipeline layers.
+      if (config.consistency.enabled) {
+        consistencyChecker = new DataConsistencyChecker(
+          db,
+          config.aggregatorUrl,
+          logger,
+          config.consistency.checkIntervalMs,
+        );
+        consistencyChecker.start();
+      }
+
+      // Issue: No backup system — daily encrypted backups with restore testing.
+      if (config.backup.enabled) {
+        backupService = new BackupService(config.databaseUrl, logger, {
+          backupDir: config.backup.dir,
+          encryptionKeyHex: config.backup.encryptionKeyHex || undefined,
+        });
+        backupService.start();
+      }
+
       logger.info('PostgreSQL database connected');
     } catch (err) {
       logger.warn('Failed to connect to PostgreSQL, falling back to file-based storage', err);
@@ -149,26 +181,18 @@ async function startServer(): Promise<void> {
   process.on('SIGTERM', () => {
     logger.info('Shutting down API server...');
     wss.stop();
-    if (archival) {
-      archival.stop();
-    }
+    if (archival) archival.stop();
+    if (dbHealthMonitor) dbHealthMonitor.stop();
+    if (consistencyChecker) consistencyChecker.stop();
+    if (backupService) backupService.stop();
     if (db) {
       db.disconnect().catch((err) => logger.error('Error disconnecting from database', err));
     }
     server.close(() => process.exit(0));
-  });
+  };
 
-  process.on('SIGINT', () => {
-    logger.info('Shutting down API server...');
-    wss.stop();
-    if (archival) {
-      archival.stop();
-    }
-    if (db) {
-      db.disconnect().catch((err) => logger.error('Error disconnecting from database', err));
-    }
-    server.close(() => process.exit(0));
-  });
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 startServer().catch((err) => {
