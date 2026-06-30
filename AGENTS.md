@@ -66,6 +66,10 @@ DeFi protocols.
 ├── logs/                         # Runtime logs (gitignored)
 ├── scripts/deploy-soroban.js     # Contract deployment script
 ├── fly/                          # Fly.io deployment configs
+├── k8s/                          # Kubernetes + Istio service mesh manifests
+│   ├── base/                     # API, aggregator, TimescaleDB workloads
+│   ├── overlays/staging/         # Staging Kustomize overlay
+│   └── istio/                    # mTLS, canary routing, observability stack
 ├── .github/workflows/ci.yml      # CI: backend build (aggregator + API)
 ├── Makefile                      # Build/test/run shortcuts
 ├── docker-compose.yml
@@ -97,7 +101,7 @@ Reflector ─┤    (poll 30s, median)      (on-chain storage)
 **Push to `main`** — source code only:
 - `api/src/`, `services/aggregator/src/`, `contracts/price-oracle/src/`
 - `Makefile`, `docker-compose.yml`, `package.json`, `AGENTS.md`
-- `.husky/`, `.github/workflows/`, `fly/`, `scripts/`
+- `.husky/`, `.github/workflows/`, `fly/`, `k8s/`, `scripts/`
 - Configuration: `.env.example`, `.gitignore`
 
 **Never push** (already gitignored):

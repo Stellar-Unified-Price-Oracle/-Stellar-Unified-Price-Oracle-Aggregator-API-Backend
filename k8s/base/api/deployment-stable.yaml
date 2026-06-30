@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-stable
+  labels:
+    app: api
+    version: stable
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+      version: stable
+  template:
+    metadata:
+      labels:
+        app: api
+        version: stable
+    spec:
+      containers:
+        - name: api
+          image: stellar-oracle-api:stable
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+            - name: ws
+              containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: stellar-oracle-config
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

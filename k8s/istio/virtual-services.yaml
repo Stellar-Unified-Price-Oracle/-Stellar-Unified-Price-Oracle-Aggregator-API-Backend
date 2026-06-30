@@ -1,0 +1,97 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: stellar-oracle-gateway
+  namespace: stellar-oracle
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      tls:
+        mode: SIMPLE
+        credentialName: stellar-oracle-tls
+      hosts:
+        - oracle.stellar-oracle.local
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - oracle.stellar-oracle.local
+      tls:
+        httpsRedirect: true
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api
+  namespace: stellar-oracle
+spec:
+  hosts:
+    - oracle.stellar-oracle.local
+  gateways:
+    - stellar-oracle-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /api
+      route:
+        - destination:
+            host: api.stellar-oracle.svc.cluster.local
+            subset: stable
+            port:
+              number: 3000
+          weight: 90
+        - destination:
+            host: api.stellar-oracle.svc.cluster.local
+            subset: canary
+            port:
+              number: 3000
+          weight: 10
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-ws
+  namespace: stellar-oracle
+spec:
+  hosts:
+    - oracle.stellar-oracle.local
+  gateways:
+    - stellar-oracle-gateway
+  tcp:
+    - match:
+        - port: 3001
+      route:
+        - destination:
+            host: api.stellar-oracle.svc.cluster.local
+            subset: stable
+            port:
+              number: 3001
+          weight: 90
+        - destination:
+            host: api.stellar-oracle.svc.cluster.local
+            subset: canary
+            port:
+              number: 3001
+          weight: 10
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: aggregator-internal
+  namespace: stellar-oracle
+spec:
+  hosts:
+    - aggregator.stellar-oracle.svc.cluster.local
+  http:
+    - route:
+        - destination:
+            host: aggregator.stellar-oracle.svc.cluster.local
+            subset: stable
+            port:
+              number: 4000
