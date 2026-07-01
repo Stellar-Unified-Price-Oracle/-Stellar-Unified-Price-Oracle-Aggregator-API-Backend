@@ -1,4 +1,4 @@
-import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import axios, { AxiosHeaders, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import { logger } from './logger';
 import { config } from '../config';
 import { getSecureAgents, validateOutboundUrl, SsrfError } from './ssrf';
@@ -23,7 +23,12 @@ function buildClient(): AxiosInstance {
   });
 
   instance.interceptors.request.use((requestConfig) => {
-    requestConfig.headers = { ...requestConfig.headers, ...correlationHeaders() };
+    const correlation = correlationHeaders();
+    const existingHeaders = requestConfig.headers ?? {};
+    requestConfig.headers = new AxiosHeaders({
+      ...existingHeaders,
+      ...correlation,
+    });
 
     if (!config.security.ssrf.enabled) return requestConfig;
 
