@@ -1,6 +1,91 @@
-# @stellar-oracle/client
+# Stellar Unified Price Oracle SDKs
 
-A TypeScript client SDK for the Stellar Unified Price Oracle. Provides easy access to real-time and historical price data with WebSocket support.
+The repository now ships OpenAPI-generated SDKs for TypeScript, Python, Rust, and Go. Each SDK is generated from the same API contract in [api/openapi.json](../api/openapi.json), which keeps the clients aligned with the backend.
+
+## Available SDKs
+
+- TypeScript: npm package `@stellar-oracle/client`
+- Python: PyPI package `stellar-oracle-client`
+- Rust: crates.io package `stellar-oracle-client`
+- Go: module `github.com/Stellar-Unified-Price-Oracle/stellaroracleclient`
+
+## Regenerate SDKs
+
+```bash
+npm run generate:sdks
+```
+
+## TypeScript quick start
+
+```typescript
+import { PriceOracleClient } from '@stellar-oracle/client';
+
+const client = new PriceOracleClient({
+  apiUrl: 'http://localhost:3000/api/v1',
+  wsUrl: 'ws://localhost:3001',
+});
+
+const prices = await client.getPrices();
+console.log(prices);
+```
+
+## Python quick start
+
+```python
+from stellar_oracle_client.api_client import ApiClient
+from stellar_oracle_client.configuration import Configuration
+from stellar_oracle_client.api.prices_api import PricesApi
+
+configuration = Configuration(host="http://localhost:3000")
+client = ApiClient(configuration=configuration)
+api = PricesApi(client)
+prices = api.get_prices()
+print(prices)
+```
+
+## Rust quick start
+
+```rust
+use stellar_oracle_client::apis::prices_api::get_prices;
+
+#[tokio::main]
+async fn main() {
+    let result = get_prices("http://localhost:3000".to_string(), None).await;
+    println!("{:?}", result);
+}
+```
+
+## Go quick start
+
+```go
+package main
+
+import (
+  "fmt"
+  "github.com/Stellar-Unified-Price-Oracle/stellaroracleclient"
+)
+
+func main() {
+  cfg := stellaroracleclient.NewConfiguration()
+  cfg.Servers[0].URL = "http://localhost:3000"
+  client := stellaroracleclient.NewAPIClient(cfg)
+  prices, _, err := client.PricesApi.GetPrices(ctx)
+  fmt.Println(prices, err)
+}
+```
+
+## Publishing
+
+Publishing each SDK to its registry is the next operational step after generation:
+
+- npm: `npm publish ./generated/typescript`
+- PyPI: `python -m build ./generated/python && twine upload ./generated/python/dist/*`
+- crates.io: `cargo publish --manifest-path ./generated/rust/Cargo.toml`
+- Go: `cd ./generated/go && go list ./... && go test ./...`
+
+## CI sync
+
+CI runs the repository-wide generated check so SDK drift is detected automatically.
 
 ## Installation
 

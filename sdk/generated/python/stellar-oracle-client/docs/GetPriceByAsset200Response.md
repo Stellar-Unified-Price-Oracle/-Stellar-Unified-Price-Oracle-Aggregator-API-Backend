@@ -1,0 +1,30 @@
+# GetPriceByAsset200Response
+
+
+## Properties
+
+Name | Type | Description | Notes
+------------ | ------------- | ------------- | -------------
+**success** | **bool** |  | [optional] 
+**data** | [**AssetPrice**](AssetPrice.md) |  | [optional] 
+
+## Example
+
+```python
+from stellar-oracle-client.models.get_price_by_asset200_response import GetPriceByAsset200Response
+
+# TODO update the JSON string below
+json = "{}"
+# create an instance of GetPriceByAsset200Response from a JSON string
+get_price_by_asset200_response_instance = GetPriceByAsset200Response.from_json(json)
+# print the JSON string representation of the object
+print(GetPriceByAsset200Response.to_json())
+
+# convert the object into a dict
+get_price_by_asset200_response_dict = get_price_by_asset200_response_instance.to_dict()
+# create an instance of GetPriceByAsset200Response from a dict
+get_price_by_asset200_response_from_dict = GetPriceByAsset200Response.from_dict(get_price_by_asset200_response_dict)
+```
+[[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

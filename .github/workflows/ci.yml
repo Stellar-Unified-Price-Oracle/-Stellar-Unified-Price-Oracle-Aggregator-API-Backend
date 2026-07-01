@@ -57,6 +57,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install SDK dependencies
+        run: cd ../sdk && npm ci
+
       - name: Type check
         run: npx tsc --noEmit
 
@@ -65,6 +68,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Verify generated SDKs
+        run: npm run check:generated
 
   contract-fuzz:
     name: Contract fuzz tests

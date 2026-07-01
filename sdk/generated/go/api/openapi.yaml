@@ -1,0 +1,752 @@
+openapi: 3.0.0
+info:
+  contact:
+    name: Stellar Price Oracle
+    url: https://github.com/stellar-oracle
+  description: "A Soroban-based price oracle aggregator that pulls from Chainlink,\
+    \ Redstone, Band, and Reflector, normalizes the data, and exposes it through a\
+    \ single clean API endpoint.\n\n## Features\n- Multi-source price aggregation\
+    \ with median calculation\n- Real-time price updates via WebSocket\n- Historical\
+    \ price data queries\n- Prometheus metrics\n- Per-asset confidence scoring\n \
+    \     "
+  title: Stellar Unified Price Oracle & Aggregator API
+  version: 1.0.0
+servers:
+- description: Development
+  url: http://localhost:3000
+- description: Production
+  url: https://api.stellar-oracle.io
+tags:
+- description: Current and historical price data
+  name: Prices
+- description: Oracle source information
+  name: Sources
+- description: Service health checks
+  name: Health
+- description: Prometheus monitoring
+  name: Metrics
+- description: "API usage analytics, reports, and anomaly detection"
+  name: Usage
+- description: Webhook registration and delivery for price updates
+  name: Webhooks
+paths:
+  /api/v1:
+    get:
+      operationId: getApiRoot
+      responses:
+        "200":
+          description: Endpoint listing
+      summary: API root — list available endpoints
+      tags:
+      - Prices
+  /api/v1/prices:
+    get:
+      operationId: getPrices
+      parameters:
+      - description: "Filter by asset symbol (e.g. XLM, BTC)"
+        explode: true
+        in: query
+        name: asset
+        required: false
+        schema:
+          type: string
+        style: form
+      - description: Page number for offset pagination
+        explode: true
+        in: query
+        name: page
+        required: false
+        schema:
+          default: 1
+          minimum: 1
+          type: integer
+        style: form
+      - description: Items per page
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 20
+          minimum: 1
+          type: integer
+        style: form
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/getPrices_200_response"
+          description: Array of current prices
+        "400":
+          description: Invalid query parameters
+      summary: Get all current prices
+      tags:
+      - Prices
+  /api/v1/prices/{asset}:
+    get:
+      operationId: getPriceByAsset
+      parameters:
+      - description: "Asset symbol (XLM, BTC, ETH, USDC, USDT)"
+        explode: false
+        in: path
+        name: asset
+        required: true
+        schema:
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/getPriceByAsset_200_response"
+          description: Price data for the requested asset
+        "404":
+          description: Asset not found
+      summary: Get current price for a specific asset
+      tags:
+      - Prices
+  /api/v1/history/{asset}:
+    get:
+      operationId: getPriceHistory
+      parameters:
+      - description: Asset symbol
+        explode: false
+        in: path
+        name: asset
+        required: true
+        schema:
+          type: string
+        style: simple
+      - description: Opaque cursor from a previous response
+        explode: true
+        in: query
+        name: cursor
+        required: false
+        schema:
+          type: string
+        style: form
+      - description: Start timestamp (Unix seconds)
+        explode: true
+        in: query
+        name: from
+        required: false
+        schema:
+          type: number
+        style: form
+      - description: End timestamp (Unix seconds)
+        explode: true
+        in: query
+        name: to
+        required: false
+        schema:
+          type: number
+        style: form
+      - description: Maximum number of records
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          type: integer
+        style: form
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/getPriceHistory_200_response"
+          description: Historical price data
+        "400":
+          description: Invalid parameters
+      summary: Get historical prices for an asset
+      tags:
+      - Prices
+  /api/v1/sources:
+    get:
+      operationId: getSources
+      parameters:
+      - explode: true
+        in: query
+        name: page
+        required: false
+        schema:
+          default: 1
+          minimum: 1
+          type: integer
+        style: form
+      - explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 20
+          minimum: 1
+          type: integer
+        style: form
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/getSources_200_response"
+          description: Active oracle sources
+      summary: List all oracle sources
+      tags:
+      - Sources
+  /api/v1/health/live:
+    get:
+      operationId: getHealthLive
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LivenessCheck"
+          description: Service is alive
+      summary: Liveness probe
+      tags:
+      - Health
+  /api/v1/health/ready:
+    get:
+      operationId: getHealthReady
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessCheck"
+          description: Service is ready
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessCheck"
+          description: Service is not ready
+      summary: Readiness probe
+      tags:
+      - Health
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/getHealth_200_response"
+          description: Service health status
+      summary: Health check endpoint
+      tags:
+      - Health
+  /api/v1/docs:
+    get:
+      operationId: getDocs
+      responses:
+        "200":
+          description: Swagger UI HTML page
+      summary: Swagger UI documentation
+      tags:
+      - Docs
+  /metrics:
+    get:
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Prometheus text format metrics
+      summary: Prometheus metrics endpoint
+      tags:
+      - Metrics
+  /api/v1/usage/reports:
+    get:
+      parameters:
+      - explode: true
+        in: query
+        name: period
+        required: false
+        schema:
+          enum:
+          - daily
+          - weekly
+          - monthly
+          type: string
+        style: form
+      responses:
+        "200":
+          description: Usage report
+      summary: Usage report for a period
+      tags:
+      - Usage
+  /api/v1/usage/dashboard:
+    get:
+      responses:
+        "200":
+          description: Usage dashboard
+      summary: Usage dashboard (daily/weekly/monthly overview)
+      tags:
+      - Usage
+  /api/v1/usage/anomalies:
+    get:
+      responses:
+        "200":
+          description: Anomaly list
+      summary: Detected usage anomalies (request-volume spikes)
+      tags:
+      - Usage
+  /api/v1/webhooks:
+    get:
+      responses:
+        "200":
+          description: Webhook list
+      summary: List registered webhooks
+      tags:
+      - Webhooks
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookRegistration"
+      responses:
+        "201":
+          description: Webhook created
+      summary: Register a webhook
+      tags:
+      - Webhooks
+  /api/v1/webhooks/{id}:
+    delete:
+      responses:
+        "204":
+          description: Deleted
+      summary: Delete a webhook
+      tags:
+      - Webhooks
+    get:
+      responses:
+        "200":
+          description: Webhook
+      summary: Get a webhook
+      tags:
+      - Webhooks
+  /api/v1/webhooks/{id}/deliveries:
+    get:
+      responses:
+        "200":
+          description: Delivery log entries
+      summary: Webhook delivery log
+      tags:
+      - Webhooks
+components:
+  schemas:
+    HalLink:
+      example:
+        href: /api/v1/prices/XLM
+        method: GET
+        title: title
+      properties:
+        href:
+          example: /api/v1/prices/XLM
+          type: string
+        method:
+          example: GET
+          type: string
+        title:
+          type: string
+      type: object
+    HalLinks:
+      additionalProperties:
+        $ref: "#/components/schemas/HalLink"
+      description: "Map of relation name to hypermedia link (self, related, action\
+        \ links)"
+      type: object
+    WebhookRegistration:
+      example:
+        url: https://example.com/webhook
+        trigger:
+          type: threshold
+          asset: XLM
+          value: 1.5
+      properties:
+        url:
+          example: https://example.com/webhook
+          type: string
+        trigger:
+          $ref: "#/components/schemas/WebhookRegistration_trigger"
+      type: object
+    AssetPrice:
+      example:
+        asset: XLM
+        price: "10000000000"
+        decimals: 7
+        source: chainlink
+        timestamp: 1719000000
+        _links:
+          key:
+            href: /api/v1/prices/XLM
+            method: GET
+            title: title
+      properties:
+        asset:
+          example: XLM
+          type: string
+        price:
+          example: "10000000000"
+          type: string
+        decimals:
+          example: 7
+          type: integer
+        source:
+          example: chainlink
+          type: string
+        timestamp:
+          example: 1719000000
+          type: number
+        _links:
+          additionalProperties:
+            $ref: "#/components/schemas/HalLink"
+          description: "Map of relation name to hypermedia link (self, related, action\
+            \ links)"
+          type: object
+      type: object
+    OracleSource:
+      example:
+        name: Chainlink
+        active: true
+        type: off-chain
+        website: https://chain.link
+      properties:
+        name:
+          example: Chainlink
+          type: string
+        active:
+          example: true
+          type: boolean
+        type:
+          example: off-chain
+          type: string
+        website:
+          example: https://chain.link
+          type: string
+      type: object
+    HealthCheck:
+      example:
+        service: stellar-price-oracle-api
+        status: healthy
+        uptime: 3600
+        timestamp: 1719000000
+        assetsTracked: 5
+      properties:
+        service:
+          example: stellar-price-oracle-api
+          type: string
+        status:
+          enum:
+          - healthy
+          - degraded
+          - unhealthy
+          type: string
+        uptime:
+          example: 3600
+          type: number
+        timestamp:
+          example: 1719000000
+          type: number
+        assetsTracked:
+          example: 5
+          type: integer
+      type: object
+    LivenessCheck:
+      example:
+        status: alive
+        uptime: 3600
+      properties:
+        status:
+          example: alive
+          type: string
+        uptime:
+          example: 3600
+          type: number
+      type: object
+    ReadinessCheck:
+      example:
+        status: ready
+        assetsTracked: 5
+      properties:
+        status:
+          enum:
+          - ready
+          - not_ready
+          type: string
+        assetsTracked:
+          example: 5
+          type: integer
+      type: object
+    PaginationMeta:
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+        hasNext:
+          type: boolean
+        hasPrev:
+          type: boolean
+      type: object
+    CursorPaginationMeta:
+      example:
+        limit: 5
+        nextCursor: nextCursor
+        hasMore: true
+      properties:
+        limit:
+          type: integer
+        nextCursor:
+          nullable: true
+          type: string
+        hasMore:
+          type: boolean
+      type: object
+    HistoryEntry:
+      example:
+        price: price
+        decimals: 6
+        source: source
+        timestamp: 1.4658129805029452
+      properties:
+        price:
+          type: string
+        decimals:
+          type: integer
+        source:
+          type: string
+        timestamp:
+          type: number
+      type: object
+    HistoryData:
+      example:
+        asset: asset
+        to: 0.8008281904610115
+        prices:
+        - price: price
+          decimals: 6
+          source: source
+          timestamp: 1.4658129805029452
+        - price: price
+          decimals: 6
+          source: source
+          timestamp: 1.4658129805029452
+        pagination:
+          limit: 5
+          nextCursor: nextCursor
+          hasMore: true
+      properties:
+        asset:
+          type: string
+        to:
+          nullable: true
+          type: number
+        prices:
+          items:
+            $ref: "#/components/schemas/HistoryEntry"
+          type: array
+        pagination:
+          $ref: "#/components/schemas/CursorPaginationMeta"
+      type: object
+    ErrorResponse:
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+      type: object
+    getPrices_200_response_data:
+      example:
+        timestamp: 0.8008281904610115
+        count: 6
+        prices:
+        - asset: XLM
+          price: "10000000000"
+          decimals: 7
+          source: chainlink
+          timestamp: 1719000000
+          _links:
+            key:
+              href: /api/v1/prices/XLM
+              method: GET
+              title: title
+        - asset: XLM
+          price: "10000000000"
+          decimals: 7
+          source: chainlink
+          timestamp: 1719000000
+          _links:
+            key:
+              href: /api/v1/prices/XLM
+              method: GET
+              title: title
+      properties:
+        timestamp:
+          type: number
+        count:
+          type: integer
+        prices:
+          items:
+            $ref: "#/components/schemas/AssetPrice"
+          type: array
+      type: object
+    getPrices_200_response:
+      example:
+        success: true
+        data:
+          timestamp: 0.8008281904610115
+          count: 6
+          prices:
+          - asset: XLM
+            price: "10000000000"
+            decimals: 7
+            source: chainlink
+            timestamp: 1719000000
+            _links:
+              key:
+                href: /api/v1/prices/XLM
+                method: GET
+                title: title
+          - asset: XLM
+            price: "10000000000"
+            decimals: 7
+            source: chainlink
+            timestamp: 1719000000
+            _links:
+              key:
+                href: /api/v1/prices/XLM
+                method: GET
+                title: title
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/getPrices_200_response_data"
+      type: object
+    getPriceByAsset_200_response:
+      example:
+        success: true
+        data:
+          asset: XLM
+          price: "10000000000"
+          decimals: 7
+          source: chainlink
+          timestamp: 1719000000
+          _links:
+            key:
+              href: /api/v1/prices/XLM
+              method: GET
+              title: title
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/AssetPrice"
+      type: object
+    getPriceHistory_200_response:
+      example:
+        success: true
+        data:
+          asset: asset
+          to: 0.8008281904610115
+          prices:
+          - price: price
+            decimals: 6
+            source: source
+            timestamp: 1.4658129805029452
+          - price: price
+            decimals: 6
+            source: source
+            timestamp: 1.4658129805029452
+          pagination:
+            limit: 5
+            nextCursor: nextCursor
+            hasMore: true
+        cached: true
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/HistoryData"
+        cached:
+          type: boolean
+      type: object
+    getSources_200_response_data:
+      example:
+        sources:
+        - name: Chainlink
+          active: true
+          type: off-chain
+          website: https://chain.link
+        - name: Chainlink
+          active: true
+          type: off-chain
+          website: https://chain.link
+      properties:
+        sources:
+          items:
+            $ref: "#/components/schemas/OracleSource"
+          type: array
+      type: object
+    getSources_200_response:
+      example:
+        success: true
+        data:
+          sources:
+          - name: Chainlink
+            active: true
+            type: off-chain
+            website: https://chain.link
+          - name: Chainlink
+            active: true
+            type: off-chain
+            website: https://chain.link
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/getSources_200_response_data"
+      type: object
+    getHealth_200_response:
+      example:
+        success: true
+        data:
+          service: stellar-price-oracle-api
+          status: healthy
+          uptime: 3600
+          timestamp: 1719000000
+          assetsTracked: 5
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/HealthCheck"
+      type: object
+    WebhookRegistration_trigger:
+      example:
+        type: threshold
+        asset: XLM
+        value: 1.5
+      properties:
+        type:
+          enum:
+          - threshold
+          - interval
+          type: string
+        asset:
+          example: XLM
+          type: string
+        value:
+          example: 1.5
+          type: number
+      type: object
