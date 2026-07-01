@@ -16,6 +16,7 @@
     "install:all": "cd services/aggregator && npm install && cd ../../api && npm install && cd ../sdk && npm install",
     "generate:openapi": "cd api && npm run generate:openapi",
     "generate:client": "cd sdk && npm run generate:client",
+    "generate:sdks": "cd sdk && node scripts/generate-sdks.js",
     "generate:api-client": "npm run generate:openapi && npm run generate:client",
     "check:generated": "sh scripts/check-generated.sh",
     "prepare": "husky"

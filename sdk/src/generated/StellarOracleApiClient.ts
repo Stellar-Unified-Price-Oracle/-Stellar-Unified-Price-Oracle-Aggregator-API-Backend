@@ -10,6 +10,8 @@ import { HealthService } from './services/HealthService';
 import { MetricsService } from './services/MetricsService';
 import { PricesService } from './services/PricesService';
 import { SourcesService } from './services/SourcesService';
+import { UsageService } from './services/UsageService';
+import { WebhooksService } from './services/WebhooksService';
 type HttpRequestConstructor = new (config: OpenAPIConfig) => BaseHttpRequest;
 export class StellarOracleApiClient {
     public readonly docs: DocsService;
@@ -17,6 +19,8 @@ export class StellarOracleApiClient {
     public readonly metrics: MetricsService;
     public readonly prices: PricesService;
     public readonly sources: SourcesService;
+    public readonly usage: UsageService;
+    public readonly webhooks: WebhooksService;
     public readonly request: BaseHttpRequest;
     constructor(config?: Partial<OpenAPIConfig>, HttpRequest: HttpRequestConstructor = FetchHttpRequest) {
         this.request = new HttpRequest({
@@ -35,6 +39,8 @@ export class StellarOracleApiClient {
         this.metrics = new MetricsService(this.request);
         this.prices = new PricesService(this.request);
         this.sources = new SourcesService(this.request);
+        this.usage = new UsageService(this.request);
+        this.webhooks = new WebhooksService(this.request);
     }
 }
 
