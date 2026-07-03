@@ -13,6 +13,6 @@ data:
   RATE_LIMIT_MAX: "100"
   CACHE_TTL_MS: "15000"
   USE_TIMESCALEDB: "true"
-  AGGREGATOR_URL: http://aggregator.stellar-oracle-staging.svc.cluster.local:4000
-  DATABASE_URL: postgresql://oracle:oracle@timescaledb.stellar-oracle-staging.svc.cluster.local:5432/stellar_oracle
+  AGGREGATOR_URL: http://aggregator.svc.cluster.local:4000
+  DATABASE_URL: postgresql://oracle:oracle@timescaledb.svc.cluster.local:5432/stellar_oracle
   TRACING_ENABLED: "false"

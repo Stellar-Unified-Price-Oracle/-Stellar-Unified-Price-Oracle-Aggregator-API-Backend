@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stellar-oracle-config
+data:
+  LOG_LEVEL: warn
+  AGGREGATOR_URL: http://aggregator.stellar-oracle-prod.svc.cluster.local:4000
+  DATABASE_URL: postgresql://oracle:oracle@timescaledb.stellar-oracle-prod.svc.cluster.local:5432/stellar_oracle
+  CACHE_TTL_MS: "10000"
+  RATE_LIMIT_MAX: "200"
