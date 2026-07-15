@@ -106,4 +106,16 @@ export const config = {
     slowQueryThresholdMs: parseInt(process.env.DB_HEALTH_SLOW_QUERY_MS || '5000', 10),
     replicationLagAlertMs: parseInt(process.env.DB_HEALTH_REPLICA_LAG_ALERT_MS || '30000', 10),
   },
+  compression: {
+    enabled: process.env.COMPRESSION_ENABLED !== 'false',
+    threshold: parseInt(process.env.COMPRESSION_THRESHOLD || '1024', 10),
+    level: parseInt(process.env.COMPRESSION_LEVEL || '6', 10),
+  },
+  webhooks: {
+    baseDelayMs: parseInt(process.env.WEBHOOK_BASE_DELAY_MS || '1000', 10),
+    maxDelayMs: parseInt(process.env.WEBHOOK_MAX_DELAY_MS || '60000', 10),
+    maxRetries: parseInt(process.env.WEBHOOK_MAX_RETRIES || '5', 10),
+    timeoutMs: parseInt(process.env.WEBHOOK_TIMEOUT_MS || '10000', 10),
+    minIntervalMs: parseInt(process.env.WEBHOOK_MIN_INTERVAL_MS || '60000', 10),
+  },
 };

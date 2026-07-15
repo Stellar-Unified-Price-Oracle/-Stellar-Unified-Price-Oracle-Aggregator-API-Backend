@@ -214,6 +214,7 @@ export class PriceWebSocketServer {
     const asset = data?.asset?.toUpperCase() || '_global';
     const seq = this.bufferMessage(asset, data);
     const message = JSON.stringify({ type: 'price_update', sequenceId: seq, ...data });
+    let sent = 0;
     this.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(message);
@@ -227,6 +228,7 @@ export class PriceWebSocketServer {
     const asset = priceUpdate?.asset?.toUpperCase();
     const seq = this.bufferMessage(asset || '_global', priceUpdate);
     const message = JSON.stringify({ type: 'price_update', sequenceId: seq, data: priceUpdate });
+    let sent = 0;
 
     this.clients.forEach((client) => {
       if (client.readyState !== WebSocket.OPEN) return;

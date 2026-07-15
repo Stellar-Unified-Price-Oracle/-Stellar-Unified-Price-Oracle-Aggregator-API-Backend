@@ -129,7 +129,7 @@ export class HybridCache<T> {
         enableReadyCheck: false,
         enableOfflineQueue: false,
       });
-      this.subscriber.subscribe(INVALIDATION_CHANNEL, (err: Error | null) => {
+      this.subscriber.subscribe(INVALIDATION_CHANNEL, (err: Error | null | undefined) => {
         if (err) this.logger.warn(`Cache invalidation subscription failed: ${err.message}`);
       });
       this.subscriber.on('message', (_channel: string, pattern: string) => {

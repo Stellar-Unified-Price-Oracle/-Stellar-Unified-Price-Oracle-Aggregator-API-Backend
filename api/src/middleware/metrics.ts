@@ -187,6 +187,13 @@ export const wsSubscribeEventsTotal = new client.Counter({
 });
 register.registerMetric(wsSubscribeEventsTotal);
 
+export const apiCallsByEndpoint = new client.Counter({
+  name: 'api_calls_by_endpoint_total',
+  help: 'Total API calls grouped by endpoint, method, and status',
+  labelNames: ['endpoint', 'method', 'status'],
+});
+register.registerMetric(apiCallsByEndpoint);
+
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();
   res.on('finish', () => {

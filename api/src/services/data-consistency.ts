@@ -80,7 +80,7 @@ export class DataConsistencyChecker {
       let aggPrices: { asset: string; price: string; timestamp: number }[] = [];
       try {
         const res = await fetch(`${this.aggregatorUrl}/prices`, { signal: AbortSignal.timeout(5000) });
-        if (res.ok) aggPrices = await res.json();
+        if (res.ok) aggPrices = await res.json() as { asset: string; price: string; timestamp: number }[];
       } catch {
         // Aggregator unreachable — skip without marking a violation
         consistencyChecksTotal.inc({ layer, result: 'skipped' });

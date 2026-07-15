@@ -186,7 +186,7 @@ async function startServer(): Promise<void> {
   // #66 — Synthetic monitoring probes (run every 60 s)
   startSyntheticProbes(config.port);
 
-  process.on('SIGTERM', () => {
+  const shutdown = () => {
     logger.info('Shutting down API server...');
     wss.stop();
     if (archival) archival.stop();
@@ -197,7 +197,7 @@ async function startServer(): Promise<void> {
       db.disconnect().catch((err) => logger.error('Error disconnecting from database', err));
     }
     server.close(() => process.exit(0));
-  });
+  };
 
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
