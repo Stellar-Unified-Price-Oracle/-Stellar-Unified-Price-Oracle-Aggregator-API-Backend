@@ -1,0 +1,167 @@
+name: Deploy
+
+on:
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-images:
+    name: Build and push Docker images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      api-tag: ${{ steps.tags.outputs.api-sha }}
+      aggregator-tag: ${{ steps.tags.outputs.aggregator-sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        id: sha
+        run: echo "value=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Set image tags
+        id: tags
+        env:
+          SHA: ${{ steps.sha.outputs.value }}
+        run: |
+          API_BASE="$REGISTRY/$GITHUB_REPOSITORY/api"
+          AGG_BASE="$REGISTRY/$GITHUB_REPOSITORY/aggregator"
+          echo "api-sha=${API_BASE}:sha-${SHA}" >> "$GITHUB_OUTPUT"
+          echo "aggregator-sha=${AGG_BASE}:sha-${SHA}" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "api-main=${API_BASE}:main" >> "$GITHUB_OUTPUT"
+            echo "api-latest=${API_BASE}:latest" >> "$GITHUB_OUTPUT"
+            echo "aggregator-main=${AGG_BASE}:main" >> "$GITHUB_OUTPUT"
+            echo "aggregator-latest=${AGG_BASE}:latest" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            echo "api-develop=${API_BASE}:develop" >> "$GITHUB_OUTPUT"
+            echo "aggregator-develop=${AGG_BASE}:develop" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: api
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.api-sha }}
+            ${{ steps.tags.outputs.api-main }}
+            ${{ steps.tags.outputs.api-latest }}
+            ${{ steps.tags.outputs.api-develop }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Aggregator image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/aggregator
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.aggregator-sha }}
+            ${{ steps.tags.outputs.aggregator-main }}
+            ${{ steps.tags.outputs.aggregator-latest }}
+            ${{ steps.tags.outputs.aggregator-develop }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-dev:
+    name: Deploy to Dev
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    needs: [build-images]
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_DEV }}" > ~/.kube/config
+
+      - name: Deploy to dev
+        run: |
+          bash scripts/deploy-k8s.sh dev \
+            "${{ needs.build-images.outputs.api-tag }}" \
+            "${{ needs.build-images.outputs.aggregator-tag }}"
+
+  deploy-staging:
+    name: Deploy to Staging
+    if: >
+      ( github.ref == 'refs/heads/main' && github.event_name == 'push' ) ||
+      ( github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging' )
+    needs: [build-images]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_STAGING }}" > ~/.kube/config
+
+      - name: Deploy to staging
+        run: |
+          bash scripts/deploy-k8s.sh staging \
+            "${{ needs.build-images.outputs.api-tag }}" \
+            "${{ needs.build-images.outputs.aggregator-tag }}"
+
+  deploy-prod:
+    name: Deploy to Production
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    needs: [build-images]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_PROD }}" > ~/.kube/config
+
+      - name: Deploy to production
+        run: |
+          bash scripts/deploy-k8s.sh prod \
+            "${{ needs.build-images.outputs.api-tag }}" \
+            "${{ needs.build-images.outputs.aggregator-tag }}"

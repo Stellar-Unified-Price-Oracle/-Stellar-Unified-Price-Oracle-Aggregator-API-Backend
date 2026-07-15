@@ -1,20 +1,33 @@
-.PHONY: all build clean test deploy help
+.PHONY: all build clean test deploy help deploy-soroban
 
 help:
 	@echo "Stellar Price Oracle Aggregator"
 	@echo ""
+	@echo "  build targets:"
 	@echo "  make build-soroban    Build the Soroban contract"
 	@echo "  make build-aggregator Build the aggregator service"
 	@echo "  make build-api        Build the REST API"
 	@echo "  make build            Build all components"
+	@echo ""
+	@echo "  test targets:"
 	@echo "  make test-soroban     Test the Soroban contract"
 	@echo "  make test-aggregator  Test the aggregator service"
 	@echo "  make test-api         Test the REST API"
 	@echo "  make test             Test all components"
+	@echo ""
+	@echo "  dev targets:"
 	@echo "  make install          Install all dependencies"
 	@echo "  make dev-aggregator   Run aggregator in dev mode"
 	@echo "  make dev-api          Run API in dev mode"
+	@echo ""
+	@echo "  deploy targets:"
 	@echo "  make deploy-soroban   Deploy Soroban contract (requires env)"
+	@echo "  make deploy-dev       Deploy to dev K8s cluster"
+	@echo "  make deploy-staging   Deploy to staging K8s cluster"
+	@echo "  make deploy-prod      Deploy to production K8s cluster"
+	@echo "  make rollback         Rollback deployment (ENV=<env> TAG=<tag>)"
+	@echo ""
+	@echo "  utility:"
 	@echo "  make clean            Clean build artifacts"
 
 install:

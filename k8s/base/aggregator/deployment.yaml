@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: aggregator
-          image: stellar-oracle-aggregator:latest
+          image: oracle-aggregator:placeholder
           imagePullPolicy: IfNotPresent
           ports:
             - name: http-metrics
