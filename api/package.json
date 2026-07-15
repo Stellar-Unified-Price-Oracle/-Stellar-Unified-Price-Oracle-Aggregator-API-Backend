@@ -21,11 +21,11 @@
   },
   "dependencies": {
     "@opentelemetry/api": "^1.7.0",
-    "@opentelemetry/auto-instrumentations-node": "^0.42.0",
-    "@opentelemetry/exporter-jaeger": "^1.17.1",
-    "@opentelemetry/resources": "^1.17.1",
-    "@opentelemetry/sdk-node": "^0.44.0",
-    "@opentelemetry/sdk-trace-node": "^1.17.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.78.0",
+    "@opentelemetry/exporter-jaeger": "^2.9.0",
+    "@opentelemetry/resources": "^2.9.0",
+    "@opentelemetry/sdk-node": "^0.220.0",
+    "@opentelemetry/sdk-trace-node": "^2.9.0",
     "@opentelemetry/semantic-conventions": "^1.17.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -54,11 +54,12 @@
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.6",
     "@types/ws": "^8.5.10",
+    "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^9.7.0",
     "node-fetch": "^2.7.0",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3",
     "typescript-eslint": "^8.62.0",
-    "vitest": "^1.6.0"
+    "vitest": "^4.1.10"
   }
 }

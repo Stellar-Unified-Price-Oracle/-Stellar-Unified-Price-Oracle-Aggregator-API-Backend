@@ -1,10 +1,31 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { httpClient } from '../src/utils/http-client';
 import { ChainlinkSource } from '../src/sources/chainlink';
 import { RedstoneSource } from '../src/sources/redstone';
 import { BandSource } from '../src/sources/band';
 import { ReflectorSource } from '../src/sources/reflector';
 import { PriceAggregator } from '../src/aggregator';
+import { appendHistoricalPrice, getHistoricalPrices, ensureDataDir } from '../src/utils/history';
+import { HealthServer } from '../src/health-server';
+import { BaseSource } from '../src/sources/base';
+import { WebSocketServer } from '../src/ws-server';
+import * as path from 'path';
+
+vi.mock('fs', () => {
+  const mockFiles = new Map<string, string>();
+  return {
+    default: {
+      existsSync: vi.fn((p: string) => mockFiles.has(p)),
+      mkdirSync: vi.fn(),
+      writeFileSync: vi.fn((p: string, data: string) => { mockFiles.set(p, data); }),
+      readFileSync: vi.fn((p: string) => mockFiles.get(p) || '[]'),
+    },
+    existsSync: vi.fn((p: string) => mockFiles.has(p)),
+    mkdirSync: vi.fn(),
+    writeFileSync: vi.fn((p: string, data: string) => { mockFiles.set(p, data); }),
+    readFileSync: vi.fn((p: string) => mockFiles.get(p) || '[]'),
+  };
+});
 
 vi.mock('../src/utils/http-client', () => ({
   httpClient: {
@@ -28,6 +49,10 @@ function mockGet(_url: string, data: unknown) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('ChainlinkSource', () => {
@@ -142,6 +167,70 @@ describe('PriceAggregator', () => {
     const all = aggregator.getAllPrices();
     expect(all).toHaveLength(2);
   });
+
+  it('marks critical degradation when all sources stale', () => {
+    const aggregator = new PriceAggregator();
+    const stale = Math.floor(Date.now() / 1000) - 300;
+
+    aggregator.updateSourcePrice({ asset: 'XLM', price: 100n, decimals: 7, source: 'chainlink', timestamp: stale });
+
+    const result = aggregator.getLatestForAsset('XLM');
+    expect(result).not.toBeNull();
+    expect(result!.degradationLevel).toBe('critical');
+    expect(result!.stale).toBe(true);
+  });
+
+  it('returns degraded when fewer than all sources available', () => {
+    const aggregator = new PriceAggregator();
+    const ts = Math.floor(Date.now() / 1000);
+
+    aggregator.updateSourcePrice({ asset: 'XLM', price: 100n, decimals: 7, source: 'chainlink', timestamp: ts });
+
+    const result = aggregator.getLatestForAsset('XLM');
+    expect(result).not.toBeNull();
+    expect(result!.degradationLevel).toBe('healthy');
+  });
+
+  it('computes correct source count', () => {
+    const aggregator = new PriceAggregator();
+    const ts = Math.floor(Date.now() / 1000);
+    aggregator.updateSourcePrice({ asset: 'XLM', price: 100n, decimals: 7, source: 'chainlink', timestamp: ts });
+    aggregator.updateSourcePrice({ asset: 'XLM', price: 101n, decimals: 7, source: 'redstone', timestamp: ts });
+    aggregator.updateSourcePrice({ asset: 'XLM', price: 102n, decimals: 7, source: 'band', timestamp: ts });
+    expect(aggregator.getSourceCount()).toBe(3);
+  });
+
+  it('handles even-numbered price sets for median', () => {
+    const aggregator = new PriceAggregator();
+    const ts = Math.floor(Date.now() / 1000);
+
+    aggregator.updateSourcePrice({ asset: 'XLM', price: 100n, decimals: 7, source: 'chainlink', timestamp: ts });
+    aggregator.updateSourcePrice({ asset: 'XLM', price: 110n, decimals: 7, source: 'redstone', timestamp: ts });
+
+    const result = aggregator.getLatestForAsset('XLM');
+    expect(result).not.toBeNull();
+    expect(result!.price).toBe('105');
+  });
+
+  it('provides circuit breaker metrics', () => {
+    const aggregator = new PriceAggregator();
+    const metrics = aggregator.getCircuitBreakerMetrics();
+    expect(metrics).toBeDefined();
+    expect(metrics).toHaveProperty('totalSources');
+    expect(metrics).toHaveProperty('suspiciousSources');
+    expect(metrics).toHaveProperty('suspiciousSourcesList');
+  });
+
+  it('returns empty suspicious sources list initially', () => {
+    const aggregator = new PriceAggregator();
+    expect(aggregator.getSuspiciousSources()).toEqual([]);
+  });
+
+  it('resets circuit breaker', () => {
+    const aggregator = new PriceAggregator();
+    expect(() => aggregator.resetCircuitBreaker()).not.toThrow();
+    expect(() => aggregator.resetCircuitBreaker('chainlink:XLM')).not.toThrow();
+  });
 });
 
 describe('Exponential Backoff', () => {
@@ -181,5 +270,103 @@ describe('Exponential Backoff', () => {
     expect(source.health.totalRequests).toBeGreaterThanOrEqual(2);
     expect(source.health.totalFailures).toBeGreaterThanOrEqual(1);
     expect(source.health.uptimePercent).toBeLessThan(100);
+  });
+});
+
+describe('HistoryService', () => {
+  const testAsset = 'TEST';
+
+  it('creates data directory on ensureDataDir', () => {
+    ensureDataDir();
+  });
+
+  it('appends historical price', () => {
+    appendHistoricalPrice(testAsset, '100', 7, 'chainlink', 1719000000);
+  });
+
+  it('returns empty array when no history file exists', () => {
+    const prices = getHistoricalPrices('NONEXISTENT');
+    expect(prices).toEqual([]);
+  });
+});
+
+describe('HealthServer', () => {
+  it('starts and stops without error', () => {
+    const snapshot = () => ({
+      sourceHealth: { chainlink: { healthy: true, consecutiveFailures: 0, uptimePercent: 100 } },
+      lastAggregated: [{ asset: 'XLM', price: '100' }],
+      uptime: 100,
+    });
+    const server = new HealthServer(0, snapshot);
+    expect(() => server.start()).not.toThrow();
+    expect(() => server.stop()).not.toThrow();
+  });
+
+  it('handles empty snapshot', () => {
+    const snapshot = () => ({
+      sourceHealth: {},
+      lastAggregated: [],
+      uptime: 0,
+    });
+    const server = new HealthServer(0, snapshot);
+    expect(() => server.start()).not.toThrow();
+    expect(() => server.stop()).not.toThrow();
+  });
+});
+
+describe('WebSocketServer', () => {
+  it('starts and stops without error', () => {
+    const server = new WebSocketServer(-1);
+    expect(() => server.start()).not.toThrow();
+    expect(() => server.stop()).not.toThrow();
+  });
+
+  it('broadcasts without crashing when no clients', () => {
+    const server = new WebSocketServer(-1);
+    server.start();
+    expect(() => server.broadcast({ type: 'test', data: 'hello' })).not.toThrow();
+    server.stop();
+  });
+});
+
+describe('BaseSource normalize', () => {
+  class TestSource extends BaseSource {
+    name = 'chainlink' as const;
+    async fetchPrice(_asset: string) {
+      return null;
+    }
+  }
+
+  it('normalizes integer prices correctly', () => {
+    const source = new TestSource();
+    const result = source['normalize']('XLM', '123', 7, 1719000000);
+    expect(result.asset).toBe('XLM');
+    expect(result.price).toBe(1230000000n);
+    expect(result.decimals).toBe(7);
+    expect(result.source).toBe('chainlink');
+  });
+
+  it('normalizes decimal prices correctly', () => {
+    const source = new TestSource();
+    const result = source['normalize']('btc', '65000.50', 8, 1719000000);
+    expect(result.asset).toBe('BTC');
+    expect(result.price).toBe(6500050000000n);
+  });
+
+  it('normalizes BigNumber prices', () => {
+    const source = new TestSource();
+    const { default: BigNumber } = require('bignumber.js');
+    const result = source['normalize']('eth', new BigNumber('3500'), 18, 1719000000);
+    expect(result.asset).toBe('ETH');
+    expect(result.price).toBe(3500000000000000000000n);
+  });
+
+  it('fetchAll returns array of prices', async () => {
+    const source = new TestSource();
+    vi.spyOn(source, 'fetchWithBackoff').mockResolvedValue({
+      asset: 'XLM', price: 100n, decimals: 7, source: 'chainlink', timestamp: 1719000000,
+    });
+    const prices = await source.fetchAll(['XLM', 'BTC']);
+    expect(prices).toHaveLength(2);
   });
 });

@@ -1,9 +1,11 @@
 .env
 node_modules/
 dist/
+coverage/
 data/
 *.log
 logs/
 target/
 .kiro/
 .claude/
+package-lock.json

@@ -2,7 +2,7 @@ import { NodeSDK } from '@opentelemetry/sdk-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { JaegerExporter } from '@opentelemetry/exporter-jaeger';
 import { TraceIdRatioBasedSampler } from '@opentelemetry/sdk-trace-node';
-import { Resource } from '@opentelemetry/resources';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
 import { trace } from '@opentelemetry/api';
 import { logger } from '../middleware/logger';
@@ -31,12 +31,10 @@ export function initializeTracing(config: TracingConfig): void {
       endpoint: jaegerEndpoint,
     });
 
-    const resource = Resource.default().merge(
-      new Resource({
-        [SemanticResourceAttributes.SERVICE_NAME]: serviceName,
-        [SemanticResourceAttributes.SERVICE_VERSION]: process.env.npm_package_version,
-      }),
-    );
+    const resource = resourceFromAttributes({
+      [SemanticResourceAttributes.SERVICE_NAME]: serviceName,
+      [SemanticResourceAttributes.SERVICE_VERSION]: process.env.npm_package_version,
+    });
 
     sdk = new NodeSDK({
       resource,
