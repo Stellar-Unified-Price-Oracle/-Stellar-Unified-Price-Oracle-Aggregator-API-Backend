@@ -30,15 +30,6 @@ DeFi protocols.
 │   │   └── websocket/server.ts   # WS with per-asset subscriptions
 │   └── tests/services.test.ts
 │
-├── sdk/                          # TypeScript client SDK (OpenAPI-generated + WebSocket)
-│   ├── src/
-│   │   ├── index.ts              # Public exports
-│   │   ├── client.ts             # PriceOracleClient (WebSocket + REST helpers)
-│   │   ├── api-client.ts         # Factory for generated REST client
-│   │   ├── types.ts              # WebSocket / legacy types
-│   │   └── generated/            # Auto-generated from api/openapi.json (do not edit)
-│   └── openapi-codegen via `npm run generate:api-client`
-│
 ├── services/aggregator/          # Price aggregator service (TypeScript)
 │   ├── src/
 │   │   ├── index.ts              # Poll loop, WS broadcast, health server
@@ -69,16 +60,10 @@ DeFi protocols.
 │       └── test.rs               # Unit tests
 │
 ├── .husky/
-│   ├── pre-push                  # Backend build on git push
-│   └── _/                        # Husky internal stubs (managed)
+│   └── pre-push                  # Backend build on git push
 ├── data/                         # Historical price JSON files (gitignored)
 ├── logs/                         # Runtime logs (gitignored)
 ├── scripts/deploy-soroban.js     # Contract deployment script
-├── fly/                          # Fly.io deployment configs
-├── k8s/                          # Kubernetes + Istio service mesh manifests
-│   ├── base/                     # API, aggregator, TimescaleDB workloads
-│   ├── overlays/staging/         # Staging Kustomize overlay
-│   └── istio/                    # mTLS, canary routing, observability stack
 ├── .github/workflows/ci.yml      # CI: backend build (aggregator + API)
 ├── Makefile                      # Build/test/run shortcuts
 ├── docker-compose.yml
@@ -110,12 +95,12 @@ Reflector ─┤    (poll 30s, median)      (on-chain storage)
 **Push to `main`** — source code only:
 - `api/src/`, `services/aggregator/src/`, `contracts/price-oracle/src/`
 - `Makefile`, `docker-compose.yml`, `package.json`, `AGENTS.md`
-- `.husky/`, `.github/workflows/`, `fly/`, `k8s/`, `scripts/`
+- `.husky/`, `.github/workflows/`, `scripts/`
 - Configuration: `.env.example`, `.gitignore`
 
 **Never push** (already gitignored):
 - `.env`, `node_modules/`, `dist/`, `target/`, `data/`, `logs/`
-- `.kiro/` (AI tool artifacts)
+- `.kiro/`, `.claude/` (AI tool artifacts)
 
 ---
 
@@ -124,35 +109,28 @@ Reflector ─┤    (poll 30s, median)      (on-chain storage)
 After any change, confirm:
 
 1. **TypeScript** — no type errors:
- ```
- npm run build:aggregator && npm run build:api && npm run build:sdk
- ```
- Or individually:
- ```
- cd services/aggregator && npx tsc --noEmit
- cd ../../api && npx tsc --noEmit
- cd ../../sdk && npx tsc --noEmit
- ```
-2. **OpenAPI client codegen** — regenerate and verify drift:
- ```
- npm run generate:api-client
- npm run check:generated
- ```
-3. **Tests** — all pass:
+   ```
+   npm run build:aggregator && npm run build:api
+   ```
+   Or individually:
+   ```
+   cd services/aggregator && npx tsc --noEmit
+   cd ../../api && npx tsc --noEmit
+   ```
+2. **Tests** — all pass:
    ```
    npm run test:backend
    ```
    Or individually:
    ```
    cd services/aggregator && npm test
- cd ../../api && npm test
- cd ../../sdk && npm test
- cd ../../contracts/price-oracle && cargo test
- ```
-4. **Pre-push hook** — runs automatically via Husky at `git push`:
+   cd ../../api && npm test
+   cd ../../contracts/price-oracle && cargo test
+   ```
+3. **Pre-push hook** — runs automatically via Husky at `git push`:
    - Aggregator build
    - API build
-5. **CI** — `.github/workflows/ci.yml` runs backend build (aggregator + API + SDK) and OpenAPI codegen drift check on push/PR.
+4. **CI** — `.github/workflows/ci.yml` runs backend build (aggregator + API) on push/PR.
 
 ---
 
