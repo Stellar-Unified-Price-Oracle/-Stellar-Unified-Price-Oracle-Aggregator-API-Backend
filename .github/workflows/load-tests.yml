@@ -39,7 +39,7 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
