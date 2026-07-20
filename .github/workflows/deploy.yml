@@ -64,7 +64,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push API image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: api
           push: true
@@ -77,7 +77,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push Aggregator image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/aggregator
           push: true
