@@ -1,16 +1,17 @@
-import { config } from './config';
-import { logger } from './utils/logger';
-import { ChainlinkSource, RedstoneSource, BandSource, ReflectorSource } from './sources';
-import { PriceAggregator } from './aggregator';
-import { AggregatedPrice } from './types';
-import { ContractPublisher } from './publisher';
-import { appendHistoricalPrice } from './utils/history';
-import { DatabaseClient } from './utils/database';
-import { BaseSource } from './sources/base';
-import { WebSocketServer } from './ws-server';
-import { HealthServer } from './health-server';
-import AlertManager, { AlertThresholds } from './alert-manager';
-import { sourceCircuitBreaker } from './source-circuit-breaker';
+import { config } from './infrastructure/config';
+import { logger } from './observability/logger';
+import { ChainlinkSource, RedstoneSource, BandSource, ReflectorSource } from './oracle-sources';
+import { PriceAggregator } from './price-aggregation/aggregator';
+import { AggregatedPrice, NormalizedPrice } from './infrastructure/types';
+import { ContractPublisher } from './contract-publishing/publisher';
+import { appendHistoricalPrice } from './persistence/history';
+import { DatabaseClient } from './persistence/database';
+import { BaseSource } from './oracle-sources/base';
+import { WebSocketServer } from './infrastructure/ws-server';
+import { HealthServer } from './observability/health-server';
+import AlertManager from './observability/alert-manager';
+import { sourceCircuitBreaker } from './price-aggregation/source-circuit-breaker';
+import { eventBus } from './domain-events';
 
 // In-process counters surfaced as structured log lines; the API /metrics
 // endpoint (prom-client) collects the canonical Prometheus metrics.
@@ -50,6 +51,13 @@ async function poll(): Promise<AggregatedPrice[]> {
   for (const source of sources) {
     const prices = await source.fetchAll(config.assets);
     for (const price of prices) {
+      // Publish PriceFetchedEvent
+      eventBus.publish({
+        type: 'price_fetched',
+        payload: price,
+        timestamp: Date.now(),
+      });
+
       aggregator.updateSourcePrice(price);
       incPriceUpdate(price.asset, price.source);
 
@@ -69,11 +77,30 @@ async function poll(): Promise<AggregatedPrice[]> {
         appendHistoricalPrice(price.asset, price.price.toString(), price.decimals, price.source, price.timestamp);
       }
     }
+
+    // Publish SourceDegradedEvent if source is unhealthy
+    if (!source.health.healthy) {
+      eventBus.publish({
+        type: 'source_degraded',
+        payload: {
+          source: source.name,
+          reason: 'Source is unhealthy',
+        },
+        timestamp: Date.now(),
+      });
+    }
   }
 
   const aggregated = aggregator.getAllPrices();
   const allSourceNames = ['chainlink', 'redstone', 'band', 'reflector'];
   for (const ap of aggregated) {
+    // Publish PriceAggregatedEvent
+    eventBus.publish({
+      type: 'price_aggregated',
+      payload: ap,
+      timestamp: Date.now(),
+    });
+
     const usdPrice = BigInt(ap.price) / BigInt(10n ** BigInt(ap.decimals));
     const healthStatuses = sources.map((s) => ({
       name: s.name,
@@ -94,6 +121,16 @@ async function poll(): Promise<AggregatedPrice[]> {
     logger.debug(`[Metrics] Source participation for ${ap.asset}`, participation);
 
     if (ap.anomaly) {
+      // Publish AnomalyDetectedEvent
+      eventBus.publish({
+        type: 'anomaly_detected',
+        payload: {
+          asset: ap.asset,
+          anomaly: ap.anomaly,
+        },
+        timestamp: Date.now(),
+      });
+
       incAnomaly(ap.asset, ap.anomaly.method);
       logger.warn(`[Anomaly] ${ap.asset} score=${ap.anomaly.score.toFixed(3)} method=${ap.anomaly.method}: ${ap.anomaly.details}`);
     }
@@ -116,6 +153,13 @@ async function poll(): Promise<AggregatedPrice[]> {
   if (config.soroban.contractId) {
     const publisher = new ContractPublisher();
     await publisher.publishAggregated(aggregated);
+
+    // Publish PricePublishedEvent
+    eventBus.publish({
+      type: 'price_published',
+      payload: aggregated,
+      timestamp: Date.now(),
+    });
   }
 
   lastAggregated = aggregated;

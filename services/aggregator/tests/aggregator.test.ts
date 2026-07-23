@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { httpClient } from '../src/utils/http-client';
-import { ChainlinkSource } from '../src/sources/chainlink';
-import { RedstoneSource } from '../src/sources/redstone';
-import { BandSource } from '../src/sources/band';
-import { ReflectorSource } from '../src/sources/reflector';
-import { PriceAggregator } from '../src/aggregator';
-import { appendHistoricalPrice, getHistoricalPrices, ensureDataDir } from '../src/utils/history';
-import { HealthServer } from '../src/health-server';
-import { BaseSource } from '../src/sources/base';
-import { WebSocketServer } from '../src/ws-server';
+import { httpClient } from '../src/infrastructure/http-client';
+import { ChainlinkSource } from '../src/oracle-sources/chainlink';
+import { RedstoneSource } from '../src/oracle-sources/redstone';
+import { BandSource } from '../src/oracle-sources/band';
+import { ReflectorSource } from '../src/oracle-sources/reflector';
+import { PriceAggregator } from '../src/price-aggregation/aggregator';
+import { appendHistoricalPrice, getHistoricalPrices, ensureDataDir } from '../src/persistence/history';
+import { HealthServer } from '../src/observability/health-server';
+import { BaseSource } from '../src/oracle-sources/base';
+import { WebSocketServer } from '../src/infrastructure/ws-server';
 import * as path from 'path';
 
 vi.mock('fs', () => {
@@ -27,13 +27,13 @@ vi.mock('fs', () => {
   };
 });
 
-vi.mock('../src/utils/http-client', () => ({
+vi.mock('../src/infrastructure/http-client', () => ({
   httpClient: {
     get: vi.fn(),
   },
 }));
 
-vi.mock('../src/source-circuit-breaker', () => ({
+vi.mock('../src/price-aggregation/source-circuit-breaker', () => ({
   sourceCircuitBreaker: {
     isAllowed: vi.fn(() => true),
     recordSuccess: vi.fn(),
