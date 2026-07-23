@@ -10,6 +10,7 @@ import { ArchivalService } from '../services/archival';
 import { DbHealthMonitor } from '../services/db-health-monitor';
 import { DataConsistencyChecker } from '../services/data-consistency';
 import { BackupService } from '../services/backup';
+import { DrStatusService } from '../services/dr-status';
 import { config } from '../config';
 import type { Role } from '../middleware/rbac';
 
@@ -466,6 +467,23 @@ router.post('/backup/restore', async (req: Request, res: Response) => {
       error: { code: 'RESTORE_FAILED', message: 'Failed to restore backup' },
     });
   }
+});
+
+// ── Disaster Recovery (issue #106) ─────────────────────────────────────────────
+
+router.get('/dr/status', (_req: Request, res: Response) => {
+  if (!config.databaseUrl) {
+    return res.status(503).json({
+      success: false,
+      error: { code: 'DB_UNAVAILABLE', message: 'Database is not configured' },
+    });
+  }
+  const svc = new DrStatusService(config.databaseUrl, logger, {
+    backupDir: config.backup.dir,
+    rpoTargetSeconds: config.dr.rpoTargetSeconds,
+  });
+  const status = svc.getStatus();
+  res.json({ success: true, data: { ...status, rtoTargetSeconds: config.dr.rtoTargetSeconds } });
 });
 
 // ── Admin Health ──────────────────────────────────────────────────────────────

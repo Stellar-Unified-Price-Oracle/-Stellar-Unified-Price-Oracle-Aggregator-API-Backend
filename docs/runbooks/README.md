@@ -31,3 +31,9 @@ This directory contains operational runbooks for diagnosing and resolving incide
 ## Post-Mortem
 
 Use the [post-mortem template](post-mortem-template.md) for all P0 and P1 incidents within 48 hours of resolution.
+
+## Catastrophic failure
+
+If a runbook's mitigation isn't enough — data loss, full cluster loss — this is a
+disaster recovery event, not a routine incident. See the
+[disaster recovery plan](../disaster-recovery/README.md).

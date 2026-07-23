@@ -31,9 +31,26 @@ spec:
                   key: password
             - name: POSTGRES_DB
               value: stellar_oracle
+          # DR (issue #106) — Tier 1 point-in-time recovery: continuous WAL archiving
+          # to a volume separate from the data PVC. archive_timeout forces a WAL
+          # switch at least every 60s even under light write load, bounding RPO for
+          # scripts/dr/restore-pitr.sh to well under the 5-minute target.
+          args:
+            - '-c'
+            - 'archive_mode=on'
+            - '-c'
+            - 'archive_command=test ! -f /var/lib/postgresql/wal-archive/%f && cp %p /var/lib/postgresql/wal-archive/%f'
+            - '-c'
+            - 'archive_timeout=60'
+            - '-c'
+            - 'wal_level=replica'
+            - '-c'
+            - 'max_wal_senders=4'
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            - name: wal-archive
+              mountPath: /var/lib/postgresql/wal-archive
           readinessProbe:
             exec:
               command:
@@ -60,3 +77,11 @@ spec:
         resources:
           requests:
             storage: 10Gi
+    - metadata:
+        name: wal-archive
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi

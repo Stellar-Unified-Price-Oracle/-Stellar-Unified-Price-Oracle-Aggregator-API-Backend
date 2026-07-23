@@ -1,0 +1,66 @@
+# DR (issue #106) — Tier 1 point-in-time recovery: hourly physical base backups.
+# Combined with the continuous WAL archive (see statefulset.yaml), these let
+# scripts/dr/restore-pitr.sh replay to any point within the retention window at an
+# RPO bounded by archive_timeout (60s), not by this cadence.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: timescaledb-base-backups
+  labels:
+    app: timescaledb
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: timescaledb-base-backup
+  labels:
+    app: timescaledb
+spec:
+  schedule: '0 * * * *' # hourly
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pg-basebackup
+              image: timescale/timescaledb:latest-pg16
+              env:
+                - name: PGHOST
+                  value: timescaledb
+                - name: PGUSER
+                  value: oracle
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: timescaledb-credentials
+                      key: password
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -euo pipefail
+                  DEST="/backups/base_$(date -u +%Y%m%dT%H%M%SZ)"
+                  echo "Running pg_basebackup -> ${DEST}"
+                  pg_basebackup --pgdata="${DEST}" --format=plain --wal-method=none --checkpoint=fast --progress
+                  echo "Base backup complete: ${DEST}"
+                  # Retain the 24 most recent base backups (24h at hourly cadence)
+                  cd /backups
+                  ls -1dt base_* 2>/dev/null | tail -n +25 | xargs -r rm -rf
+              volumeMounts:
+                - name: base-backups
+                  mountPath: /backups
+          volumes:
+            - name: base-backups
+              persistentVolumeClaim:
+                claimName: timescaledb-base-backups

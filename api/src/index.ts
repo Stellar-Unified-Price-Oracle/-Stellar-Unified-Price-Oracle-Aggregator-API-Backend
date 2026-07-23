@@ -27,6 +27,7 @@ import { ArchivalService } from './services/archival';
 import { DbHealthMonitor } from './services/db-health-monitor';
 import { DataConsistencyChecker } from './services/data-consistency';
 import { BackupService } from './services/backup';
+import { DrStatusService } from './services/dr-status';
 import { setDatabase } from './services/price-store';
 import { initializeTracing } from './services/tracing';
 import adminRoutes from './routes/admin';
@@ -45,6 +46,7 @@ let archival: ArchivalService | null = null;
 let dbHealthMonitor: DbHealthMonitor | null = null;
 let consistencyChecker: DataConsistencyChecker | null = null;
 let backupService: BackupService | null = null;
+let drStatusService: DrStatusService | null = null;
 
 async function initializeApp(): Promise<void> {
   if (config.databaseUrl) {
@@ -78,9 +80,19 @@ async function initializeApp(): Promise<void> {
         backupService = new BackupService(config.databaseUrl, logger, {
           backupDir: config.backup.dir,
           encryptionKeyHex: config.backup.encryptionKeyHex || undefined,
+          dailyIntervalMs: config.backup.intervalMs,
         });
         backupService.start();
       }
+
+      // DR (issue #106) — tracks backup staleness against the RPO target for
+      // /api/v1/admin/dr/status and the dr_rpo_seconds metric, independent of
+      // whether the automated daily backup loop above is enabled.
+      drStatusService = new DrStatusService(config.databaseUrl, logger, {
+        backupDir: config.backup.dir,
+        rpoTargetSeconds: config.dr.rpoTargetSeconds,
+      });
+      drStatusService.start();
 
       logger.info('PostgreSQL database connected');
     } catch (err) {
@@ -193,6 +205,7 @@ async function startServer(): Promise<void> {
     if (dbHealthMonitor) dbHealthMonitor.stop();
     if (consistencyChecker) consistencyChecker.stop();
     if (backupService) backupService.stop();
+    if (drStatusService) drStatusService.stop();
     if (db) {
       db.disconnect().catch((err) => logger.error('Error disconnecting from database', err));
     }

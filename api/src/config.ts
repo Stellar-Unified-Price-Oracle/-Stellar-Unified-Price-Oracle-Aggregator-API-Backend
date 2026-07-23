@@ -95,6 +95,14 @@ export const config = {
     dir: process.env.BACKUP_DIR || './data/backups',
     // 64-char hex key; if omitted backups are stored unencrypted
     encryptionKeyHex: process.env.BACKUP_ENCRYPTION_KEY || '',
+    // DR (issue #106): snapshot cadence — lower this (e.g. 300000 = 5min) in
+    // production to keep Tier 2 recovery alone under the RPO target.
+    intervalMs: parseInt(process.env.BACKUP_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10),
+  },
+  // Disaster recovery targets (issue #106) — see docs/disaster-recovery/README.md
+  dr: {
+    rtoTargetSeconds: parseInt(process.env.DR_RTO_TARGET_SECONDS || String(60 * 60), 10),
+    rpoTargetSeconds: parseInt(process.env.DR_RPO_TARGET_SECONDS || String(5 * 60), 10),
   },
   consistency: {
     enabled: process.env.CONSISTENCY_CHECK_ENABLED !== 'false',
