@@ -45,6 +45,19 @@ export const config = {
     adminSecret: decryptSecret(process.env.ADMIN_SECRET_KEY || ''),
   },
 
+  canary: {
+    // Set CANARY_CONTRACT_ID to the newly-deployed canary contract address.
+    contractId: process.env.CANARY_CONTRACT_ID || '',
+    // Percentage (0–100) of publish calls routed to the canary contract.
+    trafficWeight: parseInt(process.env.CANARY_TRAFFIC_WEIGHT || '10', 10),
+    // Whether the canary splitter is active.
+    enabled: process.env.CANARY_ENABLED === 'true',
+    // Auto-rollback if canary price deviates from stable by more than this (basis points).
+    maxDeviationBps: parseInt(process.env.CANARY_MAX_DEVIATION_BPS || '500', 10),
+    // Auto-rollback after this many consecutive canary TX failures.
+    maxConsecutiveFailures: parseInt(process.env.CANARY_MAX_CONSECUTIVE_FAILURES || '3', 10),
+  },
+
   sources: {
     chainlink: {
       baseUrl: sourceUrls.chainlink,
