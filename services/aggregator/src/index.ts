@@ -42,6 +42,8 @@ const alertManager = new AlertManager({
 let lastAggregated: AggregatedPrice[] = [];
 let db: DatabaseClient | null = null;
 let pollSources: BaseSource[] = [];
+// Persistent publisher so canary traffic-splitter state survives across poll cycles.
+let publisher: ContractPublisher | null = null;
 
 async function poll(): Promise<AggregatedPrice[]> {
   const sources: BaseSource[] = pollSources;
@@ -114,7 +116,7 @@ async function poll(): Promise<AggregatedPrice[]> {
   }
 
   if (config.soroban.contractId) {
-    const publisher = new ContractPublisher();
+    if (!publisher) publisher = new ContractPublisher();
     await publisher.publishAggregated(aggregated);
   }
 
@@ -165,6 +167,7 @@ async function main(): Promise<void> {
     lastAggregated,
     circuitBreakerMetrics: aggregator.getCircuitBreakerMetrics(),
     circuitBreakerStates: sourceCircuitBreaker.getAllStatuses(),
+    canaryMetrics: publisher?.getCanaryMetrics() ?? null,
     uptime: process.uptime(),
   }));
   healthServer.start();
