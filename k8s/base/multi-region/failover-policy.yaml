@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: region-failover-policy
+data:
+  policy: |
+    active-passive
+    failoverWindowMs: 300000
+    healthCheckPath: /api/v1/health
+    promotionThreshold: 2
+    trafficDrainGracePeriodMs: 60000
