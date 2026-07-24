@@ -3,11 +3,15 @@ kind: Kustomization
 
 resources:
   - configmap.yaml
+  - secrets.yaml
+  - networkpolicy.yaml
   - aggregator/deployment.yaml
   - aggregator/service.yaml
+  - aggregator/hpa.yaml
   - api/deployment-stable.yaml
   - api/deployment-canary.yaml
   - api/service.yaml
+  - api/hpa.yaml
   - timescaledb/statefulset.yaml
   - timescaledb/service.yaml
 

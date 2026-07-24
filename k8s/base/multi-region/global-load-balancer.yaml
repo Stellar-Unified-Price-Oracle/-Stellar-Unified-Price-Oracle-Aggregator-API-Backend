@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-global
+  labels:
+    app: api
+    tier: global
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: oracle.global.stellar-oracle.example
+spec:
+  type: LoadBalancer
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

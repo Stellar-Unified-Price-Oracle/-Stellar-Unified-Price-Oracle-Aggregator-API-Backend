@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stellar-oracle-global-config
+data:
+  MULTI_REGION_ENABLED: "true"
+  PRIMARY_REGION: us-east-1
+  SECONDARY_REGION: eu-west-1
+  REPLICATION_MODE: async
+  REPLICATION_TARGET: eu-west-1
+  REPLICATION_SYNC_INTERVAL_MS: "10000"
+  FAILOVER_GRACE_PERIOD_MS: "300000"
+  FAILOVER_AUTOMATION_ENABLED: "true"
+  GLOBAL_LOAD_BALANCER_ENABLED: "true"
