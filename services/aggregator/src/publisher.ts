@@ -10,6 +10,7 @@ import { config } from './config';
 import { logger } from './utils/logger';
 import { AggregatedPrice } from './types';
 import { MerkleTree, BatchPriceEntry } from './utils/merkle';
+import { TrafficSplitter, CanaryMonitor, calcDeviationBps } from './canary';
 
 interface ContractCallLog {
   txHash: string;
@@ -62,11 +63,44 @@ export class ContractPublisher {
   private contractId: string;
   private networkPassphrase: string;
 
+  private splitter: TrafficSplitter | null = null;
+  private monitor: CanaryMonitor | null = null;
+
   constructor() {
     this.server = new SorobanRpc.Server(config.soroban.rpcUrl);
     this.keypair = Keypair.fromSecret(config.soroban.adminSecret);
     this.contractId = config.soroban.contractId;
     this.networkPassphrase = config.soroban.networkPassphrase;
+
+    if (config.canary.enabled && config.canary.contractId) {
+      this.splitter = new TrafficSplitter({
+        canaryWeight: config.canary.trafficWeight,
+        enabled: true,
+      });
+      this.monitor = new CanaryMonitor({
+        maxDeviationBps: config.canary.maxDeviationBps,
+        maxConsecutiveFailures: config.canary.maxConsecutiveFailures,
+        rollbackCallback: () => this.rollbackCanary(),
+      });
+      logger.info(
+        `[Canary] Initialized — canary contract: ${config.canary.contractId}, ` +
+        `traffic weight: ${config.canary.trafficWeight}%`,
+      );
+    }
+  }
+
+  private rollbackCanary(): void {
+    if (this.splitter) {
+      this.splitter.disable();
+      logger.error('[Canary] Rollback complete — splitter disabled, all traffic on stable contract');
+    }
+  }
+
+  getCanaryMetrics() {
+    return {
+      splitter: this.splitter?.getStats() ?? null,
+      monitor: this.monitor?.getMetrics() ?? null,
+    };
   }
 
   // ── Individual submission (unchanged) ──────────────────────────────────────
@@ -205,12 +239,90 @@ export class ContractPublisher {
 
   async publishAggregated(prices: AggregatedPrice[]): Promise<void> {
     for (const price of prices) {
-      await this.submitPrice(
-        price.asset,
-        BigInt(price.price),
-        price.decimals,
-        price.timestamp,
-      );
+      if (this.splitter && this.monitor && !this.monitor.isRolledBack() && config.canary.contractId) {
+        const target = this.splitter.selectTarget();
+
+        if (target === 'canary') {
+          // Publish to canary only; also get stable for comparison
+          const [stableTx, canaryTx] = await Promise.all([
+            this.submitPrice(price.asset, BigInt(price.price), price.decimals, price.timestamp),
+            this.submitPriceTo(
+              config.canary.contractId,
+              price.asset,
+              BigInt(price.price),
+              price.decimals,
+              price.timestamp,
+            ),
+          ]);
+          this.monitor.record({
+            asset: price.asset,
+            stablePrice: price.price,
+            canaryPrice: price.price, // same input price; we monitor TX outcome
+            decimals: price.decimals,
+            timestamp: price.timestamp,
+            stableTxHash: stableTx,
+            canaryTxHash: canaryTx,
+            canaryFailed: canaryTx === null,
+            deviationBps: 0, // same price sent — deviation comes from independent canary reads
+          });
+        } else {
+          await this.submitPrice(price.asset, BigInt(price.price), price.decimals, price.timestamp);
+        }
+      } else {
+        await this.submitPrice(price.asset, BigInt(price.price), price.decimals, price.timestamp);
+      }
+    }
+  }
+
+  private async submitPriceTo(
+    contractId: string,
+    asset: string,
+    price: bigint,
+    decimals: number,
+    timestamp: number,
+  ): Promise<string | null> {
+    const startMs = Date.now();
+    const fnName = 'submit_price';
+    const params = { contractId, asset, price: price.toString(), decimals, timestamp };
+    let txHash = '';
+    try {
+      const account = await this.server.getAccount(this.keypair.publicKey());
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: contractId,
+            function: fnName,
+            args: [
+              nativeToScVal(this.keypair.publicKey(), { type: 'address' }),
+              nativeToScVal(asset, { type: 'string' }),
+              nativeToScVal(price, { type: 'i128' }),
+              nativeToScVal(decimals, { type: 'u32' }),
+              nativeToScVal(timestamp, { type: 'u64' }),
+            ],
+          }),
+        )
+        .setTimeout(30)
+        .build();
+
+      tx.sign(this.keypair);
+      txHash = tx.hash().toString('hex');
+
+      const sim: any = await this.server.simulateTransaction(tx);
+      if (sim.error) {
+        logger.warn(`[Canary] Simulation failed for ${asset}: ${sim.error}`);
+        return null;
+      }
+
+      const resp: any = await this.server.sendTransaction(tx);
+      logger.debug(`[Canary] Submitted ${asset} to canary contract ${contractId.slice(0, 8)}… tx: ${resp.hash}`);
+      return resp.hash ?? txHash;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[Canary] Failed to submit ${asset} to canary: ${msg}`);
+      return null;
     }
   }
 

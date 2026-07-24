@@ -1,4 +1,4 @@
-.PHONY: all build clean test deploy help deploy-soroban
+.PHONY: all build clean test deploy help deploy-soroban canary-deploy canary-deploy-mainnet canary-promote canary-rollback
 
 help:
 	@echo "Stellar Price Oracle Aggregator"
@@ -21,11 +21,15 @@ help:
 	@echo "  make dev-api          Run API in dev mode"
 	@echo ""
 	@echo "  deploy targets:"
-	@echo "  make deploy-soroban   Deploy Soroban contract (requires env)"
-	@echo "  make deploy-dev       Deploy to dev K8s cluster"
-	@echo "  make deploy-staging   Deploy to staging K8s cluster"
-	@echo "  make deploy-prod      Deploy to production K8s cluster"
-	@echo "  make rollback         Rollback deployment (ENV=<env> TAG=<tag>)"
+	@echo "  make deploy-soroban      Deploy Soroban contract (requires env)"
+	@echo "  make canary-deploy       Deploy canary contract (testnet)"
+	@echo "  make canary-deploy-mainnet Deploy canary contract (mainnet)"
+	@echo "  make canary-promote      Promote canary to stable"
+	@echo "  make canary-rollback     Rollback / disable canary"
+	@echo "  make deploy-dev          Deploy to dev K8s cluster"
+	@echo "  make deploy-staging      Deploy to staging K8s cluster"
+	@echo "  make deploy-prod         Deploy to production K8s cluster"
+	@echo "  make rollback            Rollback deployment (ENV=<env> TAG=<tag>)"
 	@echo ""
 	@echo "  utility:"
 	@echo "  make clean            Clean build artifacts"
@@ -77,3 +81,18 @@ clean:
 	rm -rf data/
 	rm -rf logs/
 	rm -rf target/
+
+deploy-soroban:
+	node scripts/deploy-soroban.js
+
+canary-deploy:
+	node scripts/canary-deploy-soroban.js $(ARGS)
+
+canary-deploy-mainnet:
+	node scripts/canary-deploy-soroban.js --mainnet $(ARGS)
+
+canary-promote:
+	node scripts/canary-deploy-soroban.js --promote
+
+canary-rollback:
+	node scripts/canary-deploy-soroban.js --rollback

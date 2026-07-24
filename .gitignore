@@ -9,3 +9,4 @@ target/
 .kiro/
 .claude/
 package-lock.json
+.canary-state.json

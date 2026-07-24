@@ -11,6 +11,7 @@ interface HealthSnapshot {
   uptime: number;
   circuitBreakerMetrics?: any;
   circuitBreakerStates?: Record<string, SourceCBStatus>;
+  canaryMetrics?: any;
 }
 
 export class HealthServer {
@@ -94,6 +95,7 @@ export class HealthServer {
             : [],
           // #65 — include daily API call counts
           dailyApiCalls: getDailyCounts(),
+          canary: snap.canaryMetrics ?? null,
         };
 
         if (verbose) {
@@ -101,6 +103,7 @@ export class HealthServer {
           body.circuitBreakerMetrics = snap.circuitBreakerMetrics;
           body.circuitBreakerStates = snap.circuitBreakerStates;
           body.lastAggregated = snap.lastAggregated;
+          body.canaryMetrics = snap.canaryMetrics ?? null;
           body.processMemoryMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
           body.nodeVersion = process.version;
         }
