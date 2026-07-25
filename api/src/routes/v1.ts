@@ -14,6 +14,7 @@ import { config } from '../config';
 import { links, withLinks } from '../services/hypermedia';
 import { Router, Request, Response } from 'express';
 import { conditionalCache } from '../middleware/conditional-cache';
+import { getPricePredictionService } from '../services/mlPipeline';
 
 const router = Router();
 let pricesCache: HybridCache<any>;
@@ -113,8 +114,33 @@ router.get('/prices/:asset', async (req: Request, res: Response) => {
 
   priceQueriesTotal.inc({ asset });
   lastPriceTimestamp.set({ asset }, price.timestamp);
-  await pricesCache.set(cacheKey, price, 'price');
-  res.json({ success: true, data: withLinks(price, links.asset(asset)) });
+
+  // Optional ML enrichment: attach a price prediction if the query opts in
+  let mlPrediction: Record<string, unknown> | undefined;
+  if (req.query['ml'] === '1') {
+    try {
+      const mlService = getPricePredictionService();
+      // Ingest the freshly fetched price tick into the pipeline
+      mlService.ingest(asset, { price: price.price, timestamp: price.timestamp * 1000 });
+      const pred = mlService.predict(asset);
+      mlPrediction = {
+        predictedPrice: pred.predictedPrice,
+        confidence: pred.confidence,
+        modelUsed: pred.modelUsed,
+        generatedAt: pred.generatedAt,
+      };
+    } catch (mlErr) {
+      // Non-fatal: log and continue without prediction
+      console.warn(`[MLPipeline] Prediction failed for ${asset}:`, (mlErr as Error).message);
+    }
+  }
+
+  const responseData = mlPrediction
+    ? { ...price, mlPrediction }
+    : price;
+
+  await pricesCache.set(cacheKey, responseData, 'price');
+  res.json({ success: true, data: withLinks(responseData, links.asset(asset)) });
 });
 
 // GET /history/:asset — cursor-paginated time-series

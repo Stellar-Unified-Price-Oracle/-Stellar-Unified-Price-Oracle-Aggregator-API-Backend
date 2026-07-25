@@ -43,6 +43,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@pact-foundation/pact": "^12.5.0",
     "@eslint/js": "^10.0.1",
     "@testcontainers/postgresql": "^10.7.0",
     "@testcontainers/redis": "^10.7.0",
