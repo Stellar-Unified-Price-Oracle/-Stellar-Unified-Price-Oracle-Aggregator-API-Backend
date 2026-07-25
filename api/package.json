@@ -17,7 +17,11 @@
     "archive:run": "tsx scripts/archive.ts run",
     "archive:dry-run": "tsx scripts/archive.ts run --dry-run",
     "archive:restore": "tsx scripts/archive.ts restore",
-    "generate:openapi": "tsx scripts/export-openapi.ts"
+    "generate:openapi": "tsx scripts/export-openapi.ts",
+    "docs:generate": "typedoc --options typedoc.json",
+    "pact:consumer": "jest --testPathPattern=pact/consumer --testTimeout=30000",
+    "pact:provider": "jest --testPathPattern=pact/provider --testTimeout=60000",
+    "pact": "npm run pact:consumer && npm run pact:provider"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.7.0",
@@ -44,6 +48,7 @@
   },
   "devDependencies": {
     "@pact-foundation/pact": "^12.5.0",
+    "typedoc": "^0.27.0",
     "@eslint/js": "^10.0.1",
     "@testcontainers/postgresql": "^10.7.0",
     "@testcontainers/redis": "^10.7.0",
