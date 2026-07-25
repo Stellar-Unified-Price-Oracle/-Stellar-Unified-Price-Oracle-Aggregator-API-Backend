@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: stellar-oracle-api
+  namespace: stellar-oracle
+  labels:
+    app: stellar-oracle-api
+  annotations:
+    # Updated by deploy-blue-green.sh — do not edit manually
+    deployment/active-slot: blue
+spec:
+  type: ClusterIP
+  selector:
+    app: stellar-oracle-api
+    # deploy-blue-green.sh patches this value between "blue" and "green"
+    slot: blue
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      protocol: TCP
+    - name: metrics
+      port: 3001
+      targetPort: 3001
+      protocol: TCP
