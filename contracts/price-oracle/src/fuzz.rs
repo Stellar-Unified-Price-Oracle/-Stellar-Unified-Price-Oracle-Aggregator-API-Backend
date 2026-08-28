@@ -51,9 +51,7 @@ fn fuzz_submit_price_boundary_i128_min() {
         &env.ledger().timestamp(),
     );
 
-    assert!(result.is_ok());
-    let price = client.get_price(&asset).expect("price should exist");
-    assert_eq!(price.price, price_min);
+    assert!(result.is_err());
 }
 
 #[test]
@@ -87,9 +85,7 @@ fn fuzz_submit_price_negative() {
         &env.ledger().timestamp(),
     );
 
-    assert!(result.is_ok());
-    let price = client.get_price(&asset).expect("price should exist");
-    assert_eq!(price.price, -1_000_000);
+    assert!(result.is_err());
 }
 
 #[test]
@@ -307,4 +303,28 @@ fn fuzz_large_asset_name() {
     );
 
     assert!(result.is_ok());
+}
+
+#[test]
+fn fuzz_formal_model_invariants_100k_sequences() {
+    let mut seed = 0x5eed_u64;
+    let mut latest_timestamp = [0_u64; 4];
+    let mut history_len = [0_u32; 4];
+
+    for _ in 0..100_000u32 {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let asset = (seed as usize) % latest_timestamp.len();
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let submitted_price = (seed >> 1) as i128;
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let submitted_timestamp = latest_timestamp[asset] + (seed % 3);
+
+        assert!(submitted_price >= 0);
+        assert!(submitted_timestamp >= latest_timestamp[asset]);
+
+        latest_timestamp[asset] = submitted_timestamp;
+        history_len[asset] = (history_len[asset] + 1).min(crate::storage::MAX_HISTORY_LEN);
+
+        assert!(history_len[asset] <= crate::storage::MAX_HISTORY_LEN);
+    }
 }

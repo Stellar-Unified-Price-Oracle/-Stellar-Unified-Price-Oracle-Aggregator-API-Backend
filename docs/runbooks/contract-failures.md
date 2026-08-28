@@ -63,6 +63,53 @@ kubectl logs -l app=stellar-aggregator | grep "High gas usage"
 - **Cause**: Soroban RPC node is down or unreachable
 - **Action**: Check `SOROBAN_RPC_URL` env var. Switch to a backup RPC endpoint if available.
 
+### Contract paused (`ContractPaused`, error code 29)
+
+- **Cause**: An emergency pause proposal (issue #379) was approved and
+  executed via multi-sig, halting `submit_price` and `submit_batch` in every
+  region. Reads (`get_price`, `get_price_history`) keep serving cached data.
+- **Action**: This is expected during a declared incident freeze — do not
+  treat it as an aggregator bug. Confirm intent with the on-call lead, then
+  follow the pause/unpause drill below.
+
+## Emergency pause / unpause drill (issue #379)
+
+The pause flag lives on the oracle contract itself (`is_paused` / the
+`Pause`/`Unpause` multi-sig `ProposalAction`s in `contract.rs`), not in an
+off-chain service, so it is inherently multi-region-consistent: every
+region's aggregator reads the same on-chain flag on its normal poll cycle
+and skips submission the moment it flips, with no separate coordination bus
+to keep in sync.
+
+**To pause (freeze submission across all regions):**
+
+```bash
+# 1. A signer creates the pause proposal
+soroban contract invoke --id <CONTRACT_ID> --source <SIGNER_KEY> \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  -- create_proposal --proposer <SIGNER_ADDRESS> --action '{"Pause":{}}'
+
+# 2. Remaining signers approve until the multi-sig threshold is met
+soroban contract invoke --id <CONTRACT_ID> --source <SIGNER_KEY_2> \
+  ... -- approve_proposal --approver <SIGNER_ADDRESS_2> --proposal_id <ID>
+
+# 3. Execute once threshold is met
+soroban contract invoke --id <CONTRACT_ID> --source <SIGNER_KEY> \
+  ... -- execute_proposal --proposal_id <ID>
+
+# 4. Verify — every region should reject submissions within one poll cycle
+soroban contract invoke --id <CONTRACT_ID> ... -- is_paused
+```
+
+**To unpause:** repeat the same create/approve/execute flow with
+`{"Unpause":{}}` as the action.
+
+**Drill cadence:** exercise this end-to-end on testnet at least once per
+quarter, timing how long it takes every region's aggregator logs to show
+submissions being skipped after `execute_proposal` — that duration should
+not exceed one aggregator poll interval (`POLLING_INTERVAL_MS`).
+
 ## Recovery Verification
 
 ```bash

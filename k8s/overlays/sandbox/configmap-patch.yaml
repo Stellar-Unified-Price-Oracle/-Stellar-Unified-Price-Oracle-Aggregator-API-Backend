@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stellar-oracle-config
+data:
+  LOG_LEVEL: debug
+  SANDBOX_ENABLED: "true"
+  AGGREGATOR_URL: http://aggregator.stellar-oracle-sandbox.svc.cluster.local:4000
+  DATABASE_URL: ""
+  USE_TIMESCALEDB: "false"
+  WATCHED_ASSETS: XLM,USDC,BTC,ETH,USDT
+  API_PORT: "3000"
+  WS_PORT: "3001"
+  RATE_LIMIT_MAX: "300"
+  CACHE_TTL_MS: "1000"

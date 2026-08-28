@@ -1,0 +1,16 @@
+# Code owners route review requests for changes in each area.
+# See docs/GOVERNANCE.md for the branch protection rules that enforce this.
+
+# Default owners for anything not matched below
+*                       @knytcomics-ui
+
+# Soroban contract changes
+/contracts/             @knytcomics-ui
+
+# API service changes
+/api/                   @knytcomics-ui
+
+# Infrastructure / deployment changes
+/infrastructure/        @knytcomics-ui
+/k8s/                   @knytcomics-ui
+/.github/workflows/     @knytcomics-ui

@@ -23,11 +23,38 @@ A Soroban-based price oracle aggregator that pulls from **Chainlink**, **Redston
 
 | Component | Tech | Description |
 |-----------|------|-------------|
-| **Soroban Contract** | Rust | On-chain price storage, admin auth, multi-source submissions, historical queries |
-| **Aggregator** | TypeScript/Node | Polls 4 sources every 30s, computes median, pushes to contract, tracks source health |
-| **REST API** | Express | `GET /prices`, `/prices/:asset`, `/history/:asset`, `/sources`, `/health` |
+| **Soroban Contract** (`contracts/price-oracle/`) | Rust | On-chain price storage, admin auth, multi-source submissions, historical queries, multisig governance |
+| **Aggregator** (`services/aggregator/`) | TypeScript/Node | Polls Chainlink, Redstone, Band, and Reflector every 30s, computes the median, pushes results to the Soroban contract, and tracks per-source health |
+| **API** (`api/`) | Express | REST + WebSocket gateway — `GET /prices`, `/prices/:asset`, `/history/:asset`, `/sources`, `/health`, plus authentication, rate limiting, and Prometheus metrics |
 | **WebSocket** | ws | Real-time price streams with per-asset subscription |
-| **Deployment** | Docker | docker-compose, Dockerfiles for all services |
+| **Deployment** | Docker / Kubernetes | `docker-compose.yml` for local/dev; `k8s/` manifests (base + overlays, blue-green, HPA, Istio) for cluster deployments; Terraform under `infrastructure/` for cloud resources |
+
+## Data Flow
+
+1. The **Aggregator** polls each configured oracle source (Chainlink, Redstone, Band, Reflector) on a fixed interval.
+2. Prices are normalized to a common decimal format, and a median is computed across healthy sources.
+3. The aggregated price is submitted on-chain via `submit_price` on the **Soroban Contract**, which persists it and exposes it to on-chain consumers.
+4. The **API** reads current and historical prices (from its own store, kept in sync with the aggregator) and serves them over REST, and pushes live updates to subscribed clients over **WebSocket**.
+5. Both services emit structured logs (Winston) and Prometheus metrics, scraped for the dashboards under `monitoring/`.
+
+## Deployment Topology
+
+- **Local development**: `make dev-aggregator` and `make dev-api` run each service directly against `.env` config.
+- **Docker Compose**: `docker compose up -d` runs the aggregator, API, and their dependencies (Postgres, etc.) as containers on one host — see `docker-compose.yml` and `DEPLOY.md`.
+- **Kubernetes**: `k8s/base` defines the core Deployments/Services; `k8s/overlays` layers environment-specific config, with `k8s/blue-green` and `k8s/istio` supporting zero-downtime rollouts and traffic shaping, and `k8s/hpa.yaml` / `k8s/custom-metrics-hpa.yaml` handling autoscaling.
+- **Multi-region**: see `docs/multi-region.md` and `docs/active-active-multi-region.md` for cross-region topology.
+- **On-chain**: the Soroban contract is deployed independently to Stellar testnet/mainnet via `scripts/deploy-soroban.js`.
+
+## Documentation
+
+- [`docs/index.md`](docs/index.md) — documentation home, architecture overview, and links to ADRs, runbooks, and the API reference
+- [`DEPLOY.md`](DEPLOY.md) — step-by-step deploy guide (local, Docker, Soroban contract)
+- [`INTEGRATION_TESTS.md`](INTEGRATION_TESTS.md) — integration test setup and execution
+- [`api/docs/API.md`](api/docs/API.md) — full REST + WebSocket API reference: auth, rate limiting, error codes, request/response examples
+- [`api/docs/`](api/docs) — other API-specific docs: migrations, tracing, security, deprecation policy, TimescaleDB
+- [`docs/adr/`](docs/adr) — Architecture Decision Records
+- [`docs/runbooks/`](docs/runbooks) — operational runbooks
+- Swagger UI at `/api/v1/docs` (generated from `api/openapi.json`) — full REST API reference with request/response examples
 
 ## Quick Start
 

@@ -48,6 +48,8 @@ services:
     depends_on:
       timescaledb:
         condition: service_healthy
+      vault:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4002/health"]
       interval: 30s
@@ -66,6 +68,8 @@ services:
     environment:
       TRACING_ENABLED: "true"
       JAEGER_ENDPOINT: http://jaeger:14268/api/traces
+      VAULT_ADDR: "http://vault:8200"
+      VAULT_TOKEN: "dev-root-super-secret-token"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -77,19 +81,14 @@ services:
         condition: service_healthy
       jaeger:
         condition: service_started
+      vault:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/v1/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # --- PASTE THE VAULT CONTAINER INTEGRATION HERE ---
   vault:
     image: hashicorp/vault:1.15.2
     container_name: oracle_vault
@@ -106,6 +105,32 @@ healthcheck:
     networks:
       - default
     command: server -dev
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  vault-init:
+    image: hashicorp/vault:1.15.2
+    container_name: oracle_vault_init
+    environment:
+      VAULT_ADDR: "http://vault:8200"
+      VAULT_TOKEN: "dev-root-super-secret-token"
+    networks:
+      - default
+    depends_on:
+      vault:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "Waiting for Vault to be ready..."
+        sleep 2
+        vault secrets enable -path=secret kv-v2 2>/dev/null || true
+        echo "Vault KV v2 secrets engine enabled at secret/"
+    restart: "no"
 
 volumes:
   timescale-data:

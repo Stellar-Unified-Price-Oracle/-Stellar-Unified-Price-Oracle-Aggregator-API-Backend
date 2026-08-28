@@ -1,0 +1,9 @@
+{
+  "title": "Rate Limiting",
+  "panels": [
+    { "title": "Decisions by layer", "query": "sum by(layer,result) (rate(rate_limit_decisions_total[5m]))" },
+    { "title": "Redis latency p99", "query": "histogram_quantile(0.99, sum(rate(rate_limit_redis_latency_seconds_bucket[5m])) by (le))" },
+    { "title": "Counter size", "query": "rate_limit_counter_size" }
+  ]
+}
+

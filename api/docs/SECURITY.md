@@ -60,6 +60,9 @@ Controls:
 - **CSRF tokens (API)** — when `WS_CSRF_SECRET` is set, clients must obtain a
   short-lived token from `GET /api/v1/ws-token` and present it as `?token=<token>`
   on the WebSocket URL. Tokens are HMAC-signed and time-bound.
+- **HMAC signing (API)** — when `WS_HMAC_SECRET` is set, clients must sign the
+  upgrade URL with `?ts=<epoch_ms>&nonce=<unique-id>&sig=<hex-hmac>`.
+  Verification runs before the WebSocket upgrade is accepted.
 - **Logging** — every rejected upgrade is logged with the client IP, origin, and
   reason.
 
@@ -72,6 +75,7 @@ WS_RATE_LIMIT_MAX=20
 WS_RATE_LIMIT_WINDOW_MS=60000
 WS_CSRF_SECRET=<random-secret>     # enables CSRF tokens when set
 WS_CSRF_TTL_MS=300000
+WS_HMAC_SECRET=<random-secret>     # enables signed WS upgrades when set
 ```
 
 Client flow with CSRF enabled:
@@ -80,6 +84,25 @@ Client flow with CSRF enabled:
 const { data } = await fetch('/api/v1/ws-token').then((r) => r.json());
 const ws = new WebSocket(`wss://host:3001/?token=${data.token}`);
 ```
+
+Client flow with HMAC enabled:
+
+```js
+import crypto from 'node:crypto';
+
+const ts = Date.now();
+const nonce = crypto.randomUUID();
+const sig = crypto
+  .createHmac('sha256', process.env.WS_HMAC_SECRET)
+  .update(`${ts}.${nonce}.`)
+  .digest('hex');
+
+const ws = new WebSocket(`wss://host:3001/?ts=${ts}&nonce=${nonce}&sig=${sig}`);
+```
+
+The timestamp must be within 30 seconds of server time. Nonces are single-use
+inside that window to reject replayed upgrade URLs. If CSRF and HMAC are both
+enabled, include `token`, `ts`, `nonce`, and `sig` in the same query string.
 
 ---
 
@@ -115,9 +138,12 @@ data encrypted by one decrypts in the other.
    # -> enc:v1:<keyId>:<iv>:<tag>:<ciphertext>
    ```
 
-4. Store the `enc:` payload in `.env` (works for `ADMIN_SECRET_KEY`,
-   `CHAINLINK_API_KEY`, `DATABASE_URL`). The services decrypt it automatically at
-   startup. Plaintext values still work, so migration can be incremental.
+4. Store the `enc:` payload in `.env`. Sensitive values such as
+   `ADMIN_SECRET_KEY`, `ADMIN_API_KEY`, `API_KEYS`, `DATABASE_URL`,
+   `DATABASE_REPLICA_URLS`, `REDIS_URL`, WebSocket secrets, audit secrets,
+   backup encryption keys, oracle API keys, and alert/webhook secrets are
+   decrypted automatically at startup. Plaintext values still work, so migration
+   can be incremental.
 
 ### Encrypting historical data
 

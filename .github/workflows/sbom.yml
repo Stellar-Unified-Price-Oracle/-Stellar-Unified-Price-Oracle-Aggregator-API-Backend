@@ -1,0 +1,49 @@
+name: SBOM
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  generate-sbom:
+    name: Generate and attach SBOMs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate CycloneDX SBOM — API
+        run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom-api.cdx.json api/package.json
+
+      - name: Generate CycloneDX SBOM — Aggregator
+        run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom-aggregator.cdx.json services/aggregator/package.json
+
+      - name: Generate CycloneDX SBOM — packages/*
+        run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom-packages.cdx.json package.json
+
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
+
+      - name: Generate CycloneDX SBOM — price-oracle contract
+        working-directory: contracts/price-oracle
+        run: cargo cyclonedx --format json --override-filename ../../sbom-contract.cdx
+
+      - name: Attach SBOMs to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            sbom-api.cdx.json \
+            sbom-aggregator.cdx.json \
+            sbom-packages.cdx.json \
+            sbom-contract.cdx.json \
+            --clobber

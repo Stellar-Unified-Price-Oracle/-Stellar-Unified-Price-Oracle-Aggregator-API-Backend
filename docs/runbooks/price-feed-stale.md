@@ -8,6 +8,15 @@
 - `PriceFeedStale` alert fires for one or more assets
 - `last_price_timestamp_seconds` gauge is >120 seconds behind `time()`
 - `/api/v1/prices` returns entries with `stale: true`
+- **On-chain heartbeat (issue #382):** `onchain_price_staleness_seconds{asset}`
+  exceeds `STALENESS_THRESHOLD_MS` — this reads the timestamp stored on the
+  oracle contract directly, so it can fire even when the aggregator process
+  itself looks healthy and `last_price_timestamp_seconds` (the aggregator's
+  own cache) looks fresh. That combination means the aggregator is polling
+  sources fine but its submissions aren't landing on-chain — treat it as a
+  [contract failure](contract-failures.md), not a source outage. Check the
+  aggregator's `/health` status page for the `onChainHeartbeat` field per
+  asset.
 
 ## Diagnosis
 

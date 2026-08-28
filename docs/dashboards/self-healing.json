@@ -1,0 +1,10 @@
+{
+  "title": "Self-Healing",
+  "panels": [
+    { "title": "MTTD", "query": "self_healing_mttd_seconds" },
+    { "title": "MTTDx", "query": "self_healing_mttdx_seconds" },
+    { "title": "MTTR", "query": "self_healing_mttr_seconds" },
+    { "title": "Success Rate", "query": "self_healing_success_rate" }
+  ]
+}
+

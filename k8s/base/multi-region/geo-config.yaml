@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stellar-oracle-global-config
+data:
+  MULTI_REGION_ENABLED: "true"
+  ACTIVE_ACTIVE_REGIONS: us-east-1,eu-west-1,ap-southeast-1
+  REGION_ROLE: active
+  REPLICATION_MODE: crdt-lww
+  REPLICATION_BUS: kafka
+  REPLICATION_LATENCY_P99_TARGET_MS: "5000"
+  PRICE_DRIFT_ALERT_THRESHOLD_BPS: "10"
+  LOCAL_FIRST_READS: "true"
+  CONSISTENCY_MODEL: eventual-bounded-staleness
+  FAILOVER_GRACE_PERIOD_MS: "100"
+  FAILOVER_AUTOMATION_ENABLED: "true"
+  GLOBAL_LOAD_BALANCER_ENABLED: "true"
+  REGION_QUARANTINE_ENABLED: "true"

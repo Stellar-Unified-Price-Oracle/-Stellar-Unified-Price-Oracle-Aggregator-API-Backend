@@ -16,6 +16,7 @@ import { sanitizeInputs, cspHeaders } from './middleware/sanitization';
 import { httpsRedirect, hstsHeaders } from './middleware/https';
 import { compressionMiddleware } from './middleware/compression';
 import { usageTrackingMiddleware } from './middleware/usage-tracking';
+import { complianceAuditMiddleware } from './governance/compliance';
 import { PriceWebSocketServer } from './websocket/server';
 import { swaggerSpec } from './services/openapi';
 import v1Routes, { initializeCache } from './routes/v1';
@@ -32,9 +33,16 @@ import { setDatabase } from './services/price-store';
 import { initializeTracing } from './services/tracing';
 import adminRoutes from './routes/admin';
 import statusRoutes from './routes/status';
+import platformRoutes from './platform/routes';
+import sandboxRoutes, { initializeSandboxCache } from './routes/sandbox';
+import featureFlagRoutes from './routes/featureFlags';
+import eventRoutes from './routes/events';
+import governanceRoutes from './governance/proposal-routes';
 import { uptimeTracker } from './services/uptime-tracker';
 import { AppError } from './errors/app-error';
 import { ErrorCode } from './errors/catalog';
+import { getVaultClient } from '@stellar-oracle/vault-client';
+import { apiKeyManager } from './governance/api-key-manager';
 
 // Initialize distributed tracing
 initializeTracing(config.tracing);
@@ -49,6 +57,30 @@ let backupService: BackupService | null = null;
 let drStatusService: DrStatusService | null = null;
 
 async function initializeApp(): Promise<void> {
+  // Initialize Vault for API key and webhook secret management
+  try {
+    const vault = getVaultClient();
+    await vault.initialize();
+
+    // Load API keys from Vault; seed from environment if Vault is empty
+    const vaultKeys = await vault.loadApiKeys();
+    if (vaultKeys && Object.keys(vaultKeys).length > 0) {
+      logger.info(`Loaded ${Object.keys(vaultKeys).length} API keys from Vault`);
+      apiKeyManager.loadKeysFromVault(vaultKeys);
+    } else {
+      // Keys loaded from env in the ApiKeyManager constructor already.
+      // If any keys exist in memory, back them up to Vault.
+      const memKeys = apiKeyManager.exportKeysForVault();
+      if (Object.keys(memKeys).length > 0) {
+        await vault.saveApiKeys(memKeys);
+        logger.info(`Seeded ${Object.keys(memKeys).length} API keys into Vault`);
+      }
+    }
+    logger.info('Vault secrets engine initialized');
+  } catch (err) {
+    logger.warn('Vault not available — using in-memory API key store fallback', err);
+  }
+
   if (config.databaseUrl) {
     try {
       db = new DatabaseClient(config.databaseUrl, logger);
@@ -115,6 +147,7 @@ const cache = new HybridCache<any>(logger, {
 
 initializeCache(cache);
 initializeCacheV2(cache);
+initializeSandboxCache(cache);
 
 app.use(helmet());
 app.use(cors(corsManager.getCorsOptions()));
@@ -131,6 +164,7 @@ app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(metricsMiddleware);
 app.use(usageTrackingMiddleware);
+app.use(complianceAuditMiddleware);
 app.use(
   rateLimit({
     windowMs: config.rateLimitWindowMs,
@@ -164,15 +198,28 @@ app.use('/api/v2/health', optionalAuthMiddleware);
 
 // Routes — v1 tagged as deprecated, v2 is current
 app.use('/api/v1', v1DeprecationHeaders, v1Routes);
+app.use('/api/v1', v1DeprecationHeaders, platformRoutes);
+app.use('/api/v1/sandbox', sandboxRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/governance', governanceRoutes);
 app.use('/api/v2', v2Headers, v2Routes);
+
+// Feature flags — #117
+app.use('/api/feature-flags', featureFlagRoutes);
+
+// Event store read-side — #118
+app.use('/api/events', eventRoutes);
 
 // Documentation and metrics
 app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.get('/metrics', metricsHandler);
 
+// Governance dashboard
+app.use('/portal/governance', express.static(path.join(__dirname, '..', 'public', 'governance')));
+
 // Developer portal: API explorer, key management, usage/billing UI
 app.use('/portal', express.static(path.join(__dirname, '..', 'public', 'portal')));
+app.use('/docs/marketplace', express.static(path.join(__dirname, '..', '..', 'docs', 'marketplace')));
 
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "entryPointStrategy": "expand",
+  "out": "../docs/api-reference",
+  "name": "Stellar Unified Price Oracle — API Reference",
+  "readme": "../docs/index.md",
+  "tsconfig": "./tsconfig.json",
+  "categorizeByGroup": true,
+  "categoryOrder": ["Services", "Routes", "Middleware", "Errors", "*"],
+  "groupOrder": ["Classes", "Interfaces", "Type Aliases", "Functions", "Variables", "*"],
+  "sort": ["source-order"],
+  "excludeExternals": false,
+  "excludePrivate": false,
+  "excludeProtected": false,
+  "includeVersion": true,
+  "searchInComments": true,
+  "plugin": [],
+  "navigationLinks": {
+    "GitHub": "https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend",
+    "ADRs": "../docs/adr"
+  },
+  "customCss": "",
+  "lightHighlightTheme": "light-plus",
+  "darkHighlightTheme": "dark-plus"
+}

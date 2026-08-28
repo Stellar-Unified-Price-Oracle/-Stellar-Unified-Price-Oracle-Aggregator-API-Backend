@@ -1,0 +1,55 @@
+# custom-metrics-hpa.yaml — HPA driven by requests-per-second via Prometheus Adapter
+# Prerequisite: install prometheus-adapter and configure custom metric
+# "http_requests_per_second" from your Prometheus scrape target.
+#
+# Install adapter:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm install prometheus-adapter prometheus-community/prometheus-adapter \
+#     --namespace monitoring --create-namespace \
+#     -f k8s/prometheus-adapter-values.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: stellar-oracle-api-custom-hpa
+  namespace: stellar-oracle
+  labels:
+    app: stellar-oracle-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: stellar-oracle-api-blue
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    # Scale based on incoming HTTP requests per second per pod
+    - type: Pods
+      pods:
+        metric:
+          name: http_requests_per_second
+        target:
+          type: AverageValue
+          # Scale out when > 500 RPS per pod
+          averageValue: "500"
+    # Also respect CPU as a safety backstop
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 3
+          periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+      selectPolicy: Min

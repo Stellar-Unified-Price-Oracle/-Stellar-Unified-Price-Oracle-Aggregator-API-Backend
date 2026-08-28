@@ -49,6 +49,14 @@ soroban contract invoke \
   -- get_price --asset XLM
 ```
 
+**Upgrades:** deployments are upgraded through the proxy contract
+(`upgrade_wasm` / `upgrade`), never redeployed as a fresh contract ID — see
+[ADR-0003](docs/adr/0003-contract-upgrade-strategy.md) for the chosen
+strategy, the migration path for existing testnet deployments still pointing
+at a bare oracle contract, and the regression test
+(`contracts/price-oracle/src/upgrade_migration_test.rs`) that gates every
+upgrade.
+
 ## 4. Cloud Deployment (Fly.io)
 
 **Prerequisites:** Install `flyctl` from https://fly.io/docs/hands-on/install-flyctl/

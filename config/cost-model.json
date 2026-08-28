@@ -1,0 +1,64 @@
+{
+  "currency": "USD",
+  "hoursPerMonth": 730,
+  "rates": {
+    "cpuPerVcpuHour": 0.04,
+    "memoryPerGibHour": 0.005,
+    "storagePerGibMonth": 0.17
+  },
+  "budget": {
+    "monthly": 30,
+    "warningPercent": 80,
+    "criticalPercent": 100
+  },
+  "services": [
+    {
+      "name": "api",
+      "team": "platform",
+      "baseline": {
+        "replicas": 4,
+        "cpuCoresPerReplica": 0.1,
+        "memoryGibPerReplica": 0.25,
+        "storageGib": 0
+      },
+      "optimized": {
+        "replicas": 4,
+        "cpuCoresPerReplica": 0.05,
+        "memoryGibPerReplica": 0.125,
+        "storageGib": 0
+      }
+    },
+    {
+      "name": "aggregator",
+      "team": "oracle",
+      "baseline": {
+        "replicas": 3,
+        "cpuCoresPerReplica": 0.1,
+        "memoryGibPerReplica": 0.25,
+        "storageGib": 0
+      },
+      "optimized": {
+        "replicas": 3,
+        "cpuCoresPerReplica": 0.075,
+        "memoryGibPerReplica": 0.1875,
+        "storageGib": 0
+      }
+    },
+    {
+      "name": "timescaledb",
+      "team": "data",
+      "baseline": {
+        "replicas": 1,
+        "cpuCoresPerReplica": 0.25,
+        "memoryGibPerReplica": 0.5,
+        "storageGib": 10
+      },
+      "optimized": {
+        "replicas": 1,
+        "cpuCoresPerReplica": 0.2,
+        "memoryGibPerReplica": 0.375,
+        "storageGib": 10
+      }
+    }
+  ]
+}

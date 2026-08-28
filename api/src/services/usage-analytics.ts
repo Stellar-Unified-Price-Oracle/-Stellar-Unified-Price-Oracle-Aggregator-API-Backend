@@ -34,7 +34,7 @@ function topEntries(map: Map<string, number>, n = 10): Array<{ key: string; coun
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_HOURLY_BUCKETS = 24 * 90; // 90 days of hourly buckets
 
-class UsageAnalytics {
+export class UsageAnalytics {
   // hourly bucket key (ms since epoch, floored to hour) -> Bucket
   private hourly = new Map<number, Bucket>();
   private events: UsageEvent[] = [];

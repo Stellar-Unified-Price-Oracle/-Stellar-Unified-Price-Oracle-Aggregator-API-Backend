@@ -1,0 +1,59 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: stellar-oracle-sandbox
+
+resources:
+  - namespace.yaml
+  - ../../base
+
+patches:
+  - path: configmap-patch.yaml
+  - target:
+      kind: Deployment
+      name: api-stable
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: SANDBOX_ENABLED
+            value: "true"
+          - name: SANDBOX_RESET_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: sandbox-credentials
+                key: reset-token
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 50m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 128Mi
+  - target:
+      kind: Deployment
+      name: api-canary
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 0
+  - target:
+      kind: Deployment
+      name: aggregator
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: SANDBOX_MODE
+          value: "true"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 75m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 192Mi

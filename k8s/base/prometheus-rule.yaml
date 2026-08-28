@@ -1,0 +1,56 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: stellar-oracle-sla-alerts
+  labels:
+    app: stellar-price-oracle
+    component: aggregator
+spec:
+  groups:
+    - name: stellar-oracle.sla
+      interval: 1m
+      rules:
+        - alert: OracleSourceSlaBreachRateHigh
+          expr: |
+            rate(oracle_source_sla_breaches_total[5m]) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            component: aggregator
+          annotations:
+            summary: Oracle source SLA breach rate is elevated ({{ $labels.source }})
+            description: >
+              Source {{ $labels.source }} has an SLA breach rate of
+              {{ $value | humanize }}/s over the last 5 minutes.
+              The SLA threshold is 5 seconds per request.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/oracle-source-down.md
+
+        - alert: OracleSourceSlaBreachRateCritical
+          expr: |
+            rate(oracle_source_sla_breaches_total[5m]) > 0.2
+          for: 3m
+          labels:
+            severity: critical
+            component: aggregator
+          annotations:
+            summary: Oracle source SLA breach rate is critical ({{ $labels.source }})
+            description: >
+              Source {{ $labels.source }} has a critical SLA breach rate of
+              {{ $value | humanize }}/s over the last 5 minutes.
+              Immediate investigation required.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/oracle-source-down.md
+
+        - alert: OracleSourceUptimeDegraded
+          expr: |
+            last_over_time(oracle_source_uptime_percent{source!=""}[10m]) < 95
+          for: 10m
+          labels:
+            severity: warning
+            component: aggregator
+          annotations:
+            summary: Oracle source {{ $labels.source }} uptime has dropped below 95%
+            description: >
+              Source {{ $labels.source }} has an uptime of
+              {{ $value }}% over the last 10 minutes.
+              Check source health and circuit breaker status.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/oracle-source-down.md

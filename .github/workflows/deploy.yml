@@ -23,9 +23,13 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     outputs:
       api-tag: ${{ steps.tags.outputs.api-sha }}
       aggregator-tag: ${{ steps.tags.outputs.aggregator-sha }}
+      api-digest: ${{ steps.build-api.outputs.digest }}
+      aggregator-digest: ${{ steps.build-aggregator.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +68,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push API image
+        id: build-api
         uses: docker/build-push-action@v6
         with:
           context: api
@@ -77,6 +82,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push Aggregator image
+        id: build-aggregator
         uses: docker/build-push-action@v6
         with:
           context: services/aggregator
@@ -89,10 +95,58 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign API image (keyless)
+        run: cosign sign --yes "${REGISTRY}/${GITHUB_REPOSITORY}/api@${{ steps.build-api.outputs.digest }}"
+
+      - name: Sign Aggregator image (keyless)
+        run: cosign sign --yes "${REGISTRY}/${GITHUB_REPOSITORY}/aggregator@${{ steps.build-aggregator.outputs.digest }}"
+
+      - name: Generate SLSA provenance — API image
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/api
+          subject-digest: ${{ steps.build-api.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate SLSA provenance — Aggregator image
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/aggregator
+          subject-digest: ${{ steps.build-aggregator.outputs.digest }}
+          push-to-registry: true
+
+  verify-images:
+    name: Verify image signatures
+    needs: [build-images]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+      id-token: write
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Reject unsigned API image
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${REGISTRY}/${GITHUB_REPOSITORY}/api@${{ needs.build-images.outputs.api-digest }}"
+
+      - name: Reject unsigned Aggregator image
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${REGISTRY}/${GITHUB_REPOSITORY}/aggregator@${{ needs.build-images.outputs.aggregator-digest }}"
+
   deploy-dev:
     name: Deploy to Dev
     if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
-    needs: [build-images]
+    needs: [build-images, verify-images]
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -119,7 +173,7 @@ jobs:
     if: >
       ( github.ref == 'refs/heads/main' && github.event_name == 'push' ) ||
       ( github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging' )
-    needs: [build-images]
+    needs: [build-images, verify-images]
     runs-on: ubuntu-latest
     environment: staging
     steps:
@@ -144,7 +198,7 @@ jobs:
   deploy-prod:
     name: Deploy to Production
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
-    needs: [build-images]
+    needs: [build-images, verify-images]
     runs-on: ubuntu-latest
     environment: production
     steps:

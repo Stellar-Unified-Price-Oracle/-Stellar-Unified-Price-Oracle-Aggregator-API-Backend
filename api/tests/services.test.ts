@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { LRUCache, HybridCache } from '../src/services/cache';
+import { LRUCache, HybridCache } from '../src/price-serving/cache';
 import {
   AssetQuerySchema,
   HistoryQuerySchema,
-} from '../src/services/validation';
-import { webhookService } from '../src/services/webhook-service';
-import { compressionMiddleware } from '../src/middleware/compression';
+} from '../src/price-serving/validation';
+import { webhookService } from '../src/webhooks/webhook-service';
+import { compressionMiddleware } from '../src/infrastructure/compression';
 import { Request, Response, NextFunction } from 'express';
 
-vi.mock('../src/config', () => ({
+vi.mock('../src/infrastructure/config', () => ({
   config: {
     webhooks: {
       baseDelayMs: 1000,

@@ -1,4 +1,31 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracttype, Address, Bytes, String, Vec};
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PostQuantumScheme {
+    Dilithium,
+    Falcon,
+    Sphincs,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PostQuantumAdminKey {
+    pub scheme: PostQuantumScheme,
+    pub public_key: String,
+    pub fingerprint: String,
+    pub requested_at: u64,
+    pub activates_at: u64,
+    pub revoked_at: Option<u64>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HybridSignature {
+    pub ed25519_signature: String,
+    pub pq_signature: String,
+    pub pq_scheme: PostQuantumScheme,
+}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -31,6 +58,23 @@ pub struct OracleSource {
     pub active: bool,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchPriceEntry {
+    pub asset: String,
+    pub price: i128,
+    pub decimals: u32,
+    pub timestamp: u64,
+    pub source: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MerkleProof {
+    pub leaf_index: u32,
+    pub siblings: Vec<Bytes>,
+}
+
 // Issue #70 — source reputation tracking
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -54,24 +98,120 @@ pub struct MultiSigConfig {
 pub enum ProposalAction {
     AddSource(Address, String),     // (source_address, name)
     RemoveSource(Address),
-    SetTrustedAsset(String, u32),   // (asset, 1=trusted 0=untrusted, bool avoided for XDR compat)
+    SetTrustedAsset(String, bool),  // (asset, trusted)
     TransferAdmin(Address),
     SetDeviationThreshold(u32),     // new threshold in basis points
     ResetReputation(Address),       // source address
     AddSigner(Address),
     RemoveSigner(Address),
     SetThreshold(u32),
+    // Governance-specific actions
+    SetAdmin(Address),
+    AddOracleSource(Address, String),
+    RemoveOracleSource(Address),
+    UpdateGovernanceConfig(GovernanceConfig),
+    // Issue #379 — multi-region aware emergency pause
+    Pause,
+    Unpause,
+}
+
+// ── Governance types ─────────────────────────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct GovernanceConfig {
+    pub token: Address,
+    pub proposal_threshold: i128,
+    pub voting_period: u64,
+    pub timelock_delay: u64,
+    pub quorum: i128,
+    pub guardian: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProposalStatus {
+    Active,
+    Queued,
+    Ready,
+    Executed,
+    Defeated,
+    Cancelled,
 }
 
 #[contracttype]
 #[derive(Clone, Debug)]
-pub struct Proposal {
+pub struct GovernanceProposal {
+    pub id: u32,
+    pub proposer: Address,
+    pub action: ProposalAction,
+    pub description: String,
+    pub votes_for: i128,
+    pub votes_against: i128,
+    pub voting_start: u64,
+    pub voting_end: u64,
+    pub execution_time: u64,
+    pub status: ProposalStatus,
+}
+
+// ── Multi-sig types ──────────────────────────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MultiSigProposal {
     pub id: u32,
     pub action: ProposalAction,
     pub approvals: Vec<Address>,
     pub executed: u32,              // 0 = pending, 1 = executed (bool avoided for XDR compat)
     pub created_at: u64,
     pub proposer: Address,
+}
+
+/// Governance proposal (token-based voting).  Distinct from MultiSigProposal
+/// because the lifecycle includes voting stages, timelock, descriptions, etc.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct GovernanceProposal {
+    pub id: u32,
+    pub proposer: Address,
+    pub action: ProposalAction,
+    pub description: String,
+    pub votes_for: i128,
+    pub votes_against: i128,
+    pub voting_start: u64,
+    pub voting_end: u64,
+    pub execution_time: u64,
+    pub status: ProposalStatus,
+}
+
+/// Lifecycle status of a governance proposal.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProposalStatus {
+    Active,
+    Queued,
+    Ready,
+    Executed,
+    Defeated,
+    Cancelled,
+}
+
+/// On-chain governance configuration — voting parameters and token-gating.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct GovernanceConfig {
+    /// SEP-41 token whose balance determines voting power.
+    pub token: Address,
+    /// Minimum voting period in ledger seconds.
+    pub voting_period: u64,
+    /// Minimum delay between passage and execution (timelock).
+    pub timelock_delay: u64,
+    /// Minimum total votes (for + against) needed for a proposal to pass.
+    pub quorum: i128,
+    /// Minimum token balance required to create a proposal.
+    pub proposal_threshold: i128,
+    /// Guardian address empowered to bypass timelock in emergencies.
+    pub guardian: Address,
 }
 
 #[contracttype]
@@ -94,12 +234,31 @@ pub enum DataKey {
     DeviationThreshold,
     // Issue #70 — reputation
     SourceReputation(Address),
- StakeInfo(Address),
- StakeTreasury,
- SlashHistory(Address, u32),
- SlashCount(Address),
+    BatchNonce,
+    BatchRoot(u64),
+    QueryFee,
+    Whitelist(Address),
+    FeeBalance,
+    StakeInfo(Address),
+    StakeTreasury,
+    SlashHistory(Address, u32),
+    SlashCount(Address),
     // Issue #67 — multi-sig
     MultiSigConfig,
     ProposalCount,
-    Proposal(u32),
+    MultiSigProposal(u32),
+    // Governance
+    GovernanceConfig,
+    GovernanceProposalCount,
+    GovernanceProposal(u32),
+    Vote(u32, Address),
+    PostQuantumAdminKey(String),
+    PostQuantumKeyLog(u32),
+    PostQuantumKeyLogCount,
+    // Issue #375 — proxy upgrade timelock + canary
+    PendingUpgradeHash,
+    PendingUpgradeEta,
+    UpgradeApprovals,
+    CanaryImplementation,
+    CanaryTrafficShareBps,
 }

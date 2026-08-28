@@ -8,6 +8,7 @@ export default defineConfig({
     hookTimeout: 120000,
     testTimeout: 60000,
     setupFiles: [],
+    include: ['tests/integration.test.ts', 'tests/integration-end-to-end.test.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

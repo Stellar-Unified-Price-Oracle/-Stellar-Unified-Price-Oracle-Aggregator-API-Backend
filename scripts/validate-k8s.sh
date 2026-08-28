@@ -21,6 +21,8 @@ kustomize_build() {
 
 echo "==> Building kustomize overlays"
 kustomize_build "${K8S_DIR}/overlays/staging" "${STAGING_OUT}"
+kustomize_build "${K8S_DIR}/overlays/prod-us-east-1" "/tmp/stellar-oracle-prod-us-east-1.yaml"
+kustomize_build "${K8S_DIR}/overlays/prod-eu-west-1" "/tmp/stellar-oracle-prod-eu-west-1.yaml"
 kustomize_build "${K8S_DIR}/istio" "${ISTIO_OUT}"
 
 echo "==> Validating YAML syntax"
@@ -32,7 +34,7 @@ except ImportError:
     print("PyYAML not installed; skipping YAML parse check")
     sys.exit(0)
 
-for path in ["/tmp/stellar-oracle-staging.yaml", "/tmp/stellar-oracle-istio.yaml"]:
+for path in ["/tmp/stellar-oracle-staging.yaml", "/tmp/stellar-oracle-prod-us-east-1.yaml", "/tmp/stellar-oracle-prod-eu-west-1.yaml", "/tmp/stellar-oracle-istio.yaml"]:
     docs = list(yaml.safe_load_all(pathlib.Path(path).read_text()))
     if not docs:
         raise SystemExit(f"No documents in {path}")
@@ -47,10 +49,14 @@ if command -v kubeconform >/dev/null 2>&1; then
     -ignore-missing-schemas
   )
   kubeconform "${SCHEMA_FLAGS[@]}" "${STAGING_OUT}"
+  kubeconform "${SCHEMA_FLAGS[@]}" "/tmp/stellar-oracle-prod-us-east-1.yaml"
+  kubeconform "${SCHEMA_FLAGS[@]}" "/tmp/stellar-oracle-prod-eu-west-1.yaml"
   kubeconform "${SCHEMA_FLAGS[@]}" "${ISTIO_OUT}"
 elif command -v kubectl >/dev/null 2>&1; then
   echo "==> Running kubectl dry-run"
   kubectl apply --dry-run=client -f "${STAGING_OUT}"
+  kubectl apply --dry-run=client -f "/tmp/stellar-oracle-prod-us-east-1.yaml"
+  kubectl apply --dry-run=client -f "/tmp/stellar-oracle-prod-eu-west-1.yaml"
   kubectl apply --dry-run=client -f "${ISTIO_OUT}"
 else
   echo "kubeconform/kubectl not available; YAML syntax validation passed."

@@ -5,3 +5,6 @@ metadata:
   labels:
     app.kubernetes.io/part-of: stellar-oracle
     istio-injection: enabled
+    cost.stellar.org/environment: production
+    cost.stellar.org/team: platform
+    cost.stellar.org/cost-center: stellar-oracle

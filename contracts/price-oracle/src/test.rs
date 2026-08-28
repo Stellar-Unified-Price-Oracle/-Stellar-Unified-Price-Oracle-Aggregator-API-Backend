@@ -9,6 +9,7 @@ mod tests_impl {
 
     pub fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register_contract(None, PriceOracleContract);
     let client = PriceOracleContractClient::new(&env, &contract_id);
 
@@ -21,13 +22,7 @@ mod tests_impl {
     (env, client, admin, oracle)
 }
 
-// Note: These tests require proper Soroban SDK test environment setup with ledger data
-// for authorization to work correctly. The tests are logically correct but require
-// deeper integration with Soroban's test harness.
-// See FUZZ_TESTING.md for details on test coverage.
-
 #[test]
-#[ignore]
 fn test_initialize_and_submit() {
     let (env, client, _admin, oracle) = setup();
 
@@ -47,7 +42,20 @@ fn test_initialize_and_submit() {
 }
 
 #[test]
-#[ignore]
+fn test_initialize_is_write_once() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, PriceOracleContract);
+    let client = PriceOracleContractClient::new(&env, &contract_id);
+
+    let admin = <Address as TestAddress>::generate(&env);
+    let other_admin = <Address as TestAddress>::generate(&env);
+
+    assert!(client.try_initialize(&admin).is_ok());
+    assert!(client.try_initialize(&other_admin).is_err());
+}
+
+#[test]
 fn test_unauthorized_source_rejected() {
     let (env, client, _admin, _oracle) = setup();
     let unauthorized = <Address as TestAddress>::generate(&env);
@@ -64,7 +72,6 @@ fn test_unauthorized_source_rejected() {
 }
 
 #[test]
-#[ignore]
 fn test_price_history_returns_correct_window() {
     let (env, client, _admin, oracle) = setup();
     let asset = String::from_str(&env, "BTC");
@@ -82,7 +89,6 @@ fn test_price_history_returns_correct_window() {
 }
 
 #[test]
-#[ignore]
 fn test_trusted_asset_flag() {
     let (env, client, admin, oracle) = setup();
 
@@ -95,7 +101,6 @@ fn test_trusted_asset_flag() {
 }
 
 #[test]
-#[ignore]
 fn test_remove_oracle_source() {
     let (env, client, admin, oracle) = setup();
 
@@ -113,7 +118,6 @@ fn test_remove_oracle_source() {
 }
 
 #[test]
-#[ignore]
 fn test_multiple_assets_tracked() {
     let (env, client, _admin, oracle) = setup();
     let assets = ["XLM", "BTC", "ETH", "USDC", "USDT"];
@@ -128,7 +132,6 @@ fn test_multiple_assets_tracked() {
 }
 
 #[test]
-#[ignore]
 fn test_price_submission_idempotent() {
     let (env, client, _admin, oracle) = setup();
     let asset = String::from_str(&env, "XLM");
@@ -141,7 +144,6 @@ fn test_price_submission_idempotent() {
 }
 
 #[test]
-#[ignore]
 fn test_query_nonexistent_asset() {
     let (env, client, _admin, _oracle) = setup();
 
@@ -151,9 +153,9 @@ fn test_query_nonexistent_asset() {
 }
 
 #[test]
-#[ignore]
 fn test_admin_cannot_be_replaced_by_non_admin() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register_contract(None, PriceOracleContract);
     let client = PriceOracleContractClient::new(&env, &contract_id);
 
@@ -172,7 +174,6 @@ fn test_admin_cannot_be_replaced_by_non_admin() {
 }
 
 #[test]
-#[ignore]
 fn test_invalid_decimals_handled() {
     let (env, client, _admin, oracle) = setup();
     let asset = String::from_str(&env, "XLM");
@@ -184,7 +185,6 @@ fn test_invalid_decimals_handled() {
 }
 
 #[test]
-#[ignore]
 fn test_oracle_source_management() {
     let (env, client, admin, oracle1) = setup();
     let oracle2 = <Address as TestAddress>::generate(&env);
@@ -208,9 +208,9 @@ fn test_oracle_source_management() {
 }
 
 #[test]
-#[ignore]
 fn test_source_cannot_self_authorize() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register_contract(None, PriceOracleContract);
     let client = PriceOracleContractClient::new(&env, &contract_id);
 
@@ -228,7 +228,6 @@ fn test_source_cannot_self_authorize() {
 }
 
 #[test]
-#[ignore]
 fn test_empty_history_returns_empty() {
     let (env, client, _admin, _oracle) = setup();
     let asset = String::from_str(&env, "XLM");

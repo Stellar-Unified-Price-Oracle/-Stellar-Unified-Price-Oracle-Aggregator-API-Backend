@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Governance Dashboard — Stellar Price Oracle</title>
+  <style>
+    :root {
+      --bg: #0f0f14;
+      --surface: #1a1a24;
+      --surface-hover: #242438;
+      --border: #2a2a3c;
+      --text: #e0e0f0;
+      --text-muted: #8888a4;
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.25);
+      --green: #22c55e;
+      --red: #ef4444;
+      --yellow: #eab308;
+      --blue: #3b82f6;
+      --gray: #6b7280;
+      --radius: 10px;
+      --radius-sm: 6px;
+      --transition: 180ms ease;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 1rem;
+      margin-bottom: 2.5rem;
+      padding-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h1 {
+      font-size: 1.75rem; font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), #a78bfa);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+
+    .header-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+
+    .btn {
+      padding: 0.55rem 1.1rem; border-radius: var(--radius-sm);
+      font-size: 0.875rem; font-weight: 600; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text); cursor: pointer;
+      transition: all var(--transition);
+    }
+    .btn:hover { background: var(--surface-hover); border-color: var(--accent); }
+    .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn-primary:hover { box-shadow: 0 0 18px var(--accent-glow); }
+    .btn-danger { border-color: var(--red); color: var(--red); }
+    .btn-danger:hover { background: rgba(239,68,68,0.12); }
+    .btn-sm { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
+
+    /* Cards */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.25rem; margin-bottom: 2.5rem; }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.25rem 1.5rem;
+      transition: border-color var(--transition), transform var(--transition);
+    }
+    .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .card-label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.35rem; }
+    .card-value { font-size: 1.75rem; font-weight: 700; }
+    .card-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+    .tab {
+      padding: 0.7rem 1.4rem; font-size: 0.9rem; font-weight: 600;
+      background: none; border: none; color: var(--text-muted); cursor: pointer;
+      border-bottom: 2px solid transparent; transition: all var(--transition);
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Proposal list */
+    .proposal-list { display: flex; flex-direction: column; gap: 0.75rem; }
+    .proposal-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.15rem 1.4rem;
+      transition: border-color var(--transition);
+      cursor: pointer;
+    }
+    .proposal-card:hover { border-color: var(--accent); }
+
+    .proposal-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+    .proposal-id { font-weight: 700; font-size: 0.95rem; }
+    .proposal-action { font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem; }
+    .proposal-desc { font-size: 0.85rem; margin-top: 0.3rem; }
+
+    .proposal-meta {
+      display: flex; gap: 1.2rem; flex-wrap: wrap; margin-top: 0.7rem;
+      font-size: 0.8rem; color: var(--text-muted);
+    }
+    .proposal-meta span { display: flex; align-items: center; gap: 0.3rem; }
+
+    .badge {
+      display: inline-flex; align-items: center; padding: 0.2rem 0.6rem;
+      border-radius: 99px; font-size: 0.75rem; font-weight: 600; white-space: nowrap;
+    }
+    .badge-Active, .badge-Voting { background: rgba(59,130,246,0.15); color: var(--blue); }
+    .badge-Queued { background: rgba(234,179,8,0.15); color: var(--yellow); }
+    .badge-Ready, .badge-Executed { background: rgba(34,197,94,0.15); color: var(--green); }
+    .badge-Defeated { background: rgba(239,68,68,0.15); color: var(--red); }
+    .badge-Cancelled { background: rgba(107,114,128,0.15); color: var(--gray); }
+
+    .proposal-approvals {
+      display: flex; gap: 0.4rem; margin-top: 0.5rem; flex-wrap: wrap;
+    }
+    .approval-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green);
+    }
+    .approval-dot.pending { background: var(--border); }
+
+    .vote-bar {
+      margin-top: 0.6rem; height: 6px; border-radius: 99px; background: var(--border);
+      overflow: hidden; display: flex;
+    }
+    .vote-bar-for { background: var(--green); transition: width 0.5s ease; }
+    .vote-bar-against { background: var(--red); transition: width 0.5s ease; }
+
+    /* Modal */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55); z-index: 100;
+      justify-content: center; align-items: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 2rem;
+      max-width: 550px; width: 90%; max-height: 85vh; overflow-y: auto;
+    }
+    .modal h2 { margin-bottom: 1.25rem; font-size: 1.25rem; }
+    .modal label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.3rem; margin-top: 0.8rem; }
+    .modal input, .modal select, .modal textarea {
+      width: 100%; padding: 0.6rem 0.75rem; border-radius: var(--radius-sm);
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+      font-size: 0.9rem; font-family: inherit;
+    }
+    .modal textarea { min-height: 80px; resize: vertical; }
+    .modal input:focus, .modal select:focus, .modal textarea:focus {
+      outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .modal-actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; justify-content: flex-end; }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 1.5rem; right: 1.5rem;
+      padding: 0.8rem 1.25rem; border-radius: var(--radius-sm);
+      font-size: 0.9rem; font-weight: 600; z-index: 200;
+      animation: slideIn 0.3s ease;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+    .toast-success { background: var(--green); color: #fff; }
+    .toast-error { background: var(--red); color: #fff; }
+    @keyframes slideIn { from { transform: translateX(40px); opacity: 0; } }
+
+    .empty-state { text-align: center; padding: 3rem 1rem; color: var(--text-muted); }
+    .empty-state p { margin-bottom: 1rem; }
+
+    .loading { text-align: center; padding: 2rem; color: var(--text-muted); }
+
+    @media (max-width: 600px) {
+      .container { padding: 1rem; }
+      .cards { grid-template-columns: 1fr; }
+      .proposal-header { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Governance Dashboard</h1>
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-top:0.2rem;">
+          Stellar Price Oracle — Proposal Management
+        </p>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-primary" onclick="openCreateProposalModal()">+ New Proposal</button>
+        <button class="btn" onclick="refreshAll()">&#x21bb; Refresh</button>
+        <button class="btn" onclick="promptAdminKey()" title="Set Admin API Key">&#x1F511;</button>
+      </div>
+    </header>
+
+    <!-- Summary Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">Governance Proposals</div>
+        <div class="card-value" id="card-gov-total">—</div>
+        <div class="card-sub" id="card-gov-sub">— active</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Multi-sig Proposals</div>
+        <div class="card-value" id="card-msig-total">—</div>
+        <div class="card-sub" id="card-msig-sub">— pending</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Governance Token</div>
+        <div class="card-value" style="font-size:1.1rem;" id="card-gov-token">—</div>
+        <div class="card-sub" id="card-gov-quorum">— quorum</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Multi-sig Threshold</div>
+        <div class="card-value" id="card-msig-threshold">—</div>
+        <div class="card-sub" id="card-msig-signers">— signers</div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('governance')">Token-based Governance</button>
+      <button class="tab" onclick="switchTab('multisig')">Multi-sig Admin</button>
+    </div>
+
+    <div class="tab-content active" id="tab-governance">
+      <div class="proposal-list" id="gov-proposal-list">
+        <div class="loading">Loading proposals...</div>
+      </div>
+      <div class="empty-state" id="gov-empty" style="display:none;">
+        <p>No governance proposals yet.</p>
+        <button class="btn btn-primary btn-sm" onclick="openCreateProposalModal()">Create the first proposal</button>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-multisig">
+      <div class="proposal-list" id="msig-proposal-list">
+        <div class="loading">Loading proposals...</div>
+      </div>
+      <div class="empty-state" id="msig-empty" style="display:none;">
+        <p>No multi-sig proposals yet.</p>
+        <button class="btn btn-primary btn-sm" onclick="openCreateProposalModal()">Create the first proposal</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Proposal Modal -->
+  <div class="modal-overlay" id="create-modal">
+    <div class="modal">
+      <h2>Create Governance Proposal</h2>
+      <label>Action Type</label>
+      <select id="create-action-type">
+        <option value="SetTrustedAsset">Set Trusted Asset</option>
+        <option value="AddSource">Add Oracle Source</option>
+        <option value="RemoveSource">Remove Oracle Source</option>
+        <option value="SetDeviationThreshold">Set Deviation Threshold</option>
+        <option value="TransferAdmin">Transfer Admin</option>
+        <option value="AddSigner">Add Signer</option>
+        <option value="RemoveSigner">Remove Signer</option>
+        <option value="SetThreshold">Set Threshold</option>
+        <option value="ResetReputation">Reset Reputation</option>
+        <option value="UpdateGovernanceConfig">Update Governance Config</option>
+      </select>
+      <label>Description</label>
+      <textarea id="create-description" placeholder="Explain the proposal rationale..."></textarea>
+      <div id="create-action-fields"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal('create-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCreateProposal()">Submit Proposal</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Detail Modal -->
+  <div class="modal-overlay" id="detail-modal">
+    <div class="modal" id="detail-content"></div>
+  </div>
+
+  <div id="toast"></div>
+
+<script>
+const API_BASE = '/api/v1/governance';
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function promptAdminKey() {
+  const current = localStorage.getItem('adminKey') || '';
+  const key = prompt('Enter your admin API key (Bearer token):', current);
+  if (key !== null) {
+    localStorage.setItem('adminKey', key);
+    toast(key ? 'API key saved' : 'API key cleared');
+    refreshAll();
+  }
+}
+
+function toast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.className = 'toast toast-' + type;
+  el.textContent = msg;
+  setTimeout(() => { el.className = ''; el.textContent = ''; }, 3000);
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(API_BASE + path, {
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (localStorage.getItem('adminKey') || '') },
+    ...options,
+  });
+  const data = await res.json();
+  if (!res.ok && !data.success) throw new Error(data.error?.message || res.statusText);
+  return data;
+}
+
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+
+function badge(status) {
+  return '<span class="badge badge-' + status + '">' + status + '</span>';
+}
+
+async function refreshAll() {
+  await Promise.all([loadSummary(), loadGovernanceProposals(), loadMultiSigProposals()]);
+}
+
+// ── Summary ─────────────────────────────────────────────────────────────────
+
+async function loadSummary() {
+  try {
+    const res = await api('/summary');
+    const d = res.data;
+    document.getElementById('card-gov-total').textContent = d.governance.totalProposals;
+    document.getElementById('card-gov-sub').textContent = d.governance.active + ' active';
+    document.getElementById('card-msig-total').textContent = d.multisig.totalProposals;
+    document.getElementById('card-msig-sub').textContent = d.multisig.pending + ' pending';
+    document.getElementById('card-gov-token').textContent = d.governance.config?.token?.substring(0, 10) || '—';
+    document.getElementById('card-gov-quorum').textContent = d.governance.config ? d.governance.config.quorum.toLocaleString() + ' quorum' : '—';
+    document.getElementById('card-msig-threshold').textContent = d.multisig.config ? d.multisig.config.threshold + '/' + d.multisig.config.signers.length : '—';
+    document.getElementById('card-msig-signers').textContent = d.multisig.config ? d.multisig.config.signers.length + ' signers' : '—';
+  } catch (e) { console.error('Summary error:', e); }
+}
+
+// ── Governance proposals ────────────────────────────────────────────────────
+
+async function loadGovernanceProposals() {
+  const list = document.getElementById('gov-proposal-list');
+  const empty = document.getElementById('gov-empty');
+  try {
+    const res = await api('/proposals?limit=50');
+    const proposals = res.data.proposals;
+    if (!proposals.length) { list.innerHTML = ''; empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    list.innerHTML = proposals.map(p => govProposalCard(p)).join('');
+  } catch (e) { list.innerHTML = '<div style="color:var(--red);text-align:center;padding:1rem;">Failed to load: ' + e.message + '</div>'; }
+}
+
+function govProposalCard(p) {
+  const totalVotes = p.votesFor + p.votesAgainst;
+  const forPct = totalVotes > 0 ? Math.round((p.votesFor / totalVotes) * 100) : 0;
+  const againstPct = 100 - forPct;
+
+  return `
+  <div class="proposal-card" onclick="showProposalDetail('governance', ${p.id})">
+    <div class="proposal-header">
+      <div>
+        <span class="proposal-id">#${p.id}</span> &middot; ${badge(p.status)}
+        <div class="proposal-desc">${esc(p.description || 'No description')}</div>
+      </div>
+      <span style="font-size:0.8rem;color:var(--text-muted);">By: ${esc(p.proposer?.substring(0, 12) || 'unknown')}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-top:0.6rem;">
+      <div style="flex:1;">
+        <div style="display:flex;justify-content:space-between;font-size:0.75rem;margin-bottom:0.25rem;">
+          <span style="color:var(--green);">For: ${p.votesFor.toLocaleString()}</span>
+          <span style="color:var(--red);">Against: ${p.votesAgainst.toLocaleString()}</span>
+        </div>
+        <div class="vote-bar">
+          <div class="vote-bar-for" style="width:${forPct}%;${forPct===0?'display:none':''}"></div>
+          <div class="vote-bar-against" style="width:${againstPct}%;${againstPct===0?'display:none':''}"></div>
+        </div>
+      </div>
+    </div>
+    <div class="proposal-meta">
+      <span>&#x1F4C5; Start: ${new Date(p.votingStart).toLocaleDateString()}</span>
+      <span>&#x1F4C5; End: ${new Date(p.votingEnd).toLocaleDateString()}</span>
+      ${p.status === 'Executed' ? '<span>&#x2705; Executed</span>' : ''}
+    </div>
+  </div>`;
+}
+
+// ── Multi-sig proposals ─────────────────────────────────────────────────────
+
+async function loadMultiSigProposals() {
+  const list = document.getElementById('msig-proposal-list');
+  const empty = document.getElementById('msig-empty');
+  try {
+    const res = await api('/multisig/proposals?limit=50');
+    const proposals = res.data.proposals;
+    if (!proposals.length) { list.innerHTML = ''; empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    list.innerHTML = proposals.map(p => msigProposalCard(p)).join('');
+  } catch (e) { list.innerHTML = '<div style="color:var(--red);text-align:center;padding:1rem;">Failed to load: ' + e.message + '</div>'; }
+}
+
+function msigProposalCard(p) {
+  const approvals = p.approvals || [];
+  return `
+  <div class="proposal-card" onclick="showProposalDetail('multisig', ${p.id})">
+    <div class="proposal-header">
+      <div>
+        <span class="proposal-id">#${p.id}</span>
+        ${p.executed ? badge('Executed') : '<span class="badge badge-Queued">Pending</span>'}
+        <div class="proposal-action">${esc(p.action?.variant || 'Unknown action')}</div>
+      </div>
+      <span style="font-size:0.8rem;color:var(--text-muted);">By: ${esc(p.proposer?.substring(0, 12) || 'unknown')}</span>
+    </div>
+    <div class="proposal-approvals">
+      ${Array.from({length: approvals.length}).map((_, i) =>
+        '<span class="approval-dot" title="' + esc(approvals[i]?.substring(0, 8) || '') + '"></span>'
+      ).join('')}
+      <span style="font-size:0.75rem;color:var(--text-muted);margin-left:0.3rem;">${approvals.length} approvals</span>
+    </div>
+    <div class="proposal-meta">
+      <span>&#x1F4C5; Created: ${new Date(p.createdAt).toLocaleDateString()}</span>
+    </div>
+  </div>`;
+}
+
+// ── Create proposal ─────────────────────────────────────────────────────────
+
+function openCreateProposalModal() {
+  openModal('create-modal');
+  updateCreateActionFields();
+}
+
+function updateCreateActionFields() {
+  const type = document.getElementById('create-action-type').value;
+  const container = document.getElementById('create-action-fields');
+  let html = '';
+  if (type === 'SetTrustedAsset') {
+    html = '<label>Asset Symbol</label><input id="field-asset" placeholder="e.g. XLM">'
+      + '<label>Trusted</label><select id="field-trusted"><option value="1">Yes</option><option value="0">No</option></select>';
+  } else if (type === 'AddSource' || type === 'AddOracleSource') {
+    html = '<label>Source Address</label><input id="field-source" placeholder="G...">'
+      + '<label>Source Name</label><input id="field-name" placeholder="e.g. Chainlink">';
+  } else if (type === 'RemoveSource' || type === 'RemoveOracleSource') {
+    html = '<label>Source Address</label><input id="field-source" placeholder="G...">';
+  } else if (type === 'SetDeviationThreshold') {
+    html = '<label>Threshold (bps)</label><input id="field-threshold" type="number" placeholder="500">';
+  } else if (type === 'TransferAdmin' || type === 'SetAdmin') {
+    html = '<label>New Admin Address</label><input id="field-admin" placeholder="G...">';
+  } else if (type === 'AddSigner') {
+    html = '<label>Signer Address</label><input id="field-signer" placeholder="G...">';
+  } else if (type === 'RemoveSigner') {
+    html = '<label>Signer Address</label><input id="field-signer" placeholder="G...">';
+  } else if (type === 'SetThreshold') {
+    html = '<label>Threshold</label><input id="field-threshold" type="number" placeholder="3">';
+  } else if (type === 'ResetReputation') {
+    html = '<label>Source Address</label><input id="field-source" placeholder="G...">';
+  }
+  container.innerHTML = html;
+}
+
+document.getElementById('create-action-type').addEventListener('change', updateCreateActionFields);
+
+async function submitCreateProposal() {
+  const type = document.getElementById('create-action-type').value;
+  const description = document.getElementById('create-description').value.trim();
+  if (!description) { toast('Description is required', 'error'); return; }
+
+  let action = { variant: type };
+
+  if (type === 'SetTrustedAsset') {
+    action.asset = document.getElementById('field-asset')?.value || 'XLM';
+    action.trusted = parseInt(document.getElementById('field-trusted')?.value || '1', 10);
+  } else if (type === 'AddSource' || type === 'AddOracleSource') {
+    action.source = document.getElementById('field-source')?.value || '';
+    action.name = document.getElementById('field-name')?.value || '';
+  } else if (type === 'RemoveSource' || type === 'RemoveOracleSource' || type === 'ResetReputation') {
+    action.source = document.getElementById('field-source')?.value || '';
+  } else if (type === 'SetDeviationThreshold' || type === 'SetThreshold') {
+    action.threshold = parseInt(document.getElementById('field-threshold')?.value || '0', 10);
+    action.thresholdBps = parseInt(document.getElementById('field-threshold')?.value || '0', 10);
+  } else if (type === 'TransferAdmin' || type === 'SetAdmin') {
+    action.newAdmin = document.getElementById('field-admin')?.value || '';
+  } else if (type === 'AddSigner' || type === 'RemoveSigner') {
+    action.signer = document.getElementById('field-signer')?.value || '';
+  }
+
+  try {
+    const res = await api('/proposals', {
+      method: 'POST',
+      body: JSON.stringify({ action, description }),
+    });
+    toast('Proposal #' + res.data.id + ' created');
+    closeModal('create-modal');
+    document.getElementById('create-description').value = '';
+    await refreshAll();
+  } catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ── Detail view ─────────────────────────────────────────────────────────────
+
+async function showProposalDetail(type, id) {
+  openModal('detail-modal');
+  const content = document.getElementById('detail-content');
+  content.innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const path = type === 'governance' ? '/proposals/' + id : '/multisig/proposals/' + id;
+    const res = await api(path);
+    const p = res.data;
+    if (type === 'governance') {
+      const totalVotes = p.votesFor + p.votesAgainst;
+      const forPct = totalVotes > 0 ? Math.round((p.votesFor / totalVotes) * 100) : 0;
+      content.innerHTML = `
+        <h2>Proposal #${p.id} ${badge(p.status)}</h2>
+        <p style="color:var(--text-muted);margin-bottom:1rem;">${esc(p.description)}</p>
+        <p><strong>Proposer:</strong> ${esc(p.proposer?.substring(0, 16) || 'unknown')}</p>
+        <p><strong>Action:</strong> <span style="color:var(--accent);">${esc(p.action?.variant || 'unknown')}</span></p>
+        <div style="margin:1rem 0;">
+          <div style="display:flex;justify-content:space-between;font-size:0.8rem;">
+            <span style="color:var(--green);">For: ${p.votesFor.toLocaleString()}</span>
+            <span style="color:var(--red);">Against: ${p.votesAgainst.toLocaleString()}</span>
+          </div>
+          <div class="vote-bar" style="margin-top:0.4rem;">
+            <div class="vote-bar-for" style="width:${forPct}%;${forPct===0?'display:none':''}"></div>
+            <div class="vote-bar-against" style="width:${100-forPct}%;${forPct===100?'display:none':''}"></div>
+          </div>
+        </div>
+        <div class="proposal-meta">
+          <span>Voting: ${new Date(p.votingStart).toLocaleString()} → ${new Date(p.votingEnd).toLocaleString()}</span>
+          <span>Execution: ${new Date(p.executionTime).toLocaleString()}</span>
+        </div>
+        <div class="modal-actions">
+          ${p.status === 'Active' ? '<button class="btn btn-primary btn-sm" onclick="actionAndRefresh(()=>api(\\'/proposals/' + id + '/vote\\',{method:\\'POST\\',body:JSON.stringify({support:true})}))">Vote For</button><button class="btn btn-danger btn-sm" onclick="actionAndRefresh(()=>api(\\'/proposals/' + id + '/vote\\',{method:\\'POST\\',body:JSON.stringify({support:false})}))">Vote Against</button><button class="btn btn-sm" onclick="actionAndRefresh(()=>api(\\'/proposals/' + id + '/queue\\',{method:\\'POST\\'}))">Queue</button>' : ''}
+          ${p.status === 'Queued' || p.status === 'Ready' ? '<button class="btn btn-primary btn-sm" onclick="actionAndRefresh(()=>api(\\'/proposals/' + id + '/execute\\',{method:\\'POST\\'}))">Execute</button>' : ''}
+          ${p.status === 'Active' || p.status === 'Queued' || p.status === 'Ready' ? '<button class="btn btn-danger btn-sm" onclick="actionAndRefresh(()=>api(\\'/proposals/' + id + '/cancel\\',{method:\\'POST\\'}))">Cancel</button>' : ''}
+          <button class="btn btn-sm" onclick="closeModal('detail-modal')">Close</button>
+        </div>`;
+    } else {
+      content.innerHTML = `
+        <h2>Multi-sig Proposal #${p.id} ${p.executed ? badge('Executed') : '<span class="badge badge-Queued">Pending</span>'}</h2>
+        <p><strong>Proposer:</strong> ${esc(p.proposer?.substring(0, 16) || 'unknown')}</p>
+        <p><strong>Action:</strong> <span style="color:var(--accent);">${esc(p.action?.variant || 'unknown')}</span></p>
+        <p><strong>Created:</strong> ${new Date(p.createdAt).toLocaleString()}</p>
+        <div class="proposal-approvals" style="margin:0.8rem 0;">
+          <strong style="font-size:0.85rem;">Approvals (${(p.approvals||[]).length}):</strong>
+          ${(p.approvals || []).map(a => '<span style="font-size:0.8rem;color:var(--text-muted);margin-left:0.5rem;">' + esc(a.substring(0, 10)) + '...</span>').join('')}
+        </div>
+        <div class="modal-actions">
+          ${!p.executed ? '<button class="btn btn-primary btn-sm" onclick="actionAndRefresh(()=>api(\\'/multisig/proposals/' + id + '/approve\\',{method:\\'POST\\'}))">Approve</button><button class="btn btn-primary btn-sm" onclick="actionAndRefresh(()=>api(\\'/multisig/proposals/' + id + '/execute\\',{method:\\'POST\\'}))">Execute</button>' : ''}
+          <button class="btn btn-sm" onclick="closeModal('detail-modal')">Close</button>
+        </div>`;
+    }
+  } catch (e) { content.innerHTML = '<p style="color:var(--red);">Error: ' + e.message + '</p>'; }
+}
+
+async function actionAndRefresh(fn) {
+  try { await fn(); toast('Action completed'); closeModal('detail-modal'); await refreshAll(); }
+  catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// ── Tabs ────────────────────────────────────────────────────────────────────
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', (i === 0 && tab === 'governance') || (i === 1 && tab === 'multisig')));
+  document.getElementById('tab-governance').classList.toggle('active', tab === 'governance');
+  document.getElementById('tab-multisig').classList.toggle('active', tab === 'multisig');
+}
+
+function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ── Init ────────────────────────────────────────────────────────────────────
+
+refreshAll();
+</script>
+</body>
+</html>

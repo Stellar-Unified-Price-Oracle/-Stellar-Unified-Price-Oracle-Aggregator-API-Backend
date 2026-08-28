@@ -2,7 +2,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String};
 
 use crate::errors::OracleError;
 use crate::storage;
-use crate::types::{GovernanceConfig, Proposal, ProposalAction, ProposalStatus};
+use crate::types::{GovernanceConfig, GovernanceProposal, ProposalAction, ProposalStatus};
 
 // SEP-41 token interface — only the balance query is needed.
 mod token {
@@ -26,7 +26,7 @@ fn voting_power(env: &Env, config: &GovernanceConfig, account: &Address) -> i128
     TokenClient::new(env, &config.token).balance(env.clone(), account.clone())
 }
 
-fn resolve_proposal(env: &Env, proposal: &mut Proposal, config: &GovernanceConfig) {
+fn resolve_proposal(env: &Env, proposal: &mut GovernanceProposal, config: &GovernanceConfig) {
     if matches!(proposal.status, ProposalStatus::Active) {
         let now = env.ledger().timestamp();
         if now >= proposal.voting_end {
@@ -43,13 +43,13 @@ fn resolve_proposal(env: &Env, proposal: &mut Proposal, config: &GovernanceConfi
 
 fn apply_action(env: &Env, action: &ProposalAction) {
     match action {
-        ProposalAction::SetAdmin(new_admin) => {
+        ProposalAction::SetAdmin(new_admin) | ProposalAction::TransferAdmin(new_admin) => {
             storage::set_admin(env, new_admin);
         }
-        ProposalAction::AddOracleSource(source, name) => {
+        ProposalAction::AddOracleSource(source, name) | ProposalAction::AddSource(source, name) => {
             storage::add_source(env, source, name);
         }
-        ProposalAction::RemoveOracleSource(source) => {
+        ProposalAction::RemoveOracleSource(source) | ProposalAction::RemoveSource(source) => {
             storage::remove_source(env, source);
         }
         ProposalAction::SetTrustedAsset(asset, trusted) => {
@@ -58,6 +58,7 @@ fn apply_action(env: &Env, action: &ProposalAction) {
         ProposalAction::UpdateGovernanceConfig(new_config) => {
             storage::set_gov_config(env, new_config);
         }
+        _ => {}
     }
 }
 
@@ -105,7 +106,7 @@ impl GovernanceContract {
         let id = storage::increment_proposal_count(&env);
         let now = env.ledger().timestamp();
 
-        let proposal = Proposal {
+        let proposal = GovernanceProposal {
             id,
             proposer: proposer.clone(),
             action,
@@ -118,7 +119,10 @@ impl GovernanceContract {
             status: ProposalStatus::Active,
         };
 
-        storage::set_proposal(&env, &proposal);
+        storage::set_gov_proposal(&env, &proposal);
+
+        env.events().publish(("governance_proposed", proposer), id);
+
         Ok(id)
     }
 
@@ -133,7 +137,7 @@ impl GovernanceContract {
         voter.require_auth();
         let config = require_gov(&env)?;
 
-        let mut proposal = storage::get_proposal(&env, proposal_id)
+        let mut proposal = storage::get_gov_proposal(&env, proposal_id)
             .ok_or(OracleError::ProposalNotFound)?;
 
         let now = env.ledger().timestamp();
@@ -156,7 +160,7 @@ impl GovernanceContract {
         }
 
         storage::record_vote(&env, proposal_id, &voter, support);
-        storage::set_proposal(&env, &proposal);
+        storage::set_gov_proposal(&env, &proposal);
         Ok(())
     }
 
@@ -165,14 +169,14 @@ impl GovernanceContract {
     pub fn queue(env: Env, proposal_id: u32) -> Result<(), OracleError> {
         let config = require_gov(&env)?;
 
-        let mut proposal = storage::get_proposal(&env, proposal_id)
+        let mut proposal = storage::get_gov_proposal(&env, proposal_id)
             .ok_or(OracleError::ProposalNotFound)?;
 
         resolve_proposal(&env, &mut proposal, &config);
 
         match proposal.status {
             ProposalStatus::Queued | ProposalStatus::Ready => {
-                storage::set_proposal(&env, &proposal);
+                storage::set_gov_proposal(&env, &proposal);
                 Ok(())
             }
             ProposalStatus::Defeated => Err(OracleError::ProposalDefeated),
@@ -186,7 +190,7 @@ impl GovernanceContract {
     pub fn execute(env: Env, proposal_id: u32) -> Result<(), OracleError> {
         let config = require_gov(&env)?;
 
-        let mut proposal = storage::get_proposal(&env, proposal_id)
+        let mut proposal = storage::get_gov_proposal(&env, proposal_id)
             .ok_or(OracleError::ProposalNotFound)?;
 
         resolve_proposal(&env, &mut proposal, &config);
@@ -205,9 +209,13 @@ impl GovernanceContract {
         }
 
         proposal.status = ProposalStatus::Executed;
-        storage::set_proposal(&env, &proposal);
+        storage::set_gov_proposal(&env, &proposal);
 
         apply_action(&env, &proposal.action);
+
+        env.events()
+            .publish(("governance_proposal_executed", proposal_id), env.ledger().timestamp());
+
         Ok(())
     }
 
@@ -216,7 +224,7 @@ impl GovernanceContract {
         caller.require_auth();
         require_gov(&env)?;
 
-        let mut proposal = storage::get_proposal(&env, proposal_id)
+        let mut proposal = storage::get_gov_proposal(&env, proposal_id)
             .ok_or(OracleError::ProposalNotFound)?;
 
         match proposal.status {
@@ -232,7 +240,7 @@ impl GovernanceContract {
         }
 
         proposal.status = ProposalStatus::Cancelled;
-        storage::set_proposal(&env, &proposal);
+        storage::set_gov_proposal(&env, &proposal);
         Ok(())
     }
 
@@ -250,7 +258,7 @@ impl GovernanceContract {
             return Err(OracleError::GuardianOnly);
         }
 
-        let mut proposal = storage::get_proposal(&env, proposal_id)
+        let mut proposal = storage::get_gov_proposal(&env, proposal_id)
             .ok_or(OracleError::ProposalNotFound)?;
 
         match proposal.status {
@@ -260,15 +268,19 @@ impl GovernanceContract {
         }
 
         proposal.status = ProposalStatus::Executed;
-        storage::set_proposal(&env, &proposal);
+        storage::set_gov_proposal(&env, &proposal);
 
         apply_action(&env, &proposal.action);
+
+        env.events()
+            .publish(("governance_emergency_executed", guardian), proposal_id);
+
         Ok(())
     }
 
     /// Read a proposal by id.
-    pub fn get_proposal(env: Env, proposal_id: u32) -> Option<Proposal> {
-        storage::get_proposal(&env, proposal_id)
+    pub fn get_proposal(env: Env, proposal_id: u32) -> Option<GovernanceProposal> {
+        storage::get_gov_proposal(&env, proposal_id)
     }
 
     /// Total number of proposals created (also the id of the most recent one).

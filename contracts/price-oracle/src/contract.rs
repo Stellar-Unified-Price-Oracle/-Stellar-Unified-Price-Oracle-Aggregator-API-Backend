@@ -3,7 +3,7 @@ use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, String, Vec};
 use crate::errors::OracleError;
 use crate::merkle;
 use crate::storage;
-use crate::types::{AssetPrice, MultiSigConfig, Proposal, ProposalAction, PriceDataPoint, SourceReputation};
+use crate::types::{AssetPrice, BatchPriceEntry, MerkleProof, MultiSigConfig, MultiSigProposal, ProposalAction, PriceDataPoint, SourceReputation};
 
 // Basis points threshold below which a submission is counted as accurate for reputation.
 const REPUTATION_ACCURACY_THRESHOLD_BPS: u128 = 2000; // 20%
@@ -18,9 +18,13 @@ pub struct PriceOracleContract;
 
 #[contractimpl]
 impl PriceOracleContract {
-    pub fn initialize(env: Env, admin: Address) {
+    pub fn initialize(env: Env, admin: Address) -> Result<(), OracleError> {
+        if storage::has_admin(&env) {
+            return Err(OracleError::AlreadyInitialized);
+        }
         storage::set_admin(&env, &admin);
         storage::set_storage_layout_version(&env, 1);
+        Ok(())
     }
 
     // -------------------------------------------------------------------------
@@ -37,8 +41,18 @@ impl PriceOracleContract {
     ) -> Result<PriceDataPoint, OracleError> {
         source.require_auth();
 
+        // Issue #379 — a multi-sig-guarded emergency pause halts submission
+        // globally; reads (get_price/get_price_history) remain unaffected so
+        // every region keeps serving cached data during the freeze.
+        if storage::is_paused(&env) {
+            return Err(OracleError::ContractPaused);
+        }
+
         if !storage::is_authorized_source(&env, &source) {
             return Err(OracleError::UnauthorizedSource);
+        }
+        if price < 0 {
+            return Err(OracleError::InvalidPrice);
         }
 
         // Deviation check: only active when a threshold has been configured and a
@@ -65,27 +79,38 @@ impl PriceOracleContract {
 
         storage::set_latest_price(&env, &asset, &data_point);
         append_history(&env, &asset, data_point.clone());
+
+        env.events()
+            .publish(("price_submitted", asset, source), (price, timestamp));
+
         Ok(data_point)
     }
 
-        // Cap history at MAX_HISTORY_LEN to keep persistent-storage entry size
-        // bounded.  Evict the oldest entry when the cap is reached rather than
-        // reading, appending, and writing the full vector unconditionally.
-        let mut history = storage::get_price_history(&env, &asset);
-        if history.len() >= MAX_HISTORY_LEN {
-            // Drop the oldest entry (index 0) by rebuilding from index 1.
-            // Soroban Vec has no remove(), so we shift manually.
-            let mut trimmed: Vec<PriceDataPoint> = Vec::new(&env);
-            for i in 1..history.len() {
-                if let Some(dp) = history.get(i) {
-                    trimmed.push_back(dp);
-                }
-            }
-            trimmed.push_back(data_point.clone());
-            storage::set_price_history(&env, &asset, &trimmed);
-        } else {
-            history.push_back(data_point.clone());
-            storage::set_price_history(&env, &asset, &history);
+    // -------------------------------------------------------------------------
+    // Issue #75 — Merkle batch submission
+    // -------------------------------------------------------------------------
+
+    /// Commit a Merkle root covering a batch of price entries.
+    ///
+    /// The authorized source submits one transaction with the root hash of an
+    /// ordered batch.  Individual entries are applied later via
+    /// `apply_batch_entry` using inclusion proofs — one cheap tx per price
+    /// instead of one full auth+storage tx per price.
+    ///
+    /// `nonce` must equal the current BatchNonce (prevents replay attacks).
+    /// Returns the new nonce after this batch.
+    pub fn submit_batch(
+        env: Env,
+        source: Address,
+        nonce: u64,
+        root: Bytes,
+    ) -> Result<u64, OracleError> {
+        source.require_auth();
+
+        // Issue #379 — batch commits are a submission path too and must
+        // honor the same global emergency pause as submit_price.
+        if storage::is_paused(&env) {
+            return Err(OracleError::ContractPaused);
         }
 
         if !storage::is_authorized_source(&env, &source) {
@@ -100,6 +125,10 @@ impl PriceOracleContract {
 
         storage::set_batch_root(&env, nonce, &root);
         let new_nonce = storage::increment_batch_nonce(&env);
+
+        env.events()
+            .publish(("batch_submitted", source), (nonce, root));
+
         Ok(new_nonce)
     }
 
@@ -118,6 +147,10 @@ impl PriceOracleContract {
         let root = storage::get_batch_root(&env, batch_nonce)
             .ok_or(OracleError::BatchRootNotFound)?;
 
+        if entry.price < 0 {
+            return Err(OracleError::InvalidPrice);
+        }
+
         if !merkle::verify_proof(&env, &entry, proof.leaf_index, &proof.siblings, &root) {
             return Err(OracleError::InvalidMerkleProof);
         }
@@ -132,6 +165,12 @@ impl PriceOracleContract {
 
         storage::set_latest_price(&env, &entry.asset, &data_point);
         append_history(&env, &entry.asset, data_point.clone());
+
+        env.events().publish(
+            ("batch_entry_applied", entry.asset.clone()),
+            (batch_nonce, entry.price),
+        );
+
         Ok(data_point)
     }
 
@@ -210,11 +249,11 @@ impl PriceOracleContract {
             return Err(OracleError::NotASigner);
         }
 
-        let id = storage::get_proposal_count(&env);
+        let id = storage::get_msig_proposal_count(&env);
         let mut approvals: Vec<Address> = Vec::new(&env);
         approvals.push_back(proposer.clone());
 
-        let proposal = Proposal {
+        let proposal = MultiSigProposal {
             id,
             action,
             approvals,
@@ -223,7 +262,7 @@ impl PriceOracleContract {
             proposer,
         };
 
-        storage::set_proposal(&env, &proposal);
+        storage::set_multisig_proposal(&env, &proposal);
         storage::set_proposal_count(&env, id + 1);
 
         Ok(id)
@@ -243,7 +282,7 @@ impl PriceOracleContract {
             return Err(OracleError::NotASigner);
         }
 
-        let mut proposal = storage::get_proposal(&env, proposal_id)
+        let mut proposal = storage::get_multisig_proposal(&env, proposal_id)
             .ok_or(OracleError::ProposalNotFound)?;
 
         if proposal.executed == 1 {
@@ -255,7 +294,7 @@ impl PriceOracleContract {
         }
 
         proposal.approvals.push_back(signer);
-        storage::set_proposal(&env, &proposal);
+        storage::set_multisig_proposal(&env, &proposal);
         Ok(())
     }
 
@@ -273,7 +312,7 @@ impl PriceOracleContract {
             return Err(OracleError::NotASigner);
         }
 
-        let mut proposal = storage::get_proposal(&env, proposal_id)
+        let mut proposal = storage::get_multisig_proposal(&env, proposal_id)
             .ok_or(OracleError::ProposalNotFound)?;
 
         if proposal.executed == 1 {
@@ -287,16 +326,33 @@ impl PriceOracleContract {
         apply_proposal_action(&env, &proposal.action)?;
 
         proposal.executed = 1;
-        storage::set_proposal(&env, &proposal);
+        storage::set_multisig_proposal(&env, &proposal);
+
+        env.events()
+            .publish(("governance_executed", signer), proposal_id);
+
         Ok(())
     }
 
-    pub fn get_proposal(env: Env, proposal_id: u32) -> Option<Proposal> {
-        storage::get_proposal(&env, proposal_id)
+    pub fn get_proposal(env: Env, proposal_id: u32) -> Option<MultiSigProposal> {
+        storage::get_multisig_proposal(&env, proposal_id)
     }
 
     pub fn get_multisig_config(env: Env) -> Option<MultiSigConfig> {
         storage::get_multisig_config(&env)
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #379 — multi-region aware emergency pause
+    // -------------------------------------------------------------------------
+
+    /// Read-only pause flag. Off-chain aggregators in every region poll this
+    /// on their normal cycle and skip submission while it is `true`, so all
+    /// regions honor the freeze within one poll cycle without a separate
+    /// off-chain coordination bus — the chain itself is the single source of
+    /// truth for pause state.
+    pub fn is_paused(env: Env) -> bool {
+        storage::is_paused(&env)
     }
 
     // -------------------------------------------------------------------------
@@ -380,6 +436,100 @@ impl PriceOracleContract {
         storage::set_trusted_asset(&env, &asset, trusted);
         Ok(())
     }
+
+    pub fn set_query_fee(env: Env, fee: i128) {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        storage::set_query_fee(&env, &fee);
+    }
+
+    pub fn get_query_fee(env: Env) -> i128 {
+        storage::get_query_fee(&env)
+    }
+
+    pub fn set_whitelist(env: Env, addr: Address, status: bool) {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        storage::set_whitelist(&env, &addr, status);
+    }
+
+    pub fn withdraw_fees(env: Env, to: Address) {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        let balance = storage::get_fee_balance(&env);
+        if balance > 0 {
+            storage::set_fee_balance(&env, &0);
+            let token = soroban_sdk::token::Client::new(&env, &to);
+            token.transfer(&env.current_contract_address(), &to, &balance);
+        }
+    }
+
+    pub fn stake(env: Env, source: Address, amount: i128, token: Address) {
+        source.require_auth();
+        let token_client = soroban_sdk::token::Client::new(&env, &token);
+        token_client.transfer(&source, &env.current_contract_address(), &amount);
+        let current = storage::get_stake(&env, &source);
+        storage::set_stake(&env, &source, &(current + amount));
+        env.events().publish(("source_staked", source), amount);
+    }
+
+    pub fn slash(env: Env, source: Address, amount: i128, reason: String) {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        let current = storage::get_stake(&env, &source);
+        let slashed = if amount > current { current } else { amount };
+        storage::set_stake(&env, &source, &(current - slashed));
+        let count = storage::get_slash_count(&env, &source);
+        storage::set_slash_count(&env, &source, &(count + 1));
+        env.events().publish(("source_slashed", source, reason), slashed);
+    }
+
+    pub fn get_stake_balance(env: Env, source: Address) -> i128 {
+        storage::get_stake(&env, &source)
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #376 — scheduled TTL / rent extension
+    // -------------------------------------------------------------------------
+
+    /// Extend the TTL of every persistent price-history entry plus the
+    /// shared instance storage entry (Admin, GovernanceConfig,
+    /// GovernanceProposal, MultiSigConfig) so state never expires between
+    /// scheduled rent-payment runs. Callable by anyone — it only pays rent
+    /// and cannot mutate oracle state, so no admin auth is required.
+    pub fn extend_storage_ttl(env: Env) {
+        storage::extend_instance_ttl(&env);
+        let assets = storage::get_all_assets(&env);
+        for i in 0..assets.len() {
+            if let Some(asset) = assets.get(i) {
+                storage::extend_price_history_ttl(&env, &asset);
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// History helper
+// Appends a data point to an asset's price history, capping it at
+// storage::MAX_HISTORY_LEN to keep the persistent-storage entry size bounded.
+// -------------------------------------------------------------------------
+fn append_history(env: &Env, asset: &String, data_point: PriceDataPoint) {
+    let mut history = storage::get_price_history(env, asset);
+    if history.len() >= storage::MAX_HISTORY_LEN {
+        // Drop the oldest entry (index 0) by rebuilding from index 1.
+        // Soroban Vec has no remove(), so we shift manually.
+        let mut trimmed: Vec<PriceDataPoint> = Vec::new(env);
+        for i in 1..history.len() {
+            if let Some(dp) = history.get(i) {
+                trimmed.push_back(dp);
+            }
+        }
+        trimmed.push_back(data_point);
+        storage::set_price_history(env, asset, &trimmed);
+    } else {
+        history.push_back(data_point);
+        storage::set_price_history(env, asset, &history);
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -391,18 +541,15 @@ fn deviation_exceeds(new_price: i128, prev_price: i128, threshold_bps: u32) -> b
     if prev_price == 0 {
         return false;
     }
-    let prev_abs = prev_price.unsigned_abs(); // u128, correct for i128::MIN
+    let prev_abs = prev_price.unsigned_abs();
 
     let diff: u128 = if (new_price >= 0) == (prev_price >= 0) {
-        // Same sign: simple magnitude difference, no overflow possible.
         let new_abs = new_price.unsigned_abs();
         if new_abs >= prev_abs { new_abs - prev_abs } else { prev_abs - new_abs }
     } else {
-        // Opposite signs: |new| + |prev| with saturation guard.
         new_price.unsigned_abs().saturating_add(prev_abs)
     };
 
-    // deviation_bps = diff * 10_000 / prev_abs, saturating to avoid overflow.
     let deviation_bps = diff.saturating_mul(10_000) / prev_abs;
     deviation_bps > threshold_bps as u128
 }
@@ -412,7 +559,7 @@ fn deviation_exceeds(new_price: i128, prev_price: i128, threshold_bps: u32) -> b
 // -------------------------------------------------------------------------
 fn update_reputation(env: &Env, source: &Address, new_price: i128, asset: &String, timestamp: u64) {
     let is_accurate = match storage::get_latest_price(env, asset) {
-        None => true, // initial submission — always accurate
+        None => true,
         Some(prev) => !deviation_exceeds(new_price, prev.price, REPUTATION_ACCURACY_THRESHOLD_BPS as u32),
     };
 
@@ -467,7 +614,7 @@ fn apply_proposal_action(env: &Env, action: &ProposalAction) -> Result<(), Oracl
             storage::remove_source(env, source);
         }
         ProposalAction::SetTrustedAsset(asset, trusted) => {
-            storage::set_trusted_asset(env, asset, *trusted != 0);
+            storage::set_trusted_asset(env, asset, *trusted);
         }
         ProposalAction::TransferAdmin(new_admin) => {
             storage::set_admin(env, new_admin);
@@ -506,6 +653,13 @@ fn apply_proposal_action(env: &Env, action: &ProposalAction) -> Result<(), Oracl
                 storage::set_multisig_config(env, &config);
             }
         }
+        ProposalAction::Pause => {
+            storage::set_paused(env, true);
+        }
+        ProposalAction::Unpause => {
+            storage::set_paused(env, false);
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -533,73 +687,17 @@ fn calculate_usd_price(env: &Env, asset: &String, price: i128, decimals: u32) ->
             return Some(10i128.pow(decimals));
         }
         if let Some(xlm_price) = storage::get_latest_price(env, &xlm) {
-            let base_asset_price = (price * xlm_price.price * 10i128.pow(decimals))
-                / (10i128.pow(decimals) * 10i128.pow(usdc_anchor.decimals));
+            let base_asset_price = (price * xlm_price.price)
+                .checked_div(10i128.pow(xlm_price.decimals))?;
             return Some(base_asset_price);
         }
     }
-
-    let usdc_anchor = storage::get_latest_price(env, &usdc)?;
     let xlm_price = storage::get_latest_price(env, &xlm)?;
-
-    // Simplified: (price_in_xlm * xlm_usd_price) / 10^usdc_decimals
-    // The 10^asset_decimals factors cancel out completely.
+    // (price_in_xlm * xlm_usd_price) / 10^xlm_price.decimals -- uses
+    // xlm_price's own decimals, not usdc_anchor's, since
+    // xlm_price.price is scaled by xlm_price.decimals.
     let usd_value = (price * xlm_price.price)
+        .checked_div(10i128.pow(xlm_price.decimals))?;
         .checked_div(10i128.pow(usdc_anchor.decimals))?;
     Some(usd_value)
-}
-
-impl PriceOracleContract {
-pub fn set_query_fee(env: Env, fee: i128) {
-let admin = storage::get_admin(&env);
-admin.require_auth();
-storage::set_query_fee(&env, &fee);
-}
-
-pub fn get_query_fee(env: Env) -> i128 {
-storage::get_query_fee(&env)
-}
-
-pub fn set_whitelist(env: Env, addr: Address, status: bool) {
-let admin = storage::get_admin(&env);
-admin.require_auth();
-storage::set_whitelist(&env, &addr, status);
-}
-
-pub fn withdraw_fees(env: Env, to: Address) {
-let admin = storage::get_admin(&env);
-admin.require_auth();
-let balance = storage::get_fee_balance(&env);
-if balance > 0 {
-storage::set_fee_balance(&env, &0);
-let token = soroban_sdk::token::Client::new(&env, &to);
-token.transfer(&env.current_contract_address(), &to, &balance);
-}
-}
-}
-
-impl PriceOracleContract {
-pub fn stake(env: Env, source: Address, amount: i128, token: Address) {
-source.require_auth();
-let token_client = soroban_sdk::token::Client::new(&env, &token);
-token_client.transfer(&source, &env.current_contract_address(), &amount);
-let current = storage::get_stake(&env, &source);
-storage::set_stake(&env, &source, &(current + amount));
-env.events().publish(("source_staked", source), amount);
-}
-
-pub fn slash(env: Env, source: Address, amount: i128, reason: String) {
-let admin = storage::get_admin(&env);
-admin.require_auth();
-let current = storage::get_stake(&env, &source);
-let slashed = if amount > current { current } else { amount };
-storage::set_stake(&env, &source, &(current - slashed));
-let count = storage::get_slash_count(&env, &source);
-storage::set_slash_count(&env, &source, &(count + 1));
-env.events().publish(("source_slashed", source, reason), slashed);
-}
-
-pub fn get_stake_balance(env: Env, source: Address) -> i128 {
-storage::get_stake(&env, &source)
-}
 }

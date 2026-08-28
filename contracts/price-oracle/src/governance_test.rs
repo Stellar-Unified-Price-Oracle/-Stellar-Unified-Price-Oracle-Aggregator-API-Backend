@@ -129,7 +129,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "XLM"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -154,7 +154,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "BTC"),
-            true,
+            1,
         );
         assert!(ctx.gov.try_propose(
             &poor,
@@ -170,7 +170,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "XLM"),
-            true,
+            1,
         );
         assert!(ctx.gov.try_propose(
             &ctx.proposer,
@@ -188,10 +188,10 @@ mod governance_tests {
 
         for i in 0u32..3 {
             let action = ProposalAction::SetTrustedAsset(
-                String::from_str(&ctx.env, "XLM"),
-                i % 2 == 0,
-            );
-            ctx.gov.propose(
+            String::from_str(&ctx.env, "XLM"),
+            (i % 2) as u32,
+        );
+        ctx.gov.propose(
                 &ctx.proposer,
                 &action,
                 &String::from_str(&ctx.env, "p"),
@@ -209,7 +209,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "ETH"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -236,7 +236,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "ETH"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -255,7 +255,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "USDC"),
-            false,
+            0,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -285,7 +285,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "XLM"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -311,7 +311,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "XLM"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -344,7 +344,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "BTC"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -370,7 +370,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "BTC"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -393,7 +393,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "BTC"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -419,7 +419,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "ETH"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -445,7 +445,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "USDT"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -499,7 +499,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "USDT"),
-            false,
+            0,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -520,7 +520,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "USDT"),
-            false,
+            0,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -541,7 +541,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "XLM"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -560,7 +560,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "XLM"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -584,7 +584,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "BTC"),
-            false,
+            0,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -606,7 +606,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "ETH"),
-            false,
+            0,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -625,7 +625,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "ETH"),
-            false,
+            0,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -653,7 +653,7 @@ mod governance_tests {
 
         let action = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "XLM"),
-            true,
+            1,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -671,11 +671,11 @@ mod governance_tests {
 
         let action_a = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "XLM"),
-            true,
+            1,
         );
         let action_b = ProposalAction::SetTrustedAsset(
             String::from_str(&ctx.env, "BTC"),
-            true,
+            1,
         );
 
         let id_a = ctx.gov.propose(
@@ -698,5 +698,567 @@ mod governance_tests {
         let pb = ctx.gov.get_proposal(&id_b).unwrap();
         assert_eq!(pa.votes_for, 500_000i128);
         assert_eq!(pb.votes_for, 0i128);
+    }
+
+    // ── Double voting edge cases ──────────────────────────────────────────────
+
+    #[test]
+    fn test_double_vote_opposite_support_rejected() {
+        let ctx = setup();
+        init(&ctx);
+
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "ETH"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust ETH"),
+        );
+
+        ctx.gov.vote(&ctx.voter_a, &id, &false);
+        // Try to switch vote from against → for
+        assert!(ctx.gov.try_vote(&ctx.voter_a, &id, &true).is_err());
+
+        let p = ctx.gov.get_proposal(&id).unwrap();
+        assert_eq!(p.votes_against, 500_000i128);
+        assert_eq!(p.votes_for, 0i128);
+    }
+
+    #[test]
+    fn test_vote_on_cancelled_proposal_rejected() {
+        let ctx = setup();
+        init(&ctx);
+
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "XLM"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust XLM"),
+        );
+
+        ctx.gov.cancel(&ctx.proposer, &id);
+        assert!(ctx.gov.try_vote(&ctx.voter_a, &id, &true).is_err());
+    }
+
+    #[test]
+    fn test_vote_on_executed_proposal_rejected() {
+        let ctx = setup();
+        init(&ctx);
+
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "XLM"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust XLM"),
+        );
+
+        ctx.gov.vote(&ctx.voter_a, &id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 1000);
+        ctx.gov.execute(&id);
+
+        assert!(ctx.gov.try_vote(&ctx.voter_b, &id, &true).is_err());
+    }
+
+    #[test]
+    fn test_vote_with_zero_balance_still_recorded() {
+        let ctx = setup();
+        init(&ctx);
+
+        let zero_voter = Address::generate(&ctx.env);
+        // No balance set → balance defaults to 0
+
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "XLM"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust XLM"),
+        );
+
+        ctx.gov.vote(&zero_voter, &id, &true);
+        assert!(ctx.gov.has_voted(&id, &zero_voter));
+
+        let p = ctx.gov.get_proposal(&id).unwrap();
+        assert_eq!(p.votes_for, 0i128);
+    }
+
+    // ── Expired proposal queue ────────────────────────────────────────────────
+
+    #[test]
+    fn test_queue_already_queued_proposal_idempotent() {
+        let ctx = setup();
+        init(&ctx);
+
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "ETH"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust ETH"),
+        );
+
+        ctx.gov.vote(&ctx.voter_a, &id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 700);
+        ctx.gov.queue(&id);
+
+        // Queue again should succeed (idempotent)
+        ctx.gov.queue(&id);
+
+        let p = ctx.gov.get_proposal(&id).unwrap();
+        assert!(matches!(p.status, ProposalStatus::Queued));
+    }
+
+    #[test]
+    fn test_queue_expired_proposal_stays_queued() {
+        let ctx = setup();
+        init(&ctx);
+
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "XLM"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust XLM"),
+        );
+
+        ctx.gov.vote(&ctx.voter_a, &id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 700);
+        ctx.gov.queue(&id);
+
+        // Advance well past the timelock
+        ctx.env.ledger().with_mut(|l| l.timestamp += 500);
+
+        // Queue should still succeed on an already-queued proposal
+        ctx.gov.queue(&id);
+
+        let p = ctx.gov.get_proposal(&id).unwrap();
+        assert!(matches!(p.status, ProposalStatus::Queued));
+    }
+
+    #[test]
+    fn test_queue_defeated_proposal_errors() {
+        let ctx = setup();
+        init(&ctx);
+
+        ctx.token.set_balance(&ctx.voter_b, &700_000i128);
+
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "XLM"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust XLM"),
+        );
+
+        ctx.gov.vote(&ctx.voter_a, &id, &true);
+        ctx.gov.vote(&ctx.voter_b, &id, &false);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 700);
+
+        assert!(ctx.gov.try_queue(&id).is_err());
+        // Second queue attempt on defeated proposal still errors
+        assert!(ctx.gov.try_queue(&id).is_err());
+    }
+
+    // ── Guardian bypass during timelock ───────────────────────────────────────
+
+    #[test]
+    fn test_emergency_execute_queued_during_timelock() {
+        let ctx = setup();
+        init(&ctx);
+
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "BTC"),
+            false,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Emergency BTC"),
+        );
+
+        ctx.gov.vote(&ctx.voter_a, &id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 700);
+        ctx.gov.queue(&id);
+
+        // Guardian executes immediately without waiting for timelock
+        ctx.gov.emergency_execute(&ctx.guardian, &id);
+
+        let p = ctx.gov.get_proposal(&id).unwrap();
+        assert!(matches!(p.status, ProposalStatus::Executed));
+    }
+
+    #[test]
+    fn test_emergency_execute_active_proposal_before_voting_ends() {
+        let ctx = setup();
+        init(&ctx);
+
+        let action = ProposalAction::RemoveOracleSource(
+            Address::generate(&ctx.env),
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Emergency removal"),
+        );
+
+        // Guardian bypasses voting entirely on an active proposal
+        ctx.gov.emergency_execute(&ctx.guardian, &id);
+
+        let p = ctx.gov.get_proposal(&id).unwrap();
+        assert!(matches!(p.status, ProposalStatus::Executed));
+    }
+
+    #[test]
+    fn test_emergency_execute_defeated_proposal_revives_and_executes() {
+        let ctx = setup();
+        init(&ctx);
+
+        ctx.token.set_balance(&ctx.voter_b, &700_000i128);
+
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "XLM"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust XLM"),
+        );
+
+        ctx.gov.vote(&ctx.voter_a, &id, &true);
+        ctx.gov.vote(&ctx.voter_b, &id, &false);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 700);
+
+        // Proposal is defeated via normal process
+        assert!(ctx.gov.try_queue(&id).is_err());
+
+        // Guardian can still emergency-execute a defeated proposal
+        ctx.gov.emergency_execute(&ctx.guardian, &id);
+
+        let p = ctx.gov.get_proposal(&id).unwrap();
+        assert!(matches!(p.status, ProposalStatus::Executed));
+    }
+
+    #[test]
+    fn test_emergency_execute_cancelled_proposal_rejected() {
+        let ctx = setup();
+        init(&ctx);
+
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "ETH"),
+            false,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Emergency ETH"),
+        );
+
+        ctx.gov.cancel(&ctx.proposer, &id);
+        assert!(ctx.gov.try_emergency_execute(&ctx.guardian, &id).is_err());
+    }
+
+    // ── Proposal threshold changes ────────────────────────────────────────────
+
+    #[test]
+    fn test_proposal_threshold_lowered_allows_new_proposers() {
+        let ctx = setup();
+        init(&ctx);
+
+        let low_balance = Address::generate(&ctx.env);
+        ctx.token.set_balance(&low_balance, &60_000i128);
+
+        // With current threshold 100_000, low_balance cannot propose
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "XLM"),
+            true,
+        );
+        assert!(ctx.gov.try_propose(
+            &low_balance,
+            &action,
+            &String::from_str(&ctx.env, "Should fail"),
+        ).is_err());
+
+        // Update config to lower threshold to 50_000
+        let new_cfg = GovernanceConfig {
+            token: ctx.token.address.clone(),
+            proposal_threshold: 50_000i128,
+            voting_period: 600,
+            timelock_delay: 300,
+            quorum: 200_000i128,
+            guardian: ctx.guardian.clone(),
+        };
+        let update_id = ctx.gov.propose(
+            &ctx.proposer,
+            &ProposalAction::UpdateGovernanceConfig(new_cfg),
+            &String::from_str(&ctx.env, "Lower threshold"),
+        );
+        ctx.gov.vote(&ctx.voter_a, &update_id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 1000);
+        ctx.gov.execute(&update_id);
+
+        // Now low_balance (60_000) should be able to propose
+        let id = ctx.gov.propose(
+            &low_balance,
+            &action,
+            &String::from_str(&ctx.env, "Should succeed"),
+        );
+        assert_eq!(id, 2u32);
+    }
+
+    #[test]
+    fn test_proposal_threshold_raised_blocks_marginal_proposers() {
+        let ctx = setup();
+        init(&ctx);
+
+        // Update config to raise threshold to 1_500_000
+        let new_cfg = GovernanceConfig {
+            token: ctx.token.address.clone(),
+            proposal_threshold: 1_500_000i128,
+            voting_period: 600,
+            timelock_delay: 300,
+            quorum: 200_000i128,
+            guardian: ctx.guardian.clone(),
+        };
+        let update_id = ctx.gov.propose(
+            &ctx.proposer,
+            &ProposalAction::UpdateGovernanceConfig(new_cfg),
+            &String::from_str(&ctx.env, "Raise threshold"),
+        );
+        ctx.gov.vote(&ctx.voter_a, &update_id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 1000);
+        ctx.gov.execute(&update_id);
+
+        // Proposer has 1_000_000, now below new threshold of 1_500_000
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "XLM"),
+            true,
+        );
+        assert!(ctx.gov.try_propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Should fail"),
+        ).is_err());
+    }
+
+    #[test]
+    fn test_threshold_change_does_not_affect_existing_proposals() {
+        let ctx = setup();
+        init(&ctx);
+
+        // Create a proposal with current config
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "XLM"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust XLM"),
+        );
+
+        // Vote on it so it passes
+        ctx.gov.vote(&ctx.voter_a, &id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 700);
+        ctx.gov.queue(&id);
+
+        // Now change threshold — queued proposal should still be executable
+        let new_cfg = GovernanceConfig {
+            token: ctx.token.address.clone(),
+            proposal_threshold: 500_000i128,
+            voting_period: 600,
+            timelock_delay: 300,
+            quorum: 200_000i128,
+            guardian: ctx.guardian.clone(),
+        };
+        let update_id = ctx.gov.propose(
+            &ctx.proposer,
+            &ProposalAction::UpdateGovernanceConfig(new_cfg),
+            &String::from_str(&ctx.env, "Change threshold"),
+        );
+        ctx.gov.vote(&ctx.voter_a, &update_id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 1000);
+        ctx.gov.execute(&update_id);
+
+        // Original proposal should still be executable
+        ctx.env.ledger().with_mut(|l| l.timestamp += 400);
+        ctx.gov.execute(&id);
+
+        let p = ctx.gov.get_proposal(&id).unwrap();
+        assert!(matches!(p.status, ProposalStatus::Executed));
+    }
+
+    // ── Quorum recalculation ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_quorum_lowered_allows_proposals_to_pass_easier() {
+        let ctx = setup();
+        init(&ctx);
+
+        // Update config to lower quorum to 10_000
+        let new_cfg = GovernanceConfig {
+            token: ctx.token.address.clone(),
+            proposal_threshold: 100_000i128,
+            voting_period: 600,
+            timelock_delay: 300,
+            quorum: 10_000i128,
+            guardian: ctx.guardian.clone(),
+        };
+        let update_id = ctx.gov.propose(
+            &ctx.proposer,
+            &ProposalAction::UpdateGovernanceConfig(new_cfg),
+            &String::from_str(&ctx.env, "Lower quorum"),
+        );
+        ctx.gov.vote(&ctx.voter_a, &update_id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 1000);
+        ctx.gov.execute(&update_id);
+
+        // Create a new proposal with minimal vote (just 1 small vote meets quorum)
+        let small_voter = Address::generate(&ctx.env);
+        ctx.token.set_balance(&small_voter, &20_000i128);
+
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "XLM"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust XLM"),
+        );
+
+        ctx.gov.vote(&small_voter, &id, &true); // 20_000 > quorum of 10_000
+        ctx.env.ledger().with_mut(|l| l.timestamp += 700);
+
+        ctx.gov.queue(&id);
+
+        let p = ctx.gov.get_proposal(&id).unwrap();
+        assert!(matches!(p.status, ProposalStatus::Queued));
+    }
+
+    #[test]
+    fn test_active_proposal_uses_current_quorum_on_resolution() {
+        let ctx = setup();
+        init(&ctx);
+
+        // Create a proposal — quorum is 200_000
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "XLM"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust XLM"),
+        );
+
+        // Minimal vote that passes current quorum
+        ctx.gov.vote(&ctx.voter_a, &id, &true); // 500_000 > 200_000
+
+        // Before voting ends, change quorum to a very high value
+        let new_cfg = GovernanceConfig {
+            token: ctx.token.address.clone(),
+            proposal_threshold: 100_000i128,
+            voting_period: 600,
+            timelock_delay: 300,
+            quorum: 2_000_000i128,
+            guardian: ctx.guardian.clone(),
+        };
+        let update_id = ctx.gov.propose(
+            &ctx.proposer,
+            &ProposalAction::UpdateGovernanceConfig(new_cfg),
+            &String::from_str(&ctx.env, "Raise quorum"),
+        );
+        ctx.gov.vote(&ctx.voter_b, &update_id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 1000);
+        ctx.gov.execute(&update_id);
+
+        // Now advance past the original proposal's voting window — it resolves
+        // against the NEW quorum of 2_000_000, which is not met
+        ctx.env.ledger().with_mut(|l| l.timestamp += 500);
+        assert!(ctx.gov.try_queue(&id).is_err());
+
+        let p = ctx.gov.get_proposal(&id).unwrap();
+        assert!(matches!(p.status, ProposalStatus::Defeated));
+    }
+
+    #[test]
+    fn test_quorum_zero_rejected_at_init() {
+        let ctx = setup();
+        let bad_cfg = GovernanceConfig {
+            token: ctx.token.address.clone(),
+            proposal_threshold: 100_000i128,
+            voting_period: 600,
+            timelock_delay: 300,
+            quorum: 0i128,
+            guardian: ctx.guardian.clone(),
+        };
+        assert!(ctx.gov.try_initialize(&ctx.admin, &bad_cfg).is_err());
+    }
+
+    #[test]
+    fn test_quorum_change_via_proposal_and_verify_new_proposals() {
+        let ctx = setup();
+        init(&ctx);
+
+        // Change quorum from 200_000 to 800_000
+        let new_cfg = GovernanceConfig {
+            token: ctx.token.address.clone(),
+            proposal_threshold: 100_000i128,
+            voting_period: 600,
+            timelock_delay: 300,
+            quorum: 800_000i128,
+            guardian: ctx.guardian.clone(),
+        };
+        let update_id = ctx.gov.propose(
+            &ctx.proposer,
+            &ProposalAction::UpdateGovernanceConfig(new_cfg),
+            &String::from_str(&ctx.env, "Raise quorum"),
+        );
+        ctx.gov.vote(&ctx.voter_a, &update_id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 1000);
+        ctx.gov.execute(&update_id);
+
+        // New proposal: voter_a alone (500_000) is below new quorum of 800_000
+        let action = ProposalAction::SetTrustedAsset(
+            String::from_str(&ctx.env, "BTC"),
+            true,
+        );
+        let id = ctx.gov.propose(
+            &ctx.proposer,
+            &action,
+            &String::from_str(&ctx.env, "Trust BTC"),
+        );
+        ctx.gov.vote(&ctx.voter_a, &id, &true);
+        ctx.env.ledger().with_mut(|l| l.timestamp += 700);
+
+        assert!(ctx.gov.try_queue(&id).is_err());
+
+        // voter_b adds 300_000 → total 800_000 = exactly meets quorum
+        ctx.gov.vote(&ctx.voter_b, &id, &true);
+
+        let p = ctx.gov.get_proposal(&id).unwrap();
+        assert_eq!(p.votes_for, 800_000i128);
+
+        // Now queue should work since quorum is met
+        ctx.gov.queue(&id);
+        let p2 = ctx.gov.get_proposal(&id).unwrap();
+        assert!(matches!(p2.status, ProposalStatus::Queued));
     }
 }

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Stellar Oracle Plugin Marketplace</title>
+  </head>
+  <body>
+    <main>
+      <h1>Plugin Marketplace</h1>
+      <p>Browse installed community plugins with rating, downloads, verification status, source links, and host API compatibility.</p>
+      <input id="search" placeholder="Search plugins" />
+      <section id="plugins"></section>
+    </main>
+    <script>
+      async function load() {
+        const response = await fetch('/api/v1/plugins/marketplace');
+        const data = await response.json();
+        const plugins = data.plugins || [];
+        const render = () => {
+          const query = document.getElementById('search').value.toLowerCase();
+          document.getElementById('plugins').innerHTML = plugins
+            .filter((plugin) => plugin.name.toLowerCase().includes(query) || plugin.type.includes(query))
+            .map((plugin) => `<article><h2>${plugin.name} ${plugin.verified ? '✓' : ''}</h2><p>${plugin.type} v${plugin.version}</p><p>Rating: ${plugin.rating} Downloads: ${plugin.downloads}</p><p>Compatible: ${plugin.compatibility.compatible}</p><a href="${plugin.sourceCodeUrl || '#'}">Source</a></article>`)
+            .join('');
+        };
+        document.getElementById('search').addEventListener('input', render);
+        render();
+      }
+      load();
+    </script>
+  </body>
+</html>
+

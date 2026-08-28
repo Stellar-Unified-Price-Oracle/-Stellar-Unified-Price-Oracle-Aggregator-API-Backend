@@ -1,0 +1,149 @@
+import dotenv from 'dotenv';
+import path from 'path';
+import { decryptSecret } from '../governance/crypto';
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
+export function secretEnv(name: string, fallback = ''): string {
+  const value = process.env[name];
+  return value ? decryptSecret(value) : fallback;
+}
+
+export function optionalSecretEnv(name: string): string | undefined {
+  const value = process.env[name];
+  return value ? decryptSecret(value) : undefined;
+}
+
+export const config = {
+  sandbox: {
+    enabled: process.env.SANDBOX_ENABLED === 'true',
+    resetToken: secretEnv('SANDBOX_RESET_TOKEN'),
+  },
+  port: parseInt(process.env.API_PORT || '3000', 10),
+  wsPort: parseInt(process.env.WS_PORT || '3001', 10),
+  aggregatorUrl: process.env.AGGREGATOR_URL || 'http://localhost:4000',
+  stellarRpcUrl: process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org',
+  contractId: process.env.CONTRACT_ID || '',
+  networkPassphrase: process.env.NETWORK_PASSPHRASE || 'Test SDF Network ; September 2015',
+  logLevel: process.env.LOG_LEVEL || 'info',
+  rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),
+  rateLimitMax: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
+  rateLimitRedisUrls: (process.env.RATE_LIMIT_REDIS_URLS || process.env.REDIS_URL || '')
+    .split(',')
+    .map((url) => url.trim())
+    .filter(Boolean),
+  geoIpDatabasePath: process.env.GEOIP_DATABASE_PATH || '',
+  cacheTtlMs: parseInt(process.env.CACHE_TTL_MS || '15000', 10),
+  redisUrl: optionalSecretEnv('REDIS_URL'),
+  priceCacheTtl: parseInt(process.env.PRICE_CACHE_TTL_MS || '15000', 10),
+  historyCacheTtl: parseInt(process.env.HISTORY_CACHE_TTL_MS || '60000', 10),
+  sourcesCacheTtl: parseInt(process.env.SOURCES_CACHE_TTL_MS || '300000', 10),
+  healthCacheTtl: parseInt(process.env.HEALTH_CACHE_TTL_MS || '30000', 10),
+  // Sensitive: decrypted at rest if stored as an `enc:` payload (issue #41).
+  databaseUrl: optionalSecretEnv('DATABASE_URL'),
+  // TimescaleDB hypertable support (issue #42).
+  useTimescale: process.env.USE_TIMESCALEDB !== 'false',
+  // Connection pooling, retry and circuit breaker (issue #44).
+  db: {
+    poolMin: parseInt(process.env.DATABASE_POOL_MIN || '2', 10),
+    poolMax: parseInt(process.env.DATABASE_POOL_MAX || '20', 10),
+    idleTimeoutMs: parseInt(process.env.DATABASE_IDLE_TIMEOUT_MS || '30000', 10),
+    connectionTimeoutMs: parseInt(process.env.DATABASE_CONNECTION_TIMEOUT_MS || '5000', 10),
+    statementTimeoutMs: parseInt(process.env.DATABASE_STATEMENT_TIMEOUT_MS || '15000', 10),
+    // Exponential-backoff retry for transient failures.
+    retry: {
+      maxRetries: parseInt(process.env.DATABASE_RETRY_MAX || '3', 10),
+      baseDelayMs: parseInt(process.env.DATABASE_RETRY_BASE_DELAY_MS || '100', 10),
+      maxDelayMs: parseInt(process.env.DATABASE_RETRY_MAX_DELAY_MS || '2000', 10),
+    },
+    // Circuit breaker to prevent thundering-herd against an unhealthy DB.
+    circuitBreaker: {
+      enabled: process.env.DATABASE_CIRCUIT_BREAKER_ENABLED !== 'false',
+      failureThreshold: parseInt(process.env.DATABASE_CB_FAILURE_THRESHOLD || '5', 10),
+      successThreshold: parseInt(process.env.DATABASE_CB_SUCCESS_THRESHOLD || '2', 10),
+      openMs: parseInt(process.env.DATABASE_CB_OPEN_MS || '10000', 10),
+    },
+    // Read replicas for horizontal read scaling (issue #45).
+    replica: {
+      urls: (process.env.DATABASE_REPLICA_URLS || '')
+        .split(',')
+        .map((u) => u.trim())
+        .filter(Boolean)
+        .map((u) => decryptSecret(u)),
+      // How long a replica may lag the primary before reads fall back to the
+      // primary (0 disables the lag check).
+      maxLagMs: parseInt(process.env.DATABASE_REPLICA_MAX_LAG_MS || '0', 10),
+      healthCheckIntervalMs: parseInt(process.env.DATABASE_REPLICA_HEALTHCHECK_MS || '10000', 10),
+    },
+    // Data archival / retention (issue #43).
+    archival: {
+      enabled: process.env.DATABASE_ARCHIVAL_ENABLED === 'true',
+      retentionDays: parseInt(process.env.HISTORY_RETENTION_DAYS || '0', 10),
+      archiveAfterDays: parseInt(process.env.HISTORY_ARCHIVE_AFTER_DAYS || '90', 10),
+      coldStorageDir: process.env.COLD_STORAGE_DIR || './data/archive',
+      batchSize: parseInt(process.env.ARCHIVAL_BATCH_SIZE || '5000', 10),
+      intervalMs: parseInt(process.env.ARCHIVAL_INTERVAL_MS || '86400000', 10),
+    },
+  },
+  // WebSocket upgrade hardening (issue #40).
+  ws: {
+    allowedOrigins: (process.env.WS_ALLOWED_ORIGINS || '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
+    requireOrigin: process.env.WS_REQUIRE_ORIGIN !== 'false',
+    csrfSecret: secretEnv('WS_CSRF_SECRET'),
+    csrfTtlMs: parseInt(process.env.WS_CSRF_TTL_MS || '300000', 10),
+    rateLimitMax: parseInt(process.env.WS_RATE_LIMIT_MAX || '20', 10),
+    rateLimitWindowMs: parseInt(process.env.WS_RATE_LIMIT_WINDOW_MS || '60000', 10),
+    maxConcurrentConnectionsPerIp: parseInt(process.env.WS_MAX_CONCURRENT_CONNECTIONS_PER_IP || '10', 10),
+    hmacSecret: secretEnv('WS_HMAC_SECRET'),
+  },
+  // Encryption at rest for sensitive config + historical data (issue #41).
+  encryption: {
+    key: process.env.ENCRYPTION_KEY || '',
+    previousKey: process.env.ENCRYPTION_KEY_PREVIOUS || '',
+  },
+  tracing: {
+    enabled: process.env.TRACING_ENABLED === 'true',
+    otlpEndpoint: process.env.OTLP_TRACE_ENDPOINT || process.env.JAEGER_ENDPOINT,
+    samplingRate: parseFloat(process.env.TRACING_SAMPLING_RATE || '1.0'),
+    serviceName: process.env.TRACING_SERVICE_NAME || 'stellar-oracle-api',
+  },
+  backup: {
+    enabled: process.env.BACKUP_ENABLED === 'true',
+    dir: process.env.BACKUP_DIR || './data/backups',
+    // 64-char hex key; if omitted backups are stored unencrypted
+    encryptionKeyHex: process.env.BACKUP_ENCRYPTION_KEY || '',
+    // DR (issue #106): snapshot cadence — lower this (e.g. 300000 = 5min) in
+    // production to keep Tier 2 recovery alone under the RPO target.
+    intervalMs: parseInt(process.env.BACKUP_INTERVAL_MS || String(24 * 60 * 60 * 1000), 10),
+  },
+  // Disaster recovery targets (issue #106) — see docs/disaster-recovery/README.md
+  dr: {
+    rtoTargetSeconds: parseInt(process.env.DR_RTO_TARGET_SECONDS || String(60 * 60), 10),
+    rpoTargetSeconds: parseInt(process.env.DR_RPO_TARGET_SECONDS || String(5 * 60), 10),
+  },
+  consistency: {
+    enabled: process.env.CONSISTENCY_CHECK_ENABLED !== 'false',
+    checkIntervalMs: parseInt(process.env.CONSISTENCY_CHECK_INTERVAL_MS || '60000', 10),
+  },
+  dbHealth: {
+    checkIntervalMs: parseInt(process.env.DB_HEALTH_CHECK_INTERVAL_MS || '15000', 10),
+    connectionExhaustionThreshold: parseFloat(process.env.DB_HEALTH_EXHAUSTION_THRESHOLD || '0.8'),
+    slowQueryThresholdMs: parseInt(process.env.DB_HEALTH_SLOW_QUERY_MS || '5000', 10),
+    replicationLagAlertMs: parseInt(process.env.DB_HEALTH_REPLICA_LAG_ALERT_MS || '30000', 10),
+  },
+  compression: {
+    enabled: process.env.COMPRESSION_ENABLED !== 'false',
+    threshold: parseInt(process.env.COMPRESSION_THRESHOLD || '1024', 10),
+    level: parseInt(process.env.COMPRESSION_LEVEL || '6', 10),
+  },
+  webhooks: {
+    baseDelayMs: parseInt(process.env.WEBHOOK_BASE_DELAY_MS || '1000', 10),
+    maxDelayMs: parseInt(process.env.WEBHOOK_MAX_DELAY_MS || '60000', 10),
+    maxRetries: parseInt(process.env.WEBHOOK_MAX_RETRIES || '5', 10),
+    timeoutMs: parseInt(process.env.WEBHOOK_TIMEOUT_MS || '10000', 10),
+    minIntervalMs: parseInt(process.env.WEBHOOK_MIN_INTERVAL_MS || '60000', 10),
+  },
+};

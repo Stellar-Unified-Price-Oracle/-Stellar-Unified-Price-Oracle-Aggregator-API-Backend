@@ -1,22 +1,27 @@
-import winston from 'winston';
+import { logger as winstonLogger } from '../observability/logger';
 
-export const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json(),
-  ),
-  defaultMeta: { service: 'stellar-price-api' },
-  transports: [
-    new winston.transports.File({ filename: 'logs/api-error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'logs/api-combined.log' }),
-    new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.colorize(),
-        winston.format.printf(({ timestamp, level, message }) => {
-          return `${timestamp} [${level}]: ${message}`;
-        }),
-      ),
-    }),
-  ],
-});
+function normalize(messageOrMeta: unknown, maybeMessage?: string): [string, unknown?] {
+  if (typeof maybeMessage === 'string') {
+    return [maybeMessage, messageOrMeta];
+  }
+  return [String(messageOrMeta)];
+}
+
+export const logger = {
+  debug(messageOrMeta: unknown, maybeMessage?: string): void {
+    const [message, meta] = normalize(messageOrMeta, maybeMessage);
+    winstonLogger.debug(message, meta);
+  },
+  info(messageOrMeta: unknown, maybeMessage?: string): void {
+    const [message, meta] = normalize(messageOrMeta, maybeMessage);
+    winstonLogger.info(message, meta);
+  },
+  warn(messageOrMeta: unknown, maybeMessage?: string): void {
+    const [message, meta] = normalize(messageOrMeta, maybeMessage);
+    winstonLogger.warn(message, meta);
+  },
+  error(messageOrMeta: unknown, maybeMessage?: string): void {
+    const [message, meta] = normalize(messageOrMeta, maybeMessage);
+    winstonLogger.error(message, meta);
+  },
+};

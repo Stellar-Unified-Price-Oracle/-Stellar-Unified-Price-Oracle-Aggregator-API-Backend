@@ -10,6 +10,19 @@ env:
   NODE_VERSION: '20'
 
 jobs:
+  cost-optimization:
+    name: Cost model and report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Verify cost analysis report
+        run: npm run cost:check
+
   aggregator:
     name: Aggregator service build
     runs-on: ubuntu-latest
@@ -65,3 +78,119 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  contract-verification:
+    name: Contract formal verification
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cargo tests and property checks
+        run: cargo test
+        working-directory: contracts/price-oracle
+
+      - name: Upgrade state-migration test (issue #381)
+        run: cargo test upgrade_migration --verbose
+        working-directory: contracts/price-oracle
+
+      - name: Generate verification report
+        run: node scripts/generate-verification-report.mjs
+
+      - name: Upload verification report
+        uses: actions/upload-artifact@v4
+        with:
+          name: price-oracle-verification-report
+          path: verification/reports/latest.md
+          retention-days: 30
+
+      - name: Post verification report
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('verification/reports/latest.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+  benchmark:
+    name: Performance regression check
+    runs-on: ubuntu-latest
+    needs: api
+    defaults:
+      run:
+        working-directory: api
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: oracle
+          POSTGRES_PASSWORD: oracle
+          POSTGRES_DB: oracle_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Start API server in background
+        run: node dist/index.js &
+        env:
+          PORT: 3000
+          DATABASE_URL: postgresql://oracle:oracle@localhost:5432/oracle_test
+          NODE_ENV: test
+
+      - name: Wait for server to be ready
+        run: |
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:3000/health && break
+            echo "Waiting for server... ($i/20)"
+            sleep 2
+          done
+
+      - name: Run performance benchmark
+        run: node ../scripts/benchmark.js
+        env:
+          BENCHMARK_BASE_URL: http://localhost:3000
+          BENCHMARK_THRESHOLD_PCT: '20'
+          BENCHMARK_ITERATIONS: '20'
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: scripts/benchmark-baseline.json
+          retention-days: 30

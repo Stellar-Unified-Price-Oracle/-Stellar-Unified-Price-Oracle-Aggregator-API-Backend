@@ -27,6 +27,7 @@ This directory contains operational runbooks for diagnosing and resolving incide
 | Soroban contract call failures | [contract-failures.md](contract-failures.md) |
 | High API error rate | [high-error-rate.md](high-error-rate.md) |
 | Database connectivity issues | [database-issues.md](database-issues.md) |
+| Mainnet deployment | [mainnet-deployment.md](mainnet-deployment.md) |
 
 ## Post-Mortem
 

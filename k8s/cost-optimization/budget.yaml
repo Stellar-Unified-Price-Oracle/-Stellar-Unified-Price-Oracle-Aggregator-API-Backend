@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cost-budget
+  labels:
+    cost.stellar.org/team: platform
+    cost.stellar.org/cost-center: stellar-oracle
+data:
+  currency: USD
+  monthly-budget: "30"
+  warning-percent: "80"
+  cpu-per-vcpu-hour: "0.04"
+  memory-per-gib-hour: "0.005"
+  storage-per-gib-month: "0.17"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: production-cost-guardrail
+  labels:
+    cost.stellar.org/team: platform
+    cost.stellar.org/cost-center: stellar-oracle
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 2Gi
+    limits.cpu: "4"
+    limits.memory: 5Gi
+    requests.storage: 20Gi
+    pods: "15"

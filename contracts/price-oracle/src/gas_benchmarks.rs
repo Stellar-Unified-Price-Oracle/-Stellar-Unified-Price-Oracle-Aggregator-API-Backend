@@ -243,4 +243,47 @@ mod bench {
         }
         print_budget("3-source submit_price round", &env);
     }
+
+    // ── Issue #378 — mainnet gas budget and cost model ───────────────────────
+    //
+    // Reports the warm-path submit_price instruction count and projects it
+    // to a monthly instruction budget for the default 5-asset, 30s-cadence
+    // feed. Run with `cargo test bench_mainnet_cost_model --lib -- --nocapture`
+    // and feed the printed line into the cost dashboard (see
+    // docs/GAS_COST_MODEL.md for the wiring and how to convert instructions
+    // to a $/month figure using the current mainnet resource fee rate).
+
+    const DEFAULT_ASSET_COUNT: u64 = 5;
+    const SUBMISSION_CADENCE_SECS: u64 = 30;
+    const SECONDS_PER_MONTH: u64 = 30 * 24 * 60 * 60;
+
+    #[test]
+    fn bench_mainnet_cost_model() {
+        let (env, client, _admin, oracle) = setup();
+        let asset = String::from_str(&env, "XLM");
+
+        // Warm up the entry (matches steady-state mainnet behaviour, not the
+        // one-time cold path).
+        client.submit_price(&oracle, &asset, &1i128, &7u32, &0u64);
+
+        env.budget().reset_default();
+        client.submit_price(&oracle, &asset, &2i128, &7u32, &1u64);
+        let per_submission_cpu = env.budget().cpu_instruction_count();
+        let per_submission_mem = env.budget().memory_bytes_count();
+
+        let submissions_per_month =
+            DEFAULT_ASSET_COUNT * (SECONDS_PER_MONTH / SUBMISSION_CADENCE_SECS);
+        let monthly_cpu_instructions = per_submission_cpu as u64 * submissions_per_month;
+
+        println!(
+            "[BENCH] mainnet_cost_model: per_submission_cpu={}, per_submission_mem={}, \
+             assets={}, cadence_secs={}, submissions_per_month={}, monthly_cpu_instructions={}",
+            per_submission_cpu,
+            per_submission_mem,
+            DEFAULT_ASSET_COUNT,
+            SUBMISSION_CADENCE_SECS,
+            submissions_per_month,
+            monthly_cpu_instructions,
+        );
+    }
 }

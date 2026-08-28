@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stellar-oracle-sandbox
+  labels:
+    app.kubernetes.io/part-of: stellar-oracle
+    stellar-oracle.io/environment: sandbox
+    stellar-oracle.io/production-data: "false"
+    istio-injection: enabled

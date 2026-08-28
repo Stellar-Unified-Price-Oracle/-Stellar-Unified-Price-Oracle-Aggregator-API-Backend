@@ -31,6 +31,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: stellar-oracle-config
+            - secretRef:
+                name: stellar-oracle-secrets
           env:
             - name: PORT
               value: "4000"

@@ -1,0 +1,8 @@
+{
+  "GET /health": { "min": 2, "max": 18, "mean": 5, "p50": 4, "p95": 12, "p99": 17, "errors": 0 },
+  "GET /api/v1/prices": { "min": 8, "max": 95, "mean": 22, "p50": 18, "p95": 65, "p99": 88, "errors": 0 },
+  "GET /api/v2/prices": { "min": 10, "max": 110, "mean": 28, "p50": 22, "p95": 80, "p99": 105, "errors": 0 },
+  "GET /api/v1/prices/XLM": { "min": 5, "max": 55, "mean": 15, "p50": 12, "p95": 40, "p99": 52, "errors": 0 },
+  "GET /api/v2/prices/XLM": { "min": 6, "max": 60, "mean": 17, "p50": 14, "p95": 45, "p99": 57, "errors": 0 },
+  "GET /metrics": { "min": 3, "max": 22, "mean": 7, "p50": 6, "p95": 15, "p99": 20, "errors": 0 }
+}

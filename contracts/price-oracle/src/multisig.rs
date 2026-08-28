@@ -19,7 +19,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env, Vec};
 
 use crate::errors::OracleError;
 use crate::storage;
-use crate::types::{MultiSigConfig, Proposal, ProposalAction, SourceReputation};
+use crate::types::{MultiSigConfig, MultiSigProposal, ProposalAction, SourceReputation};
 
 #[contract]
 pub struct MultiSigAdminContract;
@@ -40,7 +40,7 @@ impl MultiSigAdminContract {
         }
         let config = MultiSigConfig { signers, threshold };
         storage::set_multisig_config(&env, &config);
-        storage::set_proposal_count(&env, 0);
+        storage::set_msig_proposal_count(&env, 0);
         Ok(())
     }
 
@@ -63,11 +63,11 @@ impl MultiSigAdminContract {
             return Err(OracleError::NotASigner);
         }
 
-        let id = storage::get_proposal_count(&env);
+        let id = storage::get_msig_proposal_count(&env);
         let mut approvals: Vec<Address> = Vec::new(&env);
         approvals.push_back(proposer.clone());
 
-        let proposal = Proposal {
+        let proposal = MultiSigProposal {
             id,
             action,
             approvals,
@@ -76,7 +76,7 @@ impl MultiSigAdminContract {
             proposer,
         };
 
-        storage::set_proposal(&env, &proposal);
+        storage::set_multisig_proposal(&env, &proposal);
         storage::set_proposal_count(&env, id + 1);
         Ok(id)
     }
@@ -96,7 +96,7 @@ impl MultiSigAdminContract {
             return Err(OracleError::NotASigner);
         }
 
-        let mut proposal = storage::get_proposal(&env, proposal_id)
+        let mut proposal = storage::get_multisig_proposal(&env, proposal_id)
             .ok_or(OracleError::ProposalNotFound)?;
 
         if proposal.executed == 1 {
@@ -108,7 +108,7 @@ impl MultiSigAdminContract {
         }
 
         proposal.approvals.push_back(signer);
-        storage::set_proposal(&env, &proposal);
+        storage::set_multisig_proposal(&env, &proposal);
         Ok(())
     }
 
@@ -130,7 +130,7 @@ impl MultiSigAdminContract {
             return Err(OracleError::NotASigner);
         }
 
-        let mut proposal = storage::get_proposal(&env, proposal_id)
+        let mut proposal = storage::get_multisig_proposal(&env, proposal_id)
             .ok_or(OracleError::ProposalNotFound)?;
 
         if proposal.executed == 1 {
@@ -146,7 +146,7 @@ impl MultiSigAdminContract {
 
         proposal.executed = 1;
         let action = proposal.action.clone();
-        storage::set_proposal(&env, &proposal);
+        storage::set_multisig_proposal(&env, &proposal);
 
         Ok(action)
     }
@@ -155,8 +155,8 @@ impl MultiSigAdminContract {
     // Queries
     // -------------------------------------------------------------------------
 
-    pub fn get_proposal(env: Env, proposal_id: u32) -> Option<Proposal> {
-        storage::get_proposal(&env, proposal_id)
+    pub fn get_proposal(env: Env, proposal_id: u32) -> Option<MultiSigProposal> {
+        storage::get_multisig_proposal(&env, proposal_id)
     }
 
     pub fn get_config(env: Env) -> Option<MultiSigConfig> {
@@ -176,7 +176,7 @@ impl MultiSigAdminContract {
     }
 
     pub fn get_proposal_count(env: Env) -> u32 {
-        storage::get_proposal_count(&env)
+        storage::get_msig_proposal_count(&env)
     }
 
     pub fn get_source_reputation(env: Env, source: Address) -> Option<SourceReputation> {
