@@ -105,14 +105,14 @@ jobs:
         run: cosign sign --yes "${REGISTRY}/${GITHUB_REPOSITORY}/aggregator@${{ steps.build-aggregator.outputs.digest }}"
 
       - name: Generate SLSA provenance — API image
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/api
           subject-digest: ${{ steps.build-api.outputs.digest }}
           push-to-registry: true
 
       - name: Generate SLSA provenance — Aggregator image
-        uses: actions/attest-build-provenance@v1
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/aggregator
           subject-digest: ${{ steps.build-aggregator.outputs.digest }}
