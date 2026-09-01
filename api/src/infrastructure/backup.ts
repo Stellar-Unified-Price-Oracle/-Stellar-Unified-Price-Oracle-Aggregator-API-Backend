@@ -71,6 +71,8 @@ export class BackupService {
   private readonly backupDir: string;
   private readonly encKey: Buffer | null;
   private readonly databaseUrl: string;
+  private readonly dailyIntervalMs: number;
+  private readonly restoreTestIntervalMs: number;
 
   constructor(
     databaseUrl: string,
@@ -87,24 +89,29 @@ export class BackupService {
     this.encKey = options.encryptionKeyHex
       ? Buffer.from(options.encryptionKeyHex.padEnd(64, '0').slice(0, 64), 'hex')
       : null;
+    // DR (issue #106): interval defaults to 24h but is configurable — a short
+    // interval (e.g. 5min) lets Tier 2 recovery alone meet an aggressive RPO target
+    // even when Tier 1's WAL archive is also unavailable.
+    this.dailyIntervalMs = options.dailyIntervalMs ?? 24 * 60 * 60 * 1000;
+    this.restoreTestIntervalMs = options.restoreTestIntervalMs ?? 7 * 24 * 60 * 60 * 1000;
   }
 
   start(): void {
-    const dailyMs = 24 * 60 * 60 * 1000;
+    const intervalMs = this.dailyIntervalMs;
     // First backup fires 30s after startup so the DB has time to warm up
     const initial = setTimeout(() => { void this.createBackup(); }, 30_000);
     initial.unref?.();
 
-    this.dailyTimer = setInterval(() => { void this.createBackup(); }, dailyMs);
+    this.dailyTimer = setInterval(() => { void this.createBackup(); }, intervalMs);
     this.dailyTimer.unref?.();
 
     // Weekly restore-integrity test
-    const weeklyMs = 7 * 24 * 60 * 60 * 1000;
+    const weeklyMs = this.restoreTestIntervalMs;
     this.restoreTestTimer = setInterval(() => { void this.testRestoreIntegrity(); }, weeklyMs);
     this.restoreTestTimer.unref?.();
 
     this.logger.info(
-      `Backup service started — daily backups to ${this.backupDir}` +
+      `Backup service started — snapshots every ${Math.round(intervalMs / 1000)}s to ${this.backupDir}` +
       (this.encKey ? ' (AES-256-GCM encrypted)' : ' (unencrypted — set BACKUP_ENCRYPTION_KEY)'),
     );
   }

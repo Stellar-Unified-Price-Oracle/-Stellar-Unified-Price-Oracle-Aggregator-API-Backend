@@ -14,6 +14,7 @@ resources:
   - api/hpa.yaml
   - timescaledb/statefulset.yaml
   - timescaledb/service.yaml
+  - timescaledb/base-backup-cronjob.yaml
 
 commonLabels:
   app.kubernetes.io/part-of: stellar-oracle

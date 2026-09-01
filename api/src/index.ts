@@ -4,41 +4,43 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
-import { config } from './infrastructure/config';
-import { corsManager } from './governance/cors-manager';
-import { logger } from './observability/logger';
-import { requestLogger } from './observability/request-logger';
-import { requestIdMiddleware } from './observability/request-id';
-import { errorHandler, notFoundHandler } from './infrastructure/error';
-import { metricsMiddleware, metricsHandler } from './observability/metrics';
-import { authMiddleware, optionalAuthMiddleware } from './governance/auth';
-import { sanitizeInputs } from './governance/sanitization';
-import { httpsRedirect, hstsHeaders } from './infrastructure/https';
-import { compressionMiddleware } from './infrastructure/compression';
-import { usageTrackingMiddleware } from './governance/usage-tracking';
+import { config } from './config';
+import { corsManager } from './services/cors-manager';
+import { logger } from './middleware/logger';
+import { requestLogger } from './middleware/request-logger';
+import { requestIdMiddleware } from './middleware/request-id';
+import { errorHandler, notFoundHandler } from './middleware/error';
+import { metricsMiddleware, metricsHandler } from './middleware/metrics';
+import { authMiddleware, optionalAuthMiddleware } from './middleware/auth';
+import { sanitizeInputs, cspHeaders } from './middleware/sanitization';
+import { httpsRedirect, hstsHeaders } from './middleware/https';
+import { compressionMiddleware } from './middleware/compression';
+import { usageTrackingMiddleware } from './middleware/usage-tracking';
 import { complianceAuditMiddleware } from './governance/compliance';
-import { PriceWebSocketServer } from './infrastructure/server';
-import { swaggerSpec } from './infrastructure/openapi';
-import v1Routes, { initializeCache } from './price-serving/v1';
-import v2Routes, { initializeCacheV2 } from './price-serving/v2';
-import { v1DeprecationHeaders, v2Headers } from './price-serving/versioning';
-import { HybridCache } from './price-serving/cache';
-import { DatabaseClient, setDb } from './infrastructure/database';
-import { ArchivalService } from './infrastructure/archival';
-import { DbHealthMonitor } from './infrastructure/db-health-monitor';
-import { DataConsistencyChecker } from './infrastructure/data-consistency';
-import { BackupService } from './infrastructure/backup';
-import { setDatabase } from './price-serving/price-store';
-import { initializeTracing } from './observability/tracing';
-import { AppError } from './infrastructure/app-error';
-import { ErrorCode } from './infrastructure/catalog';
+import { PriceWebSocketServer } from './websocket/server';
+import { swaggerSpec } from './services/openapi';
+import v1Routes, { initializeCache } from './routes/v1';
+import v2Routes, { initializeCacheV2 } from './routes/v2';
+import { v1DeprecationHeaders, v2Headers } from './middleware/versioning';
+import { HybridCache } from './services/cache';
+import { DatabaseClient, setDb } from './services/database';
+import { ArchivalService } from './services/archival';
+import { DbHealthMonitor } from './services/db-health-monitor';
+import { DataConsistencyChecker } from './services/data-consistency';
+import { BackupService } from './services/backup';
+import { DrStatusService } from './services/dr-status';
+import { setDatabase } from './services/price-store';
+import { initializeTracing } from './services/tracing';
+import adminRoutes from './routes/admin';
+import statusRoutes from './routes/status';
 import platformRoutes from './platform/routes';
-import adminRoutes from './governance/admin';
 import sandboxRoutes, { initializeSandboxCache } from './routes/sandbox';
 import featureFlagRoutes from './routes/featureFlags';
 import eventRoutes from './routes/events';
 import governanceRoutes from './governance/proposal-routes';
-import { uptimeTracker } from './observability/uptime-tracker';
+import { uptimeTracker } from './services/uptime-tracker';
+import { AppError } from './errors/app-error';
+import { ErrorCode } from './errors/catalog';
 import { getVaultClient } from '@stellar-oracle/vault-client';
 import { apiKeyManager } from './governance/api-key-manager';
 
@@ -52,6 +54,7 @@ let archival: ArchivalService | null = null;
 let dbHealthMonitor: DbHealthMonitor | null = null;
 let consistencyChecker: DataConsistencyChecker | null = null;
 let backupService: BackupService | null = null;
+let drStatusService: DrStatusService | null = null;
 
 async function initializeApp(): Promise<void> {
   // Initialize Vault for API key and webhook secret management
@@ -109,9 +112,19 @@ async function initializeApp(): Promise<void> {
         backupService = new BackupService(config.databaseUrl, logger, {
           backupDir: config.backup.dir,
           encryptionKeyHex: config.backup.encryptionKeyHex || undefined,
+          dailyIntervalMs: config.backup.intervalMs,
         });
         backupService.start();
       }
+
+      // DR (issue #106) — tracks backup staleness against the RPO target for
+      // /api/v1/admin/dr/status and the dr_rpo_seconds metric, independent of
+      // whether the automated daily backup loop above is enabled.
+      drStatusService = new DrStatusService(config.databaseUrl, logger, {
+        backupDir: config.backup.dir,
+        rpoTargetSeconds: config.dr.rpoTargetSeconds,
+      });
+      drStatusService.start();
 
       logger.info('PostgreSQL database connected');
     } catch (err) {
@@ -239,6 +252,7 @@ async function startServer(): Promise<void> {
     if (dbHealthMonitor) dbHealthMonitor.stop();
     if (consistencyChecker) consistencyChecker.stop();
     if (backupService) backupService.stop();
+    if (drStatusService) drStatusService.stop();
     if (db) {
       db.disconnect().catch((err) => logger.error('Error disconnecting from database', err));
     }
