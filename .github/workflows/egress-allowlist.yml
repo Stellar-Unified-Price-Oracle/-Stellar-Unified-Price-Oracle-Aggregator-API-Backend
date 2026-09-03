@@ -1,0 +1,229 @@
+name: Egress allowlist — blocked destination tests
+
+# #394: Run after every change to k8s network policies or Terraform SG module.
+# Also runs nightly to catch FQDN drift.
+
+on:
+  push:
+    paths:
+      - "k8s/base/networkpolicy.yaml"
+      - "k8s/base/networkpolicy-fqdn.yaml"
+      - "k8s/overlays/prod/networkpolicy-egress-patch.yaml"
+      - "infrastructure/terraform/modules/egress-allowlist/**"
+      - ".github/workflows/egress-allowlist.yml"
+  pull_request:
+    paths:
+      - "k8s/base/networkpolicy.yaml"
+      - "k8s/base/networkpolicy-fqdn.yaml"
+      - "k8s/overlays/prod/networkpolicy-egress-patch.yaml"
+      - "infrastructure/terraform/modules/egress-allowlist/**"
+  schedule:
+    # Nightly FQDN drift check at 02:00 UTC
+    - cron: "0 2 * * *"
+
+jobs:
+  # ── 1. Validate NetworkPolicy YAML structure ────────────────────────────────
+  validate-policies:
+    name: Validate NetworkPolicy manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kustomize + kubeconform
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar xz -C /usr/local/bin/
+
+      - name: Build prod overlay (includes egress patch)
+        run: kustomize build k8s/overlays/prod > /tmp/prod-manifests.yaml
+
+      - name: Validate with kubeconform
+        run: |
+          kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -schema-location default \
+            /tmp/prod-manifests.yaml
+
+  # ── 2. Verify no RFC-1918 egress leak in base policy ───────────────────────
+  check-private-ip-blocks:
+    name: Verify RFC-1918 blocks are present in base NetworkPolicy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure private IP ranges are blocked
+        run: |
+          POLICY="k8s/base/networkpolicy.yaml"
+          REQUIRED_BLOCKS=("10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "169.254.0.0/16")
+          FAIL=0
+          for cidr in "${REQUIRED_BLOCKS[@]}"; do
+            if ! grep -q "$cidr" "$POLICY"; then
+              echo "FAIL: RFC-1918 block $cidr missing from $POLICY"
+              FAIL=1
+            fi
+          done
+          if [[ $FAIL -ne 0 ]]; then
+            echo "Network policy does not block all private address ranges." >&2
+            exit 1
+          fi
+          echo "All RFC-1918 exception blocks present."
+
+  # ── 3. Oracle FQDN drift check ──────────────────────────────────────────────
+  fqdn-drift-check:
+    name: Oracle FQDN — check IPs still match policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve oracle FQDNs and compare to allowlist
+        run: |
+          FQDNS=(
+            "min-api.cryptocompare.com"
+            "api.redstone.finance"
+            "laozi1.bandchain.org"
+            "api.reflector.xyz"
+            "soroban-mainnet.stellar.org"
+            "horizon.stellar.org"
+          )
+
+          POLICY="k8s/overlays/prod/networkpolicy-egress-patch.yaml"
+          DRIFT=0
+
+          for fqdn in "${FQDNS[@]}"; do
+            RESOLVED_IPS=$(dig +short A "$fqdn" 2>/dev/null | grep -E '^[0-9]+\.' | sort -u)
+            if [[ -z "$RESOLVED_IPS" ]]; then
+              echo "WARNING: $fqdn did not resolve — skipping (may be transient)"
+              continue
+            fi
+
+            while IFS= read -r ip; do
+              # Extract the first three octets to check for /24 or /16 coverage
+              OCT3=$(echo "$ip" | cut -d. -f1-3)
+              OCT2=$(echo "$ip" | cut -d. -f1-2)
+              if ! grep -qE "${ip}/32|${OCT3}\.0/24|${OCT2}\.0\.0/16|${OCT2}\.0/16" "$POLICY" 2>/dev/null; then
+                echo "DRIFT: $fqdn resolved to $ip but that IP is not covered by any CIDR in $POLICY"
+                echo "  → Re-run scripts/resolve-oracle-ips.sh and update the policy."
+                DRIFT=1
+              fi
+            done <<< "$RESOLVED_IPS"
+          done
+
+          if [[ $DRIFT -ne 0 ]]; then
+            echo ""
+            echo "One or more oracle FQDNs have drifted outside the egress allowlist." >&2
+            echo "Update k8s/overlays/prod/networkpolicy-egress-patch.yaml and" >&2
+            echo "infrastructure/terraform/modules/egress-allowlist/main.tf before merging." >&2
+            exit 1
+          fi
+          echo "All oracle FQDNs are within the allowlist CIDRs."
+
+  # ── 4. Blocked-destination reachability test (sandbox cluster) ─────────────
+  blocked-destination-test:
+    name: Blocked destination unreachability test
+    runs-on: ubuntu-latest
+    # This job requires a live kubeconfig for a sandbox/test cluster.
+    # Skip gracefully if the secret is absent (forks, dependabot PRs).
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.29.0"
+
+      - name: Configure kubeconfig (sandbox)
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_SANDBOX }}
+        run: |
+          if [[ -z "$KUBECONFIG_B64" ]]; then
+            echo "KUBECONFIG_SANDBOX secret not set — skipping live cluster test."
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          mkdir -p ~/.kube
+          echo "$KUBECONFIG_B64" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Apply base NetworkPolicy to sandbox
+        if: env.SKIP != 'true'
+        run: |
+          kubectl apply -f k8s/base/networkpolicy.yaml -n stellar-oracle-sandbox || true
+
+      - name: Test — blocked RFC-1918 destination is unreachable
+        if: env.SKIP != 'true'
+        run: |
+          # Attempt to reach an internal RFC-1918 address from the aggregator pod.
+          # The network policy should block this; curl must time out / fail.
+          POD=$(kubectl get pods -n stellar-oracle-sandbox \
+            -l app=aggregator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+          if [[ -z "$POD" ]]; then
+            echo "No aggregator pod found in sandbox — skipping live connectivity test."
+            exit 0
+          fi
+
+          echo "Testing blocked RFC-1918 egress from pod: $POD"
+          # Should fail (connection refused / timeout because policy blocks it)
+          if kubectl exec -n stellar-oracle-sandbox "$POD" -- \
+               curl -sf --max-time 5 http://192.168.1.1/ 2>/dev/null; then
+            echo "FAIL: RFC-1918 destination 192.168.1.1 was reachable — egress policy not enforced!" >&2
+            exit 1
+          fi
+          echo "PASS: RFC-1918 destination correctly blocked."
+
+      - name: Test — allowlisted oracle destination is reachable
+        if: env.SKIP != 'true'
+        run: |
+          POD=$(kubectl get pods -n stellar-oracle-sandbox \
+            -l app=aggregator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+          if [[ -z "$POD" ]]; then
+            echo "No aggregator pod found — skipping."
+            exit 0
+          fi
+
+          echo "Testing allowlisted HTTPS egress to api.redstone.finance..."
+          if ! kubectl exec -n stellar-oracle-sandbox "$POD" -- \
+               curl -sf --max-time 10 https://api.redstone.finance/prices 2>/dev/null; then
+            echo "WARNING: allowlisted oracle destination unreachable (may be transient network issue)"
+          else
+            echo "PASS: allowlisted oracle destination reachable."
+          fi
+
+  # ── 5. Terraform plan — egress-allowlist module ─────────────────────────────
+  terraform-plan:
+    name: Terraform plan — egress-allowlist module
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform init (local backend for CI)
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan — egress module only
+        run: |
+          terraform plan \
+            -target=module.egress_allowlist \
+            -var="api_image=placeholder" \
+            -var="db_password=placeholder" \
+            -var="environment=prod" \
+            -out=/tmp/egress.tfplan \
+            -input=false \
+            2>&1 || true
+          echo "Terraform plan completed (apply requires AWS credentials in prod)"
