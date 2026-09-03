@@ -9,6 +9,13 @@ import {
 } from '@stellar/stellar-sdk';
 import { config } from '../infrastructure/config';
 import { logger } from '../observability/logger';
+import {
+  canaryActive,
+  canaryConsecutiveFailures,
+  canaryRollbacksTotal,
+  canarySubmissionsTotal,
+  canaryTrafficShareBps,
+} from '../observability/metrics';
 import { AggregatedPrice } from '../infrastructure/types';
 import { contractSubmissionGas, contractSubmissionGasTotal } from '../observability/metrics';
 import { SubmissionRetryQueue } from './retry-queue';
@@ -96,11 +103,19 @@ export class ContractPublisher {
   private networkPassphrase: string;
   private retryQueue: SubmissionRetryQueue;
 
+  // Issue #105 — canary deployment state, refreshed from the on-chain
+  // `get_canary` registration on the proxy contract id.
+  private canaryContractId: string | null = null;
+  private canaryShareBps = 0;
+  private submissionSequence = 0;
+  private canaryRollbackGuard: CanaryRollbackGuard;
+
   constructor() {
     this.server = new SorobanRpc.Server(config.soroban.rpcUrl);
     this.keypair = Keypair.fromSecret(config.soroban.adminSecret);
     this.contractId = config.soroban.contractId;
     this.networkPassphrase = config.soroban.networkPassphrase;
+    this.canaryRollbackGuard = new CanaryRollbackGuard(config.canary.failureThreshold);
 
     this.retryQueue = new SubmissionRetryQueue({
       maxRetries: 5,
@@ -134,6 +149,19 @@ export class ContractPublisher {
     decimals: number,
     timestamp: number,
   ): Promise<string | null> {
+    // Retries and direct submissions always target the canonical contract;
+    // only publishAggregated() routes a share of the live stream to a canary.
+    return this.submitPriceTo(this.contractId, asset, price, decimals, timestamp);
+  }
+
+  /** Send one submission to a specific contract id (canonical or canary). */
+  private async submitPriceTo(
+    targetContractId: string,
+    asset: string,
+    price: bigint,
+    decimals: number,
+    timestamp: number,
+  ): Promise<string | null> {
     const startMs = Date.now();
     const fnName = 'submit_price';
     const params = { asset, price: price.toString(), decimals, timestamp };
@@ -148,7 +176,7 @@ export class ContractPublisher {
       })
         .addOperation(
           Operation.invokeContractFunction({
-            contract: this.contractId,
+            contract: targetContractId,
             function: fnName,
             args: [
               nativeToScVal(this.keypair.publicKey(), { type: 'address' }),
@@ -345,14 +373,158 @@ export class ContractPublisher {
     }
   }
 
-  async publishAggregated(prices: AggregatedPrice[]): Promise<void> {
-    for (const price of prices) {
-      await this.submitPrice(
-        price.asset,
-        BigInt(price.price),
-        price.decimals,
-        price.timestamp,
+  // Issue #105 — refresh canary registration from the proxy's `get_canary`.
+  // The proxy contract (this.contractId) is the source of truth for whether a
+  // canary is deployed and what share of traffic it should receive.
+  async refreshCanary(): Promise<void> {
+    try {
+      if (!this.contractId) {
+        this.canaryContractId = null;
+        this.canaryShareBps = 0;
+        canaryActive.set(0);
+        canaryTrafficShareBps.set(0);
+        return;
+      }
+
+      const account = await this.server.getAccount(this.keypair.publicKey());
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: this.contractId,
+            function: 'get_canary',
+            args: [],
+          }),
+        )
+        .setTimeout(30)
+        .build();
+
+      tx.sign(this.keypair);
+      const simulateResponse: any = await this.server.simulateTransaction(tx);
+      if (simulateResponse.error || !simulateResponse.result?.retval) {
+        // No canary registered (or call failed) — treat as inactive.
+        this.canaryContractId = null;
+        this.canaryShareBps = 0;
+      } else {
+        const decoded: any = scValToNative(simulateResponse.result.retval);
+        if (Array.isArray(decoded) && decoded.length >= 2) {
+          this.canaryContractId = String(decoded[0]);
+          this.canaryShareBps = Number(decoded[1]);
+        } else {
+          this.canaryContractId = null;
+          this.canaryShareBps = 0;
+        }
+      }
+
+      canaryActive.set(this.isCanaryActive() ? 1 : 0);
+      canaryTrafficShareBps.set(this.canaryShareBps);
+      canaryConsecutiveFailures.set(this.canaryRollbackGuard.consecutiveFailures());
+      logger.debug('[Canary] refreshed registration', {
+        canaryContractId: this.canaryContractId,
+        shareBps: this.canaryShareBps,
+      });
+    } catch (err) {
+      logger.warn('[Canary] failed to refresh registration', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  isCanaryActive(): boolean {
+    return this.canaryContractId !== null && this.canaryShareBps > 0;
+  }
+
+  getCanaryState(): { contractId: string | null; shareBps: number } {
+    return { contractId: this.canaryContractId, shareBps: this.canaryShareBps };
+  }
+
+  /** Zero the canary traffic share on-chain so no further traffic is routed. */
+  private async rollbackCanary(): Promise<void> {
+    logger.error('[Canary] rollback threshold reached — zeroing canary traffic share');
+    canaryRollbacksTotal.inc();
+
+    if (!config.canary.autoRollback || !this.canaryContractId) {
+      logger.warn(
+        '[Canary] auto-rollback disabled or no canary registered — run scripts/deploy-canary.js rollback manually',
       );
+      return;
+    }
+
+    try {
+      const account = await this.server.getAccount(this.keypair.publicKey());
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: this.contractId,
+            function: 'set_canary',
+            args: [
+              nativeToScVal(this.keypair.publicKey(), { type: 'address' }),
+              nativeToScVal(this.canaryContractId, { type: 'address' }),
+              nativeToScVal(0, { type: 'u32' }),
+            ],
+          }),
+        )
+        .setTimeout(30)
+        .build();
+
+      tx.sign(this.keypair);
+      await this.server.sendTransaction(tx);
+
+      this.canaryShareBps = 0;
+      canaryTrafficShareBps.set(0);
+      canaryActive.set(0);
+      logger.error('[Canary] traffic share zeroed on-chain — canary paused');
+    } catch (err) {
+      logger.error('[Canary] auto-rollback transaction failed — manual rollback required', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  async publishAggregated(prices: AggregatedPrice[]): Promise<void> {
+    // Re-read the on-chain canary registration once per publish round so a
+    // promote/rollback by an operator is picked up promptly.
+    await this.refreshCanary();
+
+    for (const price of prices) {
+      this.submissionSequence += 1;
+      const routeToCanary =
+        this.isCanaryActive() &&
+        shouldRouteToCanary(this.submissionSequence, this.canaryShareBps);
+
+      if (routeToCanary) {
+        const result = await this.submitPriceTo(
+          this.canaryContractId as string,
+          price.asset,
+          BigInt(price.price),
+          price.decimals,
+          price.timestamp,
+        );
+
+        if (result) {
+          this.canaryRollbackGuard.recordSuccess();
+          canarySubmissionsTotal.inc({ status: 'success' });
+        } else {
+          const shouldRollback = this.canaryRollbackGuard.recordFailure();
+          canarySubmissionsTotal.inc({ status: 'failed' });
+          canaryConsecutiveFailures.set(this.canaryRollbackGuard.consecutiveFailures());
+          if (shouldRollback) {
+            await this.rollbackCanary();
+          }
+        }
+      } else {
+        await this.submitPrice(
+          price.asset,
+          BigInt(price.price),
+          price.decimals,
+          price.timestamp,
+        );
+      }
     }
   }
 
