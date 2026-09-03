@@ -30,11 +30,7 @@ impl MultiSigAdminContract {
     // Initialization
     // -------------------------------------------------------------------------
 
-    pub fn initialize(
-        env: Env,
-        signers: Vec<Address>,
-        threshold: u32,
-    ) -> Result<(), OracleError> {
+    pub fn initialize(env: Env, signers: Vec<Address>, threshold: u32) -> Result<(), OracleError> {
         if threshold == 0 || (threshold as usize) > signers.len() as usize {
             return Err(OracleError::InvalidThreshold);
         }
@@ -56,8 +52,8 @@ impl MultiSigAdminContract {
     ) -> Result<u32, OracleError> {
         proposer.require_auth();
 
-        let config = storage::get_multisig_config(&env)
-            .ok_or(OracleError::MultiSigNotInitialized)?;
+        let config =
+            storage::get_multisig_config(&env).ok_or(OracleError::MultiSigNotInitialized)?;
 
         if !vec_contains_address(&config.signers, &proposer) {
             return Err(OracleError::NotASigner);
@@ -89,8 +85,8 @@ impl MultiSigAdminContract {
     ) -> Result<(), OracleError> {
         signer.require_auth();
 
-        let config = storage::get_multisig_config(&env)
-            .ok_or(OracleError::MultiSigNotInitialized)?;
+        let config =
+            storage::get_multisig_config(&env).ok_or(OracleError::MultiSigNotInitialized)?;
 
         if !vec_contains_address(&config.signers, &signer) {
             return Err(OracleError::NotASigner);
@@ -123,8 +119,8 @@ impl MultiSigAdminContract {
     ) -> Result<ProposalAction, OracleError> {
         signer.require_auth();
 
-        let config = storage::get_multisig_config(&env)
-            .ok_or(OracleError::MultiSigNotInitialized)?;
+        let config =
+            storage::get_multisig_config(&env).ok_or(OracleError::MultiSigNotInitialized)?;
 
         if !vec_contains_address(&config.signers, &signer) {
             return Err(OracleError::NotASigner);

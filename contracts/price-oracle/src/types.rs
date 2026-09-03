@@ -79,10 +79,10 @@ pub struct MerkleProof {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceReputation {
-    pub score: u32,                 // 0-10000 basis points; 10000 = perfect accuracy
+    pub score: u32, // 0-10000 basis points; 10000 = perfect accuracy
     pub total_submissions: u32,
     pub accurate_submissions: u32,
-    pub last_updated: u64,          // ledger timestamp of last submission
+    pub last_updated: u64, // ledger timestamp of last submission
 }
 
 // Issue #67 — multi-sig admin control
@@ -96,12 +96,12 @@ pub struct MultiSigConfig {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub enum ProposalAction {
-    AddSource(Address, String),     // (source_address, name)
+    AddSource(Address, String), // (source_address, name)
     RemoveSource(Address),
-    SetTrustedAsset(String, bool),  // (asset, trusted)
+    SetTrustedAsset(String, bool), // (asset, trusted)
     TransferAdmin(Address),
-    SetDeviationThreshold(u32),     // new threshold in basis points
-    ResetReputation(Address),       // source address
+    SetDeviationThreshold(u32), // new threshold in basis points
+    ResetReputation(Address),   // source address
     AddSigner(Address),
     RemoveSigner(Address),
     SetThreshold(u32),
@@ -123,7 +123,7 @@ pub struct MultiSigProposal {
     pub id: u32,
     pub action: ProposalAction,
     pub approvals: Vec<Address>,
-    pub executed: u32,              // 0 = pending, 1 = executed (bool avoided for XDR compat)
+    pub executed: u32, // 0 = pending, 1 = executed (bool avoided for XDR compat)
     pub created_at: u64,
     pub proposer: Address,
 }
@@ -195,6 +195,7 @@ pub struct CanaryConfig {
 #[derive(Clone)]
 pub enum DataKey {
     Admin,
+    Paused,
     Source(Address),
     SourceName(Address),
     LatestPrice(String),
