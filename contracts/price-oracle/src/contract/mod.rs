@@ -26,6 +26,11 @@ mod governance;
 mod queries;
 mod submission;
 
+// Issue #383 — ABI version of the exported interface.  Bump only for a
+// breaking change to any exported entrypoint's shape (see
+// docs/CONTRACT_VERSIONING.md); every upgrade keeps this value stable.
+pub const API_VERSION: u32 = 1;
+
 #[contract]
 pub struct PriceOracleContract;
 
@@ -35,6 +40,12 @@ impl PriceOracleContract {
 
     pub fn initialize(env: Env, admin: Address) -> Result<(), OracleError> {
         admin::initialize(&env, &admin)
+    }
+
+    /// Version of the exported ABI.  Stable across non-breaking upgrades;
+    /// consumers can gate integrations on it.  Also exposed by the proxy.
+    pub fn get_api_version(_env: Env) -> u32 {
+        API_VERSION
     }
 
     // ── Issue #69 — price submission ───────────────────────────────────────
