@@ -10,6 +10,7 @@ resources:
 
 patches:
   - path: configmap-patch.yaml
+  - path: networkpolicy-egress-patch.yaml
   - target:
       kind: Deployment
       name: api-stable

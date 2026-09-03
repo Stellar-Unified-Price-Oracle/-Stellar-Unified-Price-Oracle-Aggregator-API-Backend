@@ -157,6 +157,17 @@ module "api" {
   db_password       = var.db_password
 }
 
+# ── Egress Allowlist — oracle source HTTPS-only SGs (#394) ───────────────────
+
+module "egress_allowlist" {
+  source = "./modules/egress-allowlist"
+
+  vpc_id       = aws_vpc.main.id
+  project_name = var.project_name
+  environment  = var.environment
+  tags         = var.tags
+}
+
 # ── Database Module ───────────────────────────────────────────────────────────
 
 module "database" {

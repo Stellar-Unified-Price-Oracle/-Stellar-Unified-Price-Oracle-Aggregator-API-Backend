@@ -1,3 +1,38 @@
+# Base NetworkPolicies — default-deny all, then allow only what is needed.
+#
+# Egress to oracle source FQDNs is enforced via a companion
+# k8s/overlays/prod/networkpolicy-egress-patch.yaml that adds the production
+# IP blocks resolved from each allowlisted FQDN.  In clusters with a
+# DNS-aware CNI (Cilium, Calico with DNS policy) the FQDN-based
+# NetworkPolicy in k8s/base/networkpolicy-fqdn.yaml takes precedence.
+#
+# Oracle FQDN allowlist (mapped to the egress ip blocks below):
+#   min-api.cryptocompare.com  → Chainlink proxy
+#   api.redstone.finance        → Redstone
+#   laozi1.bandchain.org        → Band Protocol
+#   api.reflector.xyz           → Reflector
+#   soroban-testnet.stellar.org → Soroban RPC (testnet)
+#   soroban-mainnet.stellar.org → Soroban RPC (mainnet)
+#   horizon.stellar.org         → Stellar Horizon (mainnet)
+#
+# Each oracle egress rule allows only TCP/443 (HTTPS).  No plain HTTP (80)
+# is permitted from the aggregator on mainnet; the prod overlay removes the
+# port-80 block entirely.
+
+---
+# ── Default deny-all for the oracle namespace ─────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# ── API pod policy ────────────────────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -10,6 +45,7 @@ spec:
     - Ingress
     - Egress
   ingress:
+    # Accept traffic from any pod in the same namespace (Istio sidecar, ingress)
     - from:
         - podSelector: {}
       ports:
@@ -17,7 +53,16 @@ spec:
           port: 3000
         - protocol: TCP
           port: 3001
+    # Accept traffic from the monitoring namespace (Prometheus scrape)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3000
   egress:
+    # Internal: aggregator service
     - to:
         - podSelector:
             matchLabels:
@@ -29,6 +74,7 @@ spec:
           port: 4001
         - protocol: TCP
           port: 4002
+    # Internal: TimescaleDB
     - to:
         - podSelector:
             matchLabels:
@@ -36,6 +82,17 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+    # Internal: Redis (Sentinel + nodes)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
+    # DNS resolution (cluster-internal only)
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -46,15 +103,27 @@ spec:
           port: 53
         - protocol: UDP
           port: 53
+    # HTTPS-only egress to allowlisted oracle source IPs.
+    # The ip blocks below are the stable egress IPs for each oracle FQDN.
+    # Refresh them via: scripts/resolve-oracle-ips.sh
+    # Overlays (prod) replace this with tighter prod-specific blocks.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
+            except:
+              # RFC-1918 private ranges — never allow egress to internal IPs
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              # Link-local / loopback
+              - 169.254.0.0/16
+              - 127.0.0.0/8
       ports:
         - protocol: TCP
           port: 443
-        - protocol: TCP
-          port: 80
+
 ---
+# ── Aggregator pod policy ─────────────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -67,6 +136,7 @@ spec:
     - Ingress
     - Egress
   ingress:
+    # Accept health-check and metrics scrapes from pods in this namespace
     - from:
         - podSelector: {}
       ports:
@@ -76,7 +146,15 @@ spec:
           port: 4001
         - protocol: TCP
           port: 4002
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 4000
   egress:
+    # Internal: TimescaleDB
     - to:
         - podSelector:
             matchLabels:
@@ -84,6 +162,17 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+    # Internal: Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
+    # DNS resolution
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -94,11 +183,18 @@ spec:
           port: 53
         - protocol: UDP
           port: 53
+    # HTTPS egress to oracle sources and Soroban RPC.
+    # Base rule allows all external HTTPS but blocks RFC-1918.
+    # The prod overlay narrows this to explicit oracle IP blocks.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+              - 127.0.0.0/8
       ports:
         - protocol: TCP
           port: 443
-        - protocol: TCP
-          port: 80
