@@ -1,5 +1,6 @@
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, Vec};
 
+use crate::contract::API_VERSION;
 use crate::errors::OracleError;
 use crate::storage;
 use crate::types::{AssetPrice, MultiSigConfig, PriceDataPoint, SourceReputation};
@@ -81,7 +82,8 @@ impl ProxyContract {
     pub fn approve_upgrade(env: Env, signer: Address) -> Result<u32, OracleError> {
         signer.require_auth();
 
-        let config = storage::get_multisig_config(&env).ok_or(OracleError::MultiSigNotInitialized)?;
+        let config =
+            storage::get_multisig_config(&env).ok_or(OracleError::MultiSigNotInitialized)?;
         if !vec_contains_address(&config.signers, &signer) {
             return Err(OracleError::NotASigner);
         }
@@ -109,7 +111,8 @@ impl ProxyContract {
             return Err(OracleError::UpgradeTimelockNotElapsed);
         }
 
-        let config = storage::get_multisig_config(&env).ok_or(OracleError::MultiSigNotInitialized)?;
+        let config =
+            storage::get_multisig_config(&env).ok_or(OracleError::MultiSigNotInitialized)?;
         let approvals = storage::get_upgrade_approvals(&env);
         if approvals.len() < config.threshold {
             return Err(OracleError::ThresholdNotMet);
@@ -181,8 +184,10 @@ impl ProxyContract {
         storage::set_contract_version(&env, current_version + 1);
         storage::clear_pending_upgrade(&env);
 
-        env.events()
-            .publish(("upgrade_executed", new_wasm_hash.clone()), current_version + 1);
+        env.events().publish(
+            ("upgrade_executed", new_wasm_hash.clone()),
+            current_version + 1,
+        );
 
         env.deployer().update_current_contract_wasm(pending.new_wasm_hash);
         Ok(())
@@ -231,7 +236,8 @@ impl ProxyContract {
             return Err(OracleError::InvalidThreshold);
         }
         storage::set_canary(&env, &canary, traffic_share_bps);
-        env.events().publish(("canary_set", canary), traffic_share_bps);
+        env.events()
+            .publish(("canary_set", canary), traffic_share_bps);
         Ok(())
     }
 
@@ -339,8 +345,10 @@ impl ProxyContract {
         let current_version = storage::get_contract_version(&env);
         storage::set_contract_version(&env, current_version + 1);
 
-        env.events()
-            .publish(("implementation_updated", admin), (new_implementation, current_version + 1));
+        env.events().publish(
+            ("implementation_updated", admin),
+            (new_implementation, current_version + 1),
+        );
 
         Ok(())
     }
@@ -374,6 +382,13 @@ impl ProxyContract {
 
     pub fn get_version(env: Env) -> u32 {
         storage::get_contract_version(&env)
+    }
+
+    /// Version of the exported ABI, kept in lockstep with the implementation
+    /// (see docs/CONTRACT_VERSIONING.md).  Consumers pointing at the proxy
+    /// query this to gate integrations.
+    pub fn get_api_version(_env: Env) -> u32 {
+        API_VERSION
     }
 
     pub fn set_admin(
@@ -415,11 +430,7 @@ impl ProxyContract {
         Some(apply_reputation_decay(&env, rep))
     }
 
-    pub fn reset_reputation(
-        env: Env,
-        admin: Address,
-        source: Address,
-    ) -> Result<(), OracleError> {
+    pub fn reset_reputation(env: Env, admin: Address, source: Address) -> Result<(), OracleError> {
         admin.require_auth();
         storage::verify_admin(&env, &admin)?;
         storage::remove_source_reputation(&env, &source);
@@ -483,7 +494,12 @@ impl ProxyContract {
             asset: data_point.asset.clone(),
             price: data_point.price,
             decimals: data_point.decimals,
-            price_usd: calculate_usd_price(&env, &data_point.asset, data_point.price, data_point.decimals),
+            price_usd: calculate_usd_price(
+                &env,
+                &data_point.asset,
+                data_point.price,
+                data_point.decimals,
+            ),
             timestamp: data_point.timestamp,
             source: data_point.source,
             num_sources,

@@ -137,8 +137,8 @@ impl GovernanceContract {
         voter.require_auth();
         let config = require_gov(&env)?;
 
-        let mut proposal = storage::get_gov_proposal(&env, proposal_id)
-            .ok_or(OracleError::ProposalNotFound)?;
+        let mut proposal =
+            storage::get_gov_proposal(&env, proposal_id).ok_or(OracleError::ProposalNotFound)?;
 
         let now = env.ledger().timestamp();
         if !matches!(proposal.status, ProposalStatus::Active)
@@ -170,8 +170,8 @@ impl GovernanceContract {
     pub fn queue(env: Env, proposal_id: u32) -> Result<(), OracleError> {
         let config = require_gov(&env)?;
 
-        let mut proposal = storage::get_gov_proposal(&env, proposal_id)
-            .ok_or(OracleError::ProposalNotFound)?;
+        let mut proposal =
+            storage::get_gov_proposal(&env, proposal_id).ok_or(OracleError::ProposalNotFound)?;
 
         resolve_proposal(&env, &mut proposal, &config);
 
@@ -181,6 +181,10 @@ impl GovernanceContract {
                 env.events().publish(("gov_queued", proposal_id), proposal.execution_time);
                 Ok(())
             }
+            // Soroban rolls back all storage writes when a call returns an
+            // error, so a defeated proposal is deliberately *not* persisted
+            // here.  It is instead observable as `Defeated` through
+            // `get_proposal`, which computes the resolution on read.
             ProposalStatus::Defeated => Err(OracleError::ProposalDefeated),
             ProposalStatus::Executed => Err(OracleError::ProposalAlreadyExecuted),
             ProposalStatus::Cancelled => Err(OracleError::ProposalCancelled),
@@ -192,8 +196,8 @@ impl GovernanceContract {
     pub fn execute(env: Env, proposal_id: u32) -> Result<(), OracleError> {
         let config = require_gov(&env)?;
 
-        let mut proposal = storage::get_gov_proposal(&env, proposal_id)
-            .ok_or(OracleError::ProposalNotFound)?;
+        let mut proposal =
+            storage::get_gov_proposal(&env, proposal_id).ok_or(OracleError::ProposalNotFound)?;
 
         resolve_proposal(&env, &mut proposal, &config);
 
@@ -215,8 +219,10 @@ impl GovernanceContract {
 
         apply_action(&env, &proposal.action);
 
-        env.events()
-            .publish(("governance_proposal_executed", proposal_id), env.ledger().timestamp());
+        env.events().publish(
+            ("governance_proposal_executed", proposal_id),
+            env.ledger().timestamp(),
+        );
 
         Ok(())
     }
@@ -226,8 +232,8 @@ impl GovernanceContract {
         caller.require_auth();
         require_gov(&env)?;
 
-        let mut proposal = storage::get_gov_proposal(&env, proposal_id)
-            .ok_or(OracleError::ProposalNotFound)?;
+        let mut proposal =
+            storage::get_gov_proposal(&env, proposal_id).ok_or(OracleError::ProposalNotFound)?;
 
         match proposal.status {
             ProposalStatus::Executed => return Err(OracleError::ProposalAlreadyExecuted),
@@ -261,8 +267,8 @@ impl GovernanceContract {
             return Err(OracleError::GuardianOnly);
         }
 
-        let mut proposal = storage::get_gov_proposal(&env, proposal_id)
-            .ok_or(OracleError::ProposalNotFound)?;
+        let mut proposal =
+            storage::get_gov_proposal(&env, proposal_id).ok_or(OracleError::ProposalNotFound)?;
 
         match proposal.status {
             ProposalStatus::Executed => return Err(OracleError::ProposalAlreadyExecuted),
@@ -282,8 +288,19 @@ impl GovernanceContract {
     }
 
     /// Read a proposal by id.
+    ///
+    /// The stored status is only ever finalised by a successful `queue`/
+    /// `execute` call (Soroban reverts storage on error), so a proposal whose
+    /// voting window has closed is resolved here on read: callers see the
+    /// would-be status (`Queued` / `Defeated`) even before anyone queues it.
     pub fn get_proposal(env: Env, proposal_id: u32) -> Option<GovernanceProposal> {
-        storage::get_gov_proposal(&env, proposal_id)
+        let mut proposal = storage::get_gov_proposal(&env, proposal_id)?;
+        if matches!(proposal.status, ProposalStatus::Active) {
+            if let Some(config) = storage::get_gov_config(&env) {
+                resolve_proposal(&env, &mut proposal, &config);
+            }
+        }
+        Some(proposal)
     }
 
     /// Total number of proposals created (also the id of the most recent one).
@@ -312,10 +329,7 @@ impl GovernanceContract {
 // ── Validation ────────────────────────────────────────────────────────────────
 
 fn validate_config(config: &GovernanceConfig) -> Result<(), OracleError> {
-    if config.voting_period == 0
-        || config.quorum <= 0
-        || config.proposal_threshold <= 0
-    {
+    if config.voting_period == 0 || config.quorum <= 0 || config.proposal_threshold <= 0 {
         return Err(OracleError::InvalidGovernanceConfig);
     }
     Ok(())

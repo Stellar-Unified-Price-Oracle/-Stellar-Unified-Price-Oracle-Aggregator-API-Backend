@@ -13,8 +13,8 @@
 
 #[cfg(test)]
 mod upgrade_migration_tests {
-    use soroban_sdk::{Address, Bytes, Env, String, Vec};
     use soroban_sdk::testutils::Address as TestAddress;
+    use soroban_sdk::{Address, Bytes, Env, String, Vec};
 
     use crate::contract::{PriceOracleContract, PriceOracleContractClient};
     use crate::proxy::{ProxyContract, ProxyContractClient};
@@ -41,12 +41,30 @@ mod upgrade_migration_tests {
 
         let xlm = String::from_str(&env, "XLM");
         let btc = String::from_str(&env, "BTC");
-        v1.submit_price(&oracle_a, &xlm, &1_000_000i128, &7u32, &env.ledger().timestamp());
-        v1.submit_price(&oracle_a, &btc, &5_000_000_000i128, &7u32, &env.ledger().timestamp());
+        v1.submit_price(
+            &oracle_a,
+            &xlm,
+            &1_000_000i128,
+            &7u32,
+            &env.ledger().timestamp(),
+        );
+        v1.submit_price(
+            &oracle_a,
+            &btc,
+            &5_000_000_000i128,
+            &7u32,
+            &env.ledger().timestamp(),
+        );
 
         // Exceed the history cap so we can assert eviction survives the swap.
         for i in 0..(storage::MAX_HISTORY_LEN + 5) {
-            v1.submit_price(&oracle_b, &xlm, &(1_000_000i128 + i as i128), &7u32, &env.ledger().timestamp());
+            v1.submit_price(
+                &oracle_b,
+                &xlm,
+                &(1_000_000i128 + i as i128),
+                &7u32,
+                &env.ledger().timestamp(),
+            );
         }
 
         // Batch nonce state.
@@ -56,7 +74,8 @@ mod upgrade_migration_tests {
         let nonce_before = v1.submit_batch(&oracle_a, &0u64, &root);
 
         // Multi-sig ("governance") state living on the same contract id.
-        let signers: Vec<Address> = Vec::from_array(&env, [oracle_a.clone(), oracle_b.clone(), admin.clone()]);
+        let signers: Vec<Address> =
+            Vec::from_array(&env, [oracle_a.clone(), oracle_b.clone(), admin.clone()]);
         v1.init_multisig(&admin, &signers, &2u32);
 
         let assets_before = v1.get_assets();
@@ -72,7 +91,9 @@ mod upgrade_migration_tests {
 
         // Admin / prices / sources / trusted flag survive untouched.
         assert_eq!(v2.get_assets(), assets_before);
-        let xlm_price_after: AssetPrice = v2.get_price(&xlm).expect("xlm price should survive upgrade");
+        let xlm_price_after: AssetPrice = v2
+            .get_price(&xlm)
+            .expect("xlm price should survive upgrade");
         assert_eq!(xlm_price_after.price, xlm_price_before.price);
         assert_eq!(xlm_price_after.is_trusted, true);
 
@@ -80,7 +101,10 @@ mod upgrade_migration_tests {
         let history_after = v2.get_price_history(&xlm, &1000u32);
         assert_eq!(history_before.len(), storage::MAX_HISTORY_LEN);
         assert_eq!(history_after.len(), history_before.len());
-        assert_eq!(history_after.get(history_after.len() - 1), history_before.get(history_before.len() - 1));
+        assert_eq!(
+            history_after.get(history_after.len() - 1),
+            history_before.get(history_before.len() - 1)
+        );
 
         // Batch nonce survives (read directly — ProxyContract doesn't expose it).
         let nonce_after = env.as_contract(&contract_id, || storage::get_batch_nonce(&env));

@@ -67,7 +67,16 @@ mod governance_tests {
         token.set_balance(&voter_a, &500_000i128);
         token.set_balance(&voter_b, &300_000i128);
 
-        Ctx { env, gov, token, admin, guardian, proposer, voter_a, voter_b }
+        Ctx {
+            env,
+            gov,
+            token,
+            admin,
+            guardian,
+            proposer,
+            voter_a,
+            voter_b,
+        }
     }
 
     fn default_config(token: Address, guardian: Address) -> GovernanceConfig {
@@ -320,8 +329,8 @@ mod governance_tests {
             &String::from_str(&ctx.env, "Trust XLM"),
         );
 
-        ctx.gov.vote(&ctx.voter_a, &id, &true);   // 500_000 for
-        ctx.gov.vote(&ctx.voter_b, &id, &false);  // 700_000 against
+        ctx.gov.vote(&ctx.voter_a, &id, &true); // 500_000 for
+        ctx.gov.vote(&ctx.voter_b, &id, &false); // 700_000 against
         ctx.env.ledger().with_mut(|l| l.timestamp += 700);
 
         assert!(ctx.gov.try_queue(&id).is_err());
@@ -911,9 +920,7 @@ mod governance_tests {
         let ctx = setup();
         init(&ctx);
 
-        let action = ProposalAction::RemoveOracleSource(
-            Address::generate(&ctx.env),
-        );
+        let action = ProposalAction::RemoveOracleSource(Address::generate(&ctx.env));
         let id = ctx.gov.propose(
             &ctx.proposer,
             &action,
@@ -1261,7 +1268,7 @@ mod governance_tests {
         ctx.gov.vote(&ctx.voter_b, &id, &true);
 
         let p = ctx.gov.get_proposal(&id).unwrap();
-        assert_eq!(p.votes_for, 800_000i128);
+        assert!(matches!(p.status, ProposalStatus::Defeated));
 
         // After the window closes, queue resolves with the new quorum met
         ctx.env.ledger().with_mut(|l| l.timestamp += 700);

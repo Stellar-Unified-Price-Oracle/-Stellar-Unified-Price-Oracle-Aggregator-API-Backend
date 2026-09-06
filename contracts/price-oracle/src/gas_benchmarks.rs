@@ -300,7 +300,7 @@ mod bench {
             DEFAULT_ASSET_COUNT * (SECONDS_PER_MONTH / SUBMISSION_CADENCE_SECS);
         let monthly_cpu_instructions = per_submission_cpu as u64 * submissions_per_month;
 
-        println!(
+        std::println!(
             "[BENCH] mainnet_cost_model: per_submission_cpu={}, per_submission_mem={}, \
              assets={}, cadence_secs={}, submissions_per_month={}, monthly_cpu_instructions={}",
             per_submission_cpu,
