@@ -11,6 +11,10 @@ vi.mock('../src/infrastructure/config', () => ({
       contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4',
       networkPassphrase: 'Test SDF Network ; September 2015',
     },
+    canary: {
+      failureThreshold: 3,
+      autoRollback: false,
+    },
   },
 }));
 

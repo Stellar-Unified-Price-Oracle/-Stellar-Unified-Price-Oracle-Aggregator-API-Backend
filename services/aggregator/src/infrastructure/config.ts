@@ -45,6 +45,18 @@ export const config = {
     adminSecret: decryptSecret(process.env.ADMIN_SECRET_KEY || ''),
   },
 
+  // Issue #105 — canary deployments for contract upgrades.  Traffic routing
+  // itself is driven by the on-chain `get_canary` registration (traffic share
+  // in basis points); these knobs only control the local failure handling.
+  canary: {
+    // Consecutive canary submission failures before the publisher triggers a
+    // rollback (zeroes the canary traffic share on-chain).
+    failureThreshold: parseInt(process.env.CANARY_FAILURE_THRESHOLD || '3', 10),
+    // Set to "false" to disable the on-chain auto-rollback write; failures
+    // are then only logged/metric-alerted and must be rolled back manually.
+    autoRollback: process.env.CANARY_AUTO_ROLLBACK !== 'false',
+  },
+
   sources: {
     chainlink: {
       baseUrl: sourceUrls.chainlink,
