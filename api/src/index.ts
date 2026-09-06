@@ -17,23 +17,23 @@ import { httpsRedirect, hstsHeaders } from './infrastructure/https';
 import { compressionMiddleware } from './infrastructure/compression';
 import { usageTrackingMiddleware } from './governance/usage-tracking';
 import { complianceAuditMiddleware } from './governance/compliance';
-import { PriceWebSocketServer } from './infrastructure/server';
-import { swaggerSpec } from './infrastructure/openapi';
-import v1Routes, { initializeCache } from './price-serving/v1';
-import v2Routes, { initializeCacheV2 } from './price-serving/v2';
-import { v1DeprecationHeaders, v2Headers } from './price-serving/versioning';
-import { HybridCache } from './price-serving/cache';
-import { DatabaseClient, setDb } from './infrastructure/database';
-import { ArchivalService } from './infrastructure/archival';
-import { DbHealthMonitor } from './infrastructure/db-health-monitor';
-import { DataConsistencyChecker } from './infrastructure/data-consistency';
-import { BackupService } from './infrastructure/backup';
-import { setDatabase } from './price-serving/price-store';
-import { initializeTracing } from './observability/tracing';
-import { AppError } from './infrastructure/app-error';
-import { ErrorCode } from './infrastructure/catalog';
+import { PriceWebSocketServer } from './websocket/server';
+import { swaggerSpec } from './services/openapi';
+import v1Routes, { initializeCache } from './routes/v1';
+import v2Routes, { initializeCacheV2 } from './routes/v2';
+import { v1DeprecationHeaders, v2Headers } from './middleware/versioning';
+import { HybridCache } from './services/cache';
+import { DatabaseClient, setDb } from './services/database';
+import { ArchivalService } from './services/archival';
+import { DbHealthMonitor } from './services/db-health-monitor';
+import { DataConsistencyChecker } from './services/data-consistency';
+import { BackupService } from './services/backup';
+import { DrStatusService } from './services/dr-status';
+import { setDatabase } from './services/price-store';
+import { initializeTracing } from './services/tracing';
+import adminRoutes from './routes/admin';
+import statusRoutes from './routes/status';
 import platformRoutes from './platform/routes';
-import adminRoutes from './governance/admin';
 import sandboxRoutes, { initializeSandboxCache } from './routes/sandbox';
 import featureFlagRoutes from './routes/featureFlags';
 import eventRoutes from './routes/events';
@@ -115,6 +115,7 @@ async function initializeApp(): Promise<void> {
         backupService = new BackupService(config.databaseUrl, logger, {
           backupDir: config.backup.dir,
           encryptionKeyHex: config.backup.encryptionKeyHex || undefined,
+          dailyIntervalMs: config.backup.intervalMs,
         });
         backupService.start();
       }
