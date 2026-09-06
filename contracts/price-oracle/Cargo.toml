@@ -7,11 +7,18 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 doctest = false
 
+# Issue #384 — the Soroban SDK version is pinned exactly (not caret) so
+# dependency resolution can never silently float to a new SDK release that
+# changes gas metering or serialization.  Bumping it is a deliberate,
+# reviewed action — see SDK_UPGRADE_POLICY.md for the quarterly evaluation
+# cadence, testnet soak requirement, and rollback procedure.  The resolved
+# version is tracked in Cargo.lock and emitted into the release SBOM
+# (sbom-contract.cdx.json, see .github/workflows/sbom.yml).
 [dependencies]
-soroban-sdk = "27.0.6"
+soroban-sdk = "=27.0.6"
 
 [dev-dependencies]
-soroban-sdk = { version = "27.0.6", features = ["testutils"] }
+soroban-sdk = { version = "=27.0.6", features = ["testutils"] }
 
 [profile.release]
 opt-level = "z"

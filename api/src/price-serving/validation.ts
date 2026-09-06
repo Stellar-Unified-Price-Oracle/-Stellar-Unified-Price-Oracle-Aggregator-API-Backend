@@ -1,25 +1,43 @@
 import { z, ZodError } from 'zod';
 import { PAGINATION_DEFAULTS } from './pagination';
 
-const assetValidator = z.string().min(1).refine(
-  (val) => {
-    if (/^[A-Z0-9]{1,12}$/.test(val)) return true;
-    if (val.startsWith('C') && val.length === 56) return true;
-    return false;
-  },
-  { message: 'Invalid asset: must be a 1-12 character uppercase symbol (e.g. XLM, USDC) or a 56-character Soroban contract ID starting with C' }
+const normalizeAsset = (value: unknown): unknown => {
+  if (typeof value !== 'string') return value;
+  return value.trim().toUpperCase();
+};
+
+const assetValidator = z.preprocess(
+  normalizeAsset,
+  z.string().trim().min(1).refine(
+    (val) => {
+      if (/^[A-Z0-9]{1,12}$/.test(val)) return true;
+      if (val.startsWith('C') && val.length === 56) return true;
+      return false;
+    },
+    { message: 'Invalid asset: must be a 1-12 character uppercase symbol (e.g. XLM, USDC) or a 56-character Soroban contract ID starting with C' },
+  ),
 );
 
 export const AssetQuerySchema = z.object({
   asset: assetValidator.optional(),
 });
 
+const ensureValidTimeRange = (data: { from?: number; to?: number }, ctx: z.RefinementCtx) => {
+  if (data.from !== undefined && data.to !== undefined && data.from > data.to) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['to'],
+      message: 'to must be greater than or equal to from',
+    });
+  }
+};
+
 export const HistoryQuerySchema = z.object({
   asset: assetValidator,
   from: z.coerce.number().int().positive().optional().describe('Unix timestamp (seconds) for range start'),
   to: z.coerce.number().int().positive().optional().describe('Unix timestamp (seconds) for range end'),
   limit: z.coerce.number().int().min(1, 'limit must be at least 1').max(1000, 'limit cannot exceed 1000').default(100),
-});
+}).superRefine(ensureValidTimeRange);
 
 // Cursor-based pagination (history / time-series endpoints)
 export const CursorHistoryQuerySchema = z.object({
@@ -33,7 +51,7 @@ export const CursorHistoryQuerySchema = z.object({
     .default(PAGINATION_DEFAULTS.PAGE_SIZE),
   from: z.coerce.number().int().positive().optional().describe('Unix timestamp lower bound (ignored when cursor is provided)'),
   to: z.coerce.number().int().positive().optional().describe('Unix timestamp upper bound'),
-});
+}).superRefine(ensureValidTimeRange);
 
 // Offset-based pagination (sources, prices list)
 export const OffsetQuerySchema = z.object({

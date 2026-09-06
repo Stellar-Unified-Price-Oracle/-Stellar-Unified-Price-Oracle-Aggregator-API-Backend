@@ -3,6 +3,13 @@ import path from 'path';
 import { config } from '../infrastructure/config';
 import { encrypt, decrypt, isEncrypted, isEncryptionConfigured } from '../infrastructure/crypto';
 
+export interface HistoricalPriceEntry {
+  price: string;
+  decimals: number;
+  source: string;
+  timestamp: number;
+}
+
 export const DATA_DIR = path.resolve(__dirname, '../../data');
 export const HISTORY_FILE = (asset: string) => path.join(DATA_DIR, `history-${asset.toLowerCase()}.json`);
 
@@ -17,15 +24,15 @@ export function historyEncryptionEnabled(): boolean {
   return config.security.encryption.encryptHistory && isEncryptionConfigured();
 }
 
-export function readHistoryFile(filePath: string): any[] {
+export function readHistoryFile(filePath: string): HistoricalPriceEntry[] {
   if (!fs.existsSync(filePath)) return [];
   const raw = fs.readFileSync(filePath, 'utf-8');
   if (!raw) return [];
   const contents = isEncrypted(raw) ? decrypt(raw) : raw;
-  return JSON.parse(contents);
+  return JSON.parse(contents) as HistoricalPriceEntry[];
 }
 
-export function writeHistoryFile(filePath: string, history: any[]): void {
+export function writeHistoryFile(filePath: string, history: HistoricalPriceEntry[]): void {
   const serialized = JSON.stringify(history);
   const payload = historyEncryptionEnabled() ? encrypt(serialized) : serialized;
   fs.writeFileSync(filePath, payload);
@@ -35,13 +42,13 @@ export function writeHistoryFile(filePath: string, history: any[]): void {
  * Drop entries older than the retention window, then keep only the newest
  * maxEntries (issue #214). Entry timestamps are Unix seconds.
  */
-function pruneHistory(history: any[]): any[] {
+function pruneHistory(history: HistoricalPriceEntry[]): HistoricalPriceEntry[] {
   const { maxEntries, retentionSeconds } = config.history;
   let pruned = history;
 
   if (retentionSeconds > 0) {
     const cutoff = Math.floor(Date.now() / 1000) - retentionSeconds;
-    pruned = pruned.filter((h: any) => h.timestamp >= cutoff);
+    pruned = pruned.filter((h) => h.timestamp >= cutoff);
   }
 
   return maxEntries > 0 && pruned.length > maxEntries ? pruned.slice(-maxEntries) : pruned;
@@ -56,7 +63,7 @@ export function appendHistoricalPrice(
 ): void {
   ensureDataDir();
   const filePath = HISTORY_FILE(asset);
-  let history: any[] = [];
+  let history: HistoricalPriceEntry[] = [];
   try {
     history = readHistoryFile(filePath);
   } catch { /* ignore corrupt data */ }
@@ -69,12 +76,12 @@ export function getHistoricalPrices(
   from?: number,
   to?: number,
   limit = 100,
-): any[] {
+): HistoricalPriceEntry[] {
   const filePath = HISTORY_FILE(asset);
   try {
     let history = readHistoryFile(filePath);
-    if (from) history = history.filter((h: any) => h.timestamp >= from);
-    if (to) history = history.filter((h: any) => h.timestamp <= to);
+    if (from) history = history.filter((h) => h.timestamp >= from);
+    if (to) history = history.filter((h) => h.timestamp <= to);
     return history.slice(-limit);
   } catch {
     return [];

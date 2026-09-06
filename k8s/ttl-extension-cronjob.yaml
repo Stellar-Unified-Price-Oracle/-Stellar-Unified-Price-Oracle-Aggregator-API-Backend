@@ -1,0 +1,61 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: oracle-ttl-extension
+  labels:
+    app.kubernetes.io/name: oracle-ttl-extension
+spec:
+  # Daily. TTL floor is measured in days at the extend_to used by
+  # scripts/extend-contract-ttl.mjs (see docs/RENT_AND_TTL.md), so a daily
+  # cadence leaves wide margin even if a run or two is missed.
+  schedule: "0 6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: oracle-ttl-extension
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: extend-ttl
+              image: node:20-slim
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - secretRef:
+                    name: oracle-ttl-extension-secrets
+              env:
+                - name: TRACKED_ASSETS
+                  value: "XLM,BTC,ETH,USDC,USDT"
+              command:
+                - node
+                - /app/scripts/extend-contract-ttl.mjs
+              volumeMounts:
+                - name: repo-scripts
+                  mountPath: /app/scripts
+                  readOnly: true
+          volumes:
+            - name: repo-scripts
+              configMap:
+                name: oracle-ttl-extension-script
+                defaultMode: 0555
+---
+# oracle-ttl-extension-secrets (created out-of-band, not here) must provide:
+#   ORACLE_CONTRACT_ID, GOVERNANCE_CONTRACT_ID, PROXY_CONTRACT_ID,
+#   STELLAR_ACCOUNT, and whatever signing key material the `stellar` CLI
+#   image/sidecar needs. Who funds that account's resource fees is the open
+#   question tracked in docs/RENT_AND_TTL.md ("who funds it").
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oracle-ttl-extension-script
+data:
+  extend-contract-ttl.mjs: |
+    # Populated from scripts/extend-contract-ttl.mjs at deploy time
+    # (kubectl create configmap ... --from-file=scripts/extend-contract-ttl.mjs).
+    # Kept as a placeholder here so this manifest is valid on its own;
+    # do not maintain two copies of the script by hand.

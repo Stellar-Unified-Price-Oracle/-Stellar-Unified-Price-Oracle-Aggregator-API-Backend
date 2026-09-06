@@ -3,6 +3,13 @@ import client from 'prom-client';
 const register = new client.Registry();
 client.collectDefaultMetrics({ register });
 
+export const serviceStartupDurationMs = new client.Gauge({
+  name: 'service_startup_duration_ms',
+  help: 'Time from process start until service warm-up finishes and the ready endpoint can pass',
+  labelNames: ['service'],
+  registers: [register],
+});
+
 // #63 — WebSocket connection monitoring
 export const wsConnectionsActive = new client.Gauge({
   name: 'ws_connections_active',
@@ -104,6 +111,29 @@ export const onChainHeartbeatAlertsTotal = new client.Counter({
   name: 'onchain_heartbeat_alerts_total',
   help: 'Number of times the on-chain staleness heartbeat exceeded STALENESS_THRESHOLD_MS',
   labelNames: ['asset'],
+  registers: [register],
+});
+
+export const contractSubmissionGas = new client.Histogram({
+  name: 'contract_submission_gas',
+  help: 'Gas used by Soroban contract submissions in stroops',
+  labelNames: ['function', 'asset', 'status'],
+  buckets: [1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000],
+  registers: [register],
+});
+
+export const contractSubmissionGasTotal = new client.Counter({
+  name: 'contract_submission_gas_total',
+  help: 'Total gas used by Soroban contract submissions',
+  labelNames: ['function', 'asset', 'status'],
+  registers: [register],
+});
+
+export const pipelineStageLatencyMs = new client.Histogram({
+  name: 'pipeline_stage_latency_ms',
+  help: 'Latency budget for each stage of the price pipeline in milliseconds',
+  labelNames: ['stage', 'status'],
+  buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000],
   registers: [register],
 });
 

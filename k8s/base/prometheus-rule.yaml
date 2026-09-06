@@ -54,3 +54,42 @@ spec:
               {{ $value }}% over the last 10 minutes.
               Check source health and circuit breaker status.
             runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/oracle-source-down.md
+
+      - name: stellar-oracle.alerts
+        interval: 1m
+        rules:
+          - alert: PriceFeedStale
+            expr: |
+              time() - oracle_last_price_update_timestamp_seconds > 120
+            for: 2m
+            labels:
+              severity: warning
+              component: api
+            annotations:
+              summary: Price feed stale for {{ $labels.asset }}
+              description: 'Last price timestamp for {{ $labels.asset }} is more than 120s old.'
+              runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/price-feed-stale.md
+
+          - alert: PriceDeviation
+            expr: |
+              rate(stellar_oracle_anomalies_detected_total[5m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+              component: aggregator
+            annotations:
+              summary: Price anomaly detected for {{ $labels.asset }}
+              description: 'Anomaly detector has flagged {{ $labels.asset }} in the last 5 minutes.'
+              runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/price-anomaly.md
+
+          - alert: CircuitBreakerOpen
+            expr: |
+              circuit_breaker_state{state="open"} == 1
+            for: 30s
+            labels:
+              severity: critical
+              component: aggregator
+            annotations:
+              summary: Circuit breaker open for {{ $labels.component }}
+              description: 'Circuit breaker for {{ $labels.component }} is open; dependent requests are being short-circuited.'
+              runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/circuit-breaker-open.md

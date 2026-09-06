@@ -1,0 +1,23 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: region-partition
+  labels:
+    chaos.stellar-oracle.io/experiment: region-partition
+    chaos.stellar-oracle.io/target: multi-region
+spec:
+  action: partition
+  mode: all
+  # Partition for a short window to observe failover/routing behaviour
+  duration: 10m
+  # Source: primary region overlay namespace
+  selector:
+    namespaces:
+      - stellar-oracle-prod-us-east-1
+  direction: both
+  # Target: secondary region overlay namespace
+  target:
+    selector:
+      namespaces:
+        - stellar-oracle-prod-eu-west-1
+    mode: all

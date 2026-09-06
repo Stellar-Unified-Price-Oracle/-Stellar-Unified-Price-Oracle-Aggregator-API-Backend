@@ -24,6 +24,7 @@ export interface ApiKeyMetadata {
   rateLimitPerMin: number;
   tier: KeyTier;
   role: Role;
+  scopes?: string[];
   description?: string;
   /** If set, this key is in rotation grace period until this timestamp */
   rotationExpiresAt?: number;
@@ -47,7 +48,7 @@ export class ApiKeyManager {
     this.loadKeysFromEnv();
   }
 
-  generateKey(rateLimitPerMin: number = TIER_RATE_LIMITS.free, description?: string, tier: KeyTier = 'free', role: Role = 'viewer'): GeneratedApiKey {
+  generateKey(rateLimitPerMin: number = TIER_RATE_LIMITS.free, description?: string, tier: KeyTier = 'free', role: Role = 'viewer', scopes?: string[]): GeneratedApiKey {
     const key = this.createKey(tier);
     const keyHash = this.hashKey(key);
     const metadata: ApiKeyMetadata = {
@@ -60,6 +61,7 @@ export class ApiKeyManager {
       rateLimitPerMin,
       tier,
       role,
+      scopes: scopes && scopes.length > 0 ? [...scopes] : undefined,
       description,
     };
 
@@ -133,6 +135,7 @@ export class ApiKeyManager {
       createdAt: Date.now(),
       lastUsed: null,
       requestCount: 0,
+      scopes: metadata.scopes ? [...metadata.scopes] : undefined,
     };
 
     this.keys.delete(oldKeyHash);
@@ -169,7 +172,7 @@ export class ApiKeyManager {
     return this.keys.get(keyHash) || null;
   }
 
-  getAllKeys(): Array<{ keyPrefix: string; keyHash: string; createdAt: number; lastUsed: number | null; requestCount: number; isActive: boolean; rateLimitPerMin: number; tier: KeyTier; role: Role; description?: string }> {
+  getAllKeys(): Array<{ keyPrefix: string; keyHash: string; createdAt: number; lastUsed: number | null; requestCount: number; isActive: boolean; rateLimitPerMin: number; tier: KeyTier; role: Role; scopes?: string[]; description?: string }> {
     // The non-secret display prefix is returned as-is (no ellipsis suffix) so
     // consumers can match keys by prefix without string munging.
     return Array.from(this.keys.values()).map((m) => ({
@@ -182,6 +185,7 @@ export class ApiKeyManager {
       rateLimitPerMin: m.rateLimitPerMin,
       tier: m.tier,
       role: m.role,
+      scopes: m.scopes,
       description: m.description,
     }));
   }
@@ -231,6 +235,7 @@ export class ApiKeyManager {
         key: '',
         tier: meta.tier,
         role: meta.role,
+        scopes: meta.scopes,
         rateLimitPerMin: meta.rateLimitPerMin,
         description: meta.description,
         createdAt: meta.createdAt,
@@ -253,6 +258,7 @@ export class ApiKeyManager {
         rateLimitPerMin: entry.rateLimitPerMin,
         tier: entry.tier as KeyTier,
         role: entry.role as Role,
+        scopes: Array.isArray(entry.scopes) ? [...entry.scopes] : undefined,
         description: entry.description,
       };
       this.keys.set(entry.keyHash, metadata);

@@ -9,6 +9,7 @@ import {
   remediate,
 } from './self-healing';
 import {
+  anchorLineageRecord,
   explainLineage,
   getLineage,
   listLineage,
@@ -107,6 +108,18 @@ router.get('/lineage/verify/:provenanceId', (req: Request, res: Response) => {
   res.json(verifyLineage(req.params.provenanceId));
 });
 
+router.post('/lineage/:provenanceId/anchor', (req: Request, res: Response) => {
+  const { ledger, txHash, network } = req.body || {};
+  if (!ledger || !txHash) {
+    return res.status(400).json({ error: 'ledger and txHash are required' });
+  }
+
+  const record = anchorLineageRecord(req.params.provenanceId, { ledger, txHash, network });
+  if (!record) return res.status(404).json({ error: 'lineage record not found' });
+
+  res.status(202).json({ provenanceId: req.params.provenanceId, stellar_anchor: record.stellar_anchor, verification_url: record.verification_url });
+});
+
 router.get('/lineage/:provenanceId/explanation', (req: Request, res: Response) => {
   const explanation = explainLineage(req.params.provenanceId);
   if (!explanation) return res.status(404).json({ error: 'lineage record not found' });
@@ -151,6 +164,85 @@ router.get('/self-healing/audit-trail', (_req: Request, res: Response) => {
 
 router.get('/rate-limits/status', (_req: Request, res: Response) => {
   res.json(rateLimitStatus());
+});
+
+// Compliance reporting automation
+interface ComplianceReport {
+  id: string;
+  type: string;
+  name: string;
+  frequency: string;
+  recipients: string[];
+  requireReview: boolean;
+  status: 'draft' | 'review' | 'approved' | 'submitted';
+  content?: unknown;
+}
+
+const complianceReports: ComplianceReport[] = [
+  {
+    id: 'ccpa-usage',
+    type: 'usage',
+    name: 'CCPA Data Usage Report',
+    frequency: 'monthly',
+    recipients: ['compliance@example.com'],
+    requireReview: true,
+    status: 'draft',
+  },
+  {
+    id: 'gdpr-audit',
+    type: 'audit',
+    name: 'GDPR Audit Trail Report',
+    frequency: 'quarterly',
+    recipients: ['dpo@example.com'],
+    requireReview: true,
+    status: 'draft',
+  },
+];
+
+router.get('/compliance/reports', (_req: Request, res: Response) => {
+  res.json({ reports: complianceReports });
+});
+
+router.post('/compliance/reports/generate', (req: Request, res: Response) => {
+  const { type } = req.body as { type?: string };
+  const report = complianceReports.find(r => r.type === type);
+  if (!report) return res.status(404).json({ error: 'report type not found' });
+  const audit = auditTrail();
+  const metrics = selfHealingMetrics();
+  report.content = {
+    generatedAt: new Date().toISOString(),
+    type: report.type,
+    auditEventCount: audit.length,
+    metrics,
+  };
+  report.status = 'review';
+  res.json(report);
+});
+
+router.post('/compliance/reports/:id/schedule', (req: Request, res: Response) => {
+  const report = complianceReports.find(r => r.id === req.params.id);
+  if (!report) return res.status(404).json({ error: 'report not found' });
+  const { cron, recipients } = req.body as { cron?: string; recipients?: string[] };
+  if (cron) report.frequency = cron;
+  if (recipients) report.recipients = recipients;
+  report.status = 'draft';
+  res.json(report);
+});
+
+router.post('/compliance/reports/:id/review', (req: Request, res: Response) => {
+  const report = complianceReports.find(r => r.id === req.params.id);
+  if (!report) return res.status(404).json({ error: 'report not found' });
+  if (report.status !== 'review') return res.status(400).json({ error: 'report is not pending review' });
+  report.status = 'approved';
+  res.json(report);
+});
+
+router.post('/compliance/reports/:id/submit', (req: Request, res: Response) => {
+  const report = complianceReports.find(r => r.id === req.params.id);
+  if (!report) return res.status(404).json({ error: 'report not found' });
+  if (report.status !== 'approved') return res.status(400).json({ error: 'report must be approved before submission' });
+  report.status = 'submitted';
+  res.json({ message: 'Report submitted to recipients', recipients: report.recipients });
 });
 
 export default router;

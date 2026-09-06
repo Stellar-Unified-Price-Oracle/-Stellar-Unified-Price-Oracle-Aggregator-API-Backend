@@ -1,0 +1,48 @@
+# Alertmanager routing for cost / budget alerts (issue #418).
+#
+# Merge this `route` child and these `receivers` into the organization
+# Alertmanager config. The match labels are emitted by
+# k8s/cost-optimization/prometheus-rule.yaml:
+#   - StellarOracleCostBudgetWarning  -> severity=warning,  team=platform, cost_center=stellar-oracle
+#   - StellarOracleCostBudgetExceeded -> severity=critical, team=platform, cost_center=stellar-oracle
+#
+# Verify routing without waiting for a real breach:
+#   amtool config routes test --config.file=alertmanager.yml \
+#     alertname=StellarOracleCostBudgetWarning severity=warning team=platform cost_center=stellar-oracle
+#   amtool config routes test --config.file=alertmanager.yml \
+#     alertname=StellarOracleCostBudgetExceeded severity=critical team=platform cost_center=stellar-oracle
+# The first must resolve to `cost-budget-warning`, the second to `cost-budget-exceeded`.
+
+route:
+  routes:
+    - matchers:
+        - cost_center = "stellar-oracle"
+        - severity = "warning"
+      receiver: cost-budget-warning
+      group_by: ["alertname"]
+      repeat_interval: 12h
+    - matchers:
+        - cost_center = "stellar-oracle"
+        - severity = "critical"
+      receiver: cost-budget-exceeded
+      group_by: ["alertname"]
+      repeat_interval: 1h
+      continue: false
+
+receivers:
+  - name: cost-budget-warning
+    slack_configs:
+      - channel: "#stellar-oracle-cost"
+        title: "{{ .CommonAnnotations.summary }}"
+        text: "{{ .CommonAnnotations.description }}\nRunbook: {{ .CommonAnnotations.runbook_url }}"
+        send_resolved: true
+  - name: cost-budget-exceeded
+    slack_configs:
+      - channel: "#stellar-oracle-cost"
+        title: "[CRITICAL] {{ .CommonAnnotations.summary }}"
+        text: "{{ .CommonAnnotations.description }}\nRunbook: {{ .CommonAnnotations.runbook_url }}"
+        send_resolved: true
+    pagerduty_configs:
+      - service_key_file: /etc/alertmanager/secrets/pagerduty-stellar-oracle
+        description: "{{ .CommonAnnotations.summary }}"
+        severity: critical

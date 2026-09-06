@@ -1,0 +1,235 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blackbox-exporter-modules
+  labels:
+    app: stellar-price-oracle
+    component: synthetic-monitoring
+data:
+  blackbox.yml: |
+    modules:
+      http_prices_2xx:
+        prober: http
+        timeout: 5s
+        http:
+          method: GET
+          valid_status_codes: [200]
+          fail_if_body_not_matches_regexp: ['"price"']
+          preferred_ip_protocol: ip4
+          tls_config:
+            insecure_skip_verify: false
+      http_history_2xx:
+        prober: http
+        timeout: 8s
+        http:
+          method: GET
+          valid_status_codes: [200]
+          fail_if_body_not_matches_regexp: ['\[']
+      http_health_2xx:
+        prober: http
+        timeout: 3s
+        http:
+          method: GET
+          valid_status_codes: [200]
+          fail_if_body_not_matches_regexp: ['"status"\s*:\s*"ok"']
+      tls_connect:
+        prober: tcp
+        timeout: 5s
+        tcp:
+          tls: true
+      dns_resolve:
+        prober: dns
+        timeout: 5s
+        dns:
+          query_name: api.oracle.example.com
+          query_type: A
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blackbox-exporter
+  labels:
+    app: stellar-price-oracle
+    component: synthetic-monitoring
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: blackbox-exporter
+  template:
+    metadata:
+      labels:
+        app: blackbox-exporter
+        component: synthetic-monitoring
+    spec:
+      # Schedule onto a node pool / failure domain separate from the serving
+      # workloads so a probe survives a serving-side outage (#415).
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/part-of: stellar-oracle
+              topologyKey: topology.kubernetes.io/zone
+      containers:
+        - name: blackbox-exporter
+          image: prom/blackbox-exporter:v0.25.0
+          args:
+            - --config.file=/etc/blackbox/blackbox.yml
+          ports:
+            - containerPort: 9115
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/blackbox
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+      volumes:
+        - name: config
+          configMap:
+            name: blackbox-exporter-modules
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackbox-exporter
+  labels:
+    app: blackbox-exporter
+    component: synthetic-monitoring
+spec:
+  selector:
+    app: blackbox-exporter
+  ports:
+    - name: http
+      port: 9115
+      targetPort: 9115
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: stellar-oracle-public-endpoints
+  labels:
+    app: stellar-price-oracle
+    component: synthetic-monitoring
+spec:
+  interval: 30s
+  module: http_prices_2xx
+  prober:
+    url: blackbox-exporter:9115
+  targets:
+    staticConfig:
+      static:
+        - https://api.oracle.example.com/api/v1/prices?pair=XLM-USD
+      labels:
+        probe_target: prices
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: stellar-oracle-history
+  labels:
+    app: stellar-price-oracle
+    component: synthetic-monitoring
+spec:
+  interval: 60s
+  module: http_history_2xx
+  prober:
+    url: blackbox-exporter:9115
+  targets:
+    staticConfig:
+      static:
+        - https://api.oracle.example.com/api/v1/history?pair=XLM-USD&interval=1h&limit=10
+      labels:
+        probe_target: history
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: stellar-oracle-health
+  labels:
+    app: stellar-price-oracle
+    component: synthetic-monitoring
+spec:
+  interval: 30s
+  module: http_health_2xx
+  prober:
+    url: blackbox-exporter:9115
+  targets:
+    staticConfig:
+      static:
+        - https://api.oracle.example.com/health
+      labels:
+        probe_target: health
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: stellar-oracle-synthetic-alerts
+  labels:
+    app: stellar-price-oracle
+    component: synthetic-monitoring
+spec:
+  groups:
+    - name: stellar-oracle.synthetic
+      interval: 30s
+      rules:
+        - alert: SyntheticProbeFailed
+          expr: probe_success == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: synthetic-monitoring
+            # Routed to a receiver independent of internal alerting so an
+            # in-cluster failure cannot suppress the customer-facing signal.
+            alert_source: blackbox
+          annotations:
+            summary: Synthetic probe {{ $labels.probe_target }} is failing
+            description: >
+              External probe for {{ $labels.instance }} has been failing for 2m.
+              This reflects what customers see, independent of internal health
+              checks. Check DNS, TLS, ingress, CDN and routing.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/high-error-rate.md
+
+        - alert: SyntheticProbeLatencyHigh
+          expr: probe_duration_seconds > 2
+          for: 5m
+          labels:
+            severity: warning
+            component: synthetic-monitoring
+            alert_source: blackbox
+          annotations:
+            summary: Synthetic probe {{ $labels.probe_target }} latency high
+            description: >
+              External probe latency for {{ $labels.instance }} is
+              {{ $value | humanizeDuration }}, above the 2s SLO.
+
+        - alert: SyntheticProbeTLSExpiringSoon
+          expr: probe_ssl_earliest_cert_expiry - time() < 21 * 24 * 3600
+          for: 10m
+          labels:
+            severity: warning
+            component: synthetic-monitoring
+            alert_source: blackbox
+          annotations:
+            summary: TLS certificate for {{ $labels.instance }} expiring soon
+            description: >
+              The certificate expires in
+              {{ $value | humanizeDuration }}. Renew before it lapses.
+
+        - alert: SyntheticProbeMultiRegionDown
+          expr: count by (probe_target) (probe_success == 0) >= 2
+          for: 2m
+          labels:
+            severity: critical
+            component: synthetic-monitoring
+            alert_source: blackbox
+          annotations:
+            summary: "{{ $labels.probe_target }} failing from multiple vantage points"
+            description: >
+              The same endpoint is failing from 2+ external vantage points — treat
+              as a confirmed customer-facing outage and page immediately.

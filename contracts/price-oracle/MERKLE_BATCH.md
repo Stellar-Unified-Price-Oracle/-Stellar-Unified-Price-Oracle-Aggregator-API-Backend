@@ -84,14 +84,39 @@ For leaf at index `i`:
   else hash = SHA-256(sibling || current).  Then `i /= 2`.
 - The recomputed hash at the final level must equal the stored root.
 
-## Replay Protection
+## Replay Protection (Issue #385)
 
 Each batch is identified by a monotonically increasing `nonce`:
-- `submit_batch` requires `nonce == current_nonce`.
+- `submit_batch` requires `nonce == current_nonce`, so replaying a consumed
+  nonce fails with `BatchNonceMismatch`.
 - After acceptance, `current_nonce` is incremented.
-- Roots are stored permanently keyed by nonce, so `apply_batch_entry` can be
-  called for any past nonce (useful if the aggregator needs to retry applying
-  entries after a failure).
+- Roots are retained for `storage::RETAINED_BATCH_ROOTS` (16) batches and then
+  pruned, so batch bookkeeping cannot grow without bound over the contract's
+  lifetime.  Applying an entry from a pruned batch fails with
+  `BatchRootNotFound`; the aggregator should apply entries promptly after a
+  commit rather than deferring them.
+- Each (batch, leaf) pair can be applied at most once.  `apply_batch_entry` is
+  permissionless (the Merkle proof is the authorization), so without this
+  tracker anyone holding a proof could re-apply a leaf repeatedly and pollute
+  history with duplicate entries.  A second apply of the same leaf fails with
+  `BatchEntryAlreadyApplied`.
+
+## Gas-Based Griefing Bounds (Issue #385)
+
+`apply_batch_entry` is permissionless, so an attacker can force the contract
+(and themselves) to pay gas.  The bound per call:
+
+- **Proof depth**: a proof with more than `merkle::MAX_PROOF_SIBLINGS` (64)
+  siblings is rejected outright, capping the SHA-256 hashing an attacker can
+  make the contract perform in one call (a valid proof for up to 2^63 leaves
+  needs at most 63 siblings).
+- **Root retention**: only the latest 16 roots are stored, bounding the
+  bookkeeping an attacker can interact with.
+- **Single-use leaves**: re-applying an already-applied leaf is rejected, so
+  history (capped at `MAX_HISTORY_LEN` per asset) cannot be flooded with
+  duplicates.
+- The attacker always pays the gas for their own calls; the caps above make
+  the worst case explicit and prevent unbounded storage growth.
 
 ## Files
 
@@ -99,10 +124,10 @@ Each batch is identified by a monotonically increasing `nonce`:
 |------|-------------|
 | `contracts/price-oracle/src/merkle.rs` | On-chain SHA-256 Merkle proof verifier |
 | `contracts/price-oracle/src/merkle_test.rs` | Rust tests (20 tests) |
-| `contracts/price-oracle/src/contract.rs` | `submit_batch`, `apply_batch_entry`, `verify_batch_proof`, `get_batch_nonce` |
-| `contracts/price-oracle/src/types.rs` | `BatchPriceEntry`, `MerkleProof`, `DataKey::BatchRoot/BatchNonce` |
-| `contracts/price-oracle/src/errors.rs` | `InvalidMerkleProof`, `BatchNonceMismatch`, `BatchRootNotFound`, `BatchEmpty`, `BatchTooLarge` |
-| `contracts/price-oracle/src/storage.rs` | `get/set_batch_root`, `get/increment_batch_nonce` |
+| `contracts/price-oracle/src/contract/submission.rs` | `submit_batch`, `apply_batch_entry`, `verify_batch_proof`, `get_batch_nonce` |
+| `contracts/price-oracle/src/types.rs` | `BatchPriceEntry`, `MerkleProof`, `DataKey::BatchRoot/BatchNonce/BatchAppliedLeaves/BatchPruneWatermark` |
+| `contracts/price-oracle/src/errors.rs` | `InvalidMerkleProof`, `BatchNonceMismatch`, `BatchRootNotFound`, `BatchEntryAlreadyApplied` |
+| `contracts/price-oracle/src/storage.rs` | `get/set_batch_root` + pruning, `get/increment_batch_nonce`, applied-leaf tracker |
 | `services/aggregator/src/utils/merkle.ts` | Off-chain Merkle tree builder (mirrors on-chain encoding) |
 | `services/aggregator/src/publisher.ts` | `batchSubmit()` method using `MerkleTree.build()` |
 

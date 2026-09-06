@@ -73,7 +73,7 @@ export class WebSocketServer {
     if (sent > 0) wsMessagesTotal.inc({ service: SERVICE, direction: 'outbound' }, sent);
   }
 
-  broadcastAlert(alert: unknown): void {
+  broadcastAlert(alert: object): void {
     if (!this.wss) return;
     const message = {
       type: 'alert',
@@ -90,7 +90,9 @@ export class WebSocketServer {
     });
     if (sent > 0) {
       wsMessagesTotal.inc({ service: SERVICE, direction: 'outbound' }, sent);
-      logger.debug(`Broadcast alert to ${sent} WebSocket client(s)`, { type: (alert as any)?.type });
+      logger.debug(`Broadcast alert to ${sent} WebSocket client(s)`, {
+        type: (alert as { type?: unknown }).type,
+      });
     }
   }
 

@@ -2,13 +2,29 @@ import { z } from 'zod';
 import { Router, Request, Response } from 'express';
 import { AssetQuerySchema, HistoryQuerySchema, formatValidationResponse } from './validation';
 import { readAssetPrices, readPriceHistory } from './price-store';
+import type { ApiPrice } from '@stellar-oracle/types';
 import { HybridCache } from './cache';
 import { cacheHitTotal, cacheMissTotal, lastPriceTimestamp, priceQueriesTotal } from '../observability/metrics';
+import { v2Ok, v2Fail } from '../infrastructure/response';
+
+type PriceConfidence = 'high' | 'medium' | 'low';
+
+type EnrichedPrice = Omit<ApiPrice, 'confidence'> & {
+  sourceCount: number;
+  confidence: PriceConfidence;
+};
+
+function priceConfidence(price: ApiPrice): PriceConfidence {
+  const n = Array.isArray(price.sources) ? price.sources.length : 1;
+  if (n >= 3) return 'high';
+  if (n >= 2) return 'medium';
+  return 'low';
+}
 
 const router = Router();
-let pricesCache: HybridCache<any>;
+let pricesCache: HybridCache<unknown>;
 
-export function initializeCacheV2(cache: HybridCache<any>): void {
+export function initializeCacheV2(cache: HybridCache<unknown>): void {
   pricesCache = cache;
 }
 
@@ -56,7 +72,7 @@ router.get('/assets', async (req: Request, res: Response) => {
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
-    return res.json({ meta: { version: '2', success: true, cached: true }, data: cached });
+    return res.json(v2Ok(cached, true));
   }
   cacheMissTotal.inc();
 
@@ -81,21 +97,21 @@ router.get('/assets', async (req: Request, res: Response) => {
   };
 
   await pricesCache.set(cacheKey, response, 'sources');
-  res.json({ meta: { version: '2', success: true }, data: response });
+  res.json(v2Ok(response));
 });
 
 // v2 prices — enhanced envelope with confidence + source count
 router.get('/prices', async (req: Request, res: Response) => {
   const query = AssetQuerySchema.safeParse(req.query);
   if (!query.success) {
-    return res.status(400).json({ meta: { version: '2', success: false }, error: formatValidationResponse(query.error).error });
+    return res.status(400).json(v2Fail(formatValidationResponse(query.error).error));
   }
 
   const cacheKey = `v2:prices:${query.data.asset || '*'}`;
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
-    return res.json({ meta: { version: '2', success: true, cached: true }, data: cached });
+    return res.json(v2Ok(cached, true));
   }
   cacheMissTotal.inc();
 
@@ -122,7 +138,7 @@ router.get('/prices', async (req: Request, res: Response) => {
   };
 
   await pricesCache.set(cacheKey, aggregated, 'prices');
-  res.json({ meta: { version: '2', success: true }, data: aggregated });
+  res.json(v2Ok(aggregated));
 });
 
 router.get('/prices/:asset', async (req: Request, res: Response) => {
@@ -131,7 +147,7 @@ router.get('/prices/:asset', async (req: Request, res: Response) => {
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
-    return res.json({ meta: { version: '2', success: true, cached: true }, data: cached });
+    return res.json(v2Ok(cached, true));
   }
   cacheMissTotal.inc();
 
@@ -139,10 +155,9 @@ router.get('/prices/:asset', async (req: Request, res: Response) => {
   const price = prices.find((p) => p.asset === asset);
 
   if (!price) {
-    return res.status(404).json({
-      meta: { version: '2', success: false },
-      error: { code: 'NOT_FOUND', message: `No price data found for asset: ${asset}` },
-    });
+    return res.status(404).json(
+      v2Fail({ code: 'NOT_FOUND', message: `No price data found for asset: ${asset}` }),
+    );
   }
 
   priceQueriesTotal.inc({ asset });
@@ -155,22 +170,24 @@ router.get('/prices/:asset', async (req: Request, res: Response) => {
   };
 
   await pricesCache.set(cacheKey, enriched, 'price');
-  res.json({ meta: { version: '2', success: true }, data: enriched });
+  res.json(v2Ok(enriched));
 });
 
 router.get('/prices/batch', async (req: Request, res: Response) => {
   const assetsParam = req.query.assets as string;
   if (!assetsParam) {
-    return res.status(400).json({
-      meta: { version: '2', success: false },
-      error: { code: 'INVALID_INPUT', message: 'Missing required "assets" query parameter (comma-separated)' },
-    });
+    return res.status(400).json(
+      v2Fail({
+        code: 'INVALID_INPUT',
+        message: 'Missing required "assets" query parameter (comma-separated)',
+      }),
+    );
   }
 
   const assets = assetsParam.split(',').map((a) => a.trim()).filter((a) => a.length > 0);
   const body = BatchQuerySchema.safeParse({ assets });
   if (!body.success) {
-    return res.status(400).json({ meta: { version: '2', success: false }, error: formatValidationResponse(body.error).error });
+    return res.status(400).json(v2Fail(formatValidationResponse(body.error).error));
   }
 
   const { assets: validatedAssets } = body.data;
@@ -180,14 +197,14 @@ router.get('/prices/batch', async (req: Request, res: Response) => {
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
-    return res.json({ meta: { version: '2', success: true, cached: true }, data: cached });
+    return res.json(v2Ok(cached, true));
   }
   cacheMissTotal.inc();
 
   const allPrices = await readAssetPrices();
   const priceMap = new Map(allPrices.map((p) => [p.asset, p]));
 
-  const results: Array<{ asset: string; price?: any; error?: string }> = [];
+  const results: Array<{ asset: string; price?: EnrichedPrice; error?: string }> = [];
   for (const asset of upperAssets) {
     const price = priceMap.get(asset);
     if (price) {
@@ -198,7 +215,7 @@ router.get('/prices/batch', async (req: Request, res: Response) => {
         price: {
           ...price,
           sourceCount: Array.isArray(price.sources) ? price.sources.length : 1,
-          confidence: Array.isArray(price.sources) ? (price.sources.length >= 3 ? 'high' : price.sources.length >= 2 ? 'medium' : 'low') : 'low',
+          confidence: priceConfidence(price),
         },
       });
     } else {
@@ -214,13 +231,13 @@ router.get('/prices/batch', async (req: Request, res: Response) => {
   };
 
   await pricesCache.set(cacheKey, response, 'prices');
-  res.json({ meta: { version: '2', success: true }, data: response });
+  res.json(v2Ok(response));
 });
 
 router.post('/prices/batch', async (req: Request, res: Response) => {
   const body = BatchQuerySchema.safeParse(req.body);
   if (!body.success) {
-    return res.status(400).json({ meta: { version: '2', success: false }, error: formatValidationResponse(body.error).error });
+    return res.status(400).json(v2Fail(formatValidationResponse(body.error).error));
   }
 
   const { assets } = body.data;
@@ -230,14 +247,14 @@ router.post('/prices/batch', async (req: Request, res: Response) => {
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
-    return res.json({ meta: { version: '2', success: true, cached: true }, data: cached });
+    return res.json(v2Ok(cached, true));
   }
   cacheMissTotal.inc();
 
   const allPrices = await readAssetPrices();
   const priceMap = new Map(allPrices.map((p) => [p.asset, p]));
 
-  const results: Array<{ asset: string; price?: any; error?: string }> = [];
+  const results: Array<{ asset: string; price?: EnrichedPrice; error?: string }> = [];
   for (const asset of upperAssets) {
     const price = priceMap.get(asset);
     if (price) {
@@ -248,7 +265,7 @@ router.post('/prices/batch', async (req: Request, res: Response) => {
         price: {
           ...price,
           sourceCount: Array.isArray(price.sources) ? price.sources.length : 1,
-          confidence: Array.isArray(price.sources) ? (price.sources.length >= 3 ? 'high' : price.sources.length >= 2 ? 'medium' : 'low') : 'low',
+          confidence: priceConfidence(price),
         },
       });
     } else {
@@ -264,13 +281,13 @@ router.post('/prices/batch', async (req: Request, res: Response) => {
   };
 
   await pricesCache.set(cacheKey, response, 'prices');
-  res.json({ meta: { version: '2', success: true }, data: response });
+  res.json(v2Ok(response));
 });
 
 router.get('/history/:asset', async (req: Request, res: Response) => {
   const params = HistoryQuerySchema.safeParse({ ...req.params, ...req.query });
   if (!params.success) {
-    return res.status(400).json({ meta: { version: '2', success: false }, error: formatValidationResponse(params.error).error });
+    return res.status(400).json(v2Fail(formatValidationResponse(params.error).error));
   }
 
   const { asset, from, to, limit } = params.data;
@@ -278,7 +295,7 @@ router.get('/history/:asset', async (req: Request, res: Response) => {
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
-    return res.json({ meta: { version: '2', success: true, cached: true }, data: cached });
+    return res.json(v2Ok(cached, true));
   }
   cacheMissTotal.inc();
 
@@ -292,7 +309,7 @@ router.get('/history/:asset', async (req: Request, res: Response) => {
   };
 
   await pricesCache.set(cacheKey, response, 'history');
-  res.json({ meta: { version: '2', success: true }, data: response });
+  res.json(v2Ok(response));
 });
 
 router.get('/sources', async (_req: Request, res: Response) => {
@@ -300,7 +317,7 @@ router.get('/sources', async (_req: Request, res: Response) => {
   const cached = await pricesCache.get(cacheKey);
   if (cached) {
     cacheHitTotal.inc();
-    return res.json({ meta: { version: '2', success: true, cached: true }, data: cached });
+    return res.json(v2Ok(cached, true));
   }
   cacheMissTotal.inc();
 
@@ -314,11 +331,11 @@ router.get('/sources', async (_req: Request, res: Response) => {
   };
 
   await pricesCache.set(cacheKey, data, 'sources');
-  res.json({ meta: { version: '2', success: true }, data });
+  res.json(v2Ok(data));
 });
 
 router.get('/health/live', (_req: Request, res: Response) => {
-  res.json({ meta: { version: '2', success: true }, data: { status: 'alive', uptime: process.uptime() } });
+  res.json(v2Ok({ status: 'alive', uptime: process.uptime() }));
 });
 
 router.get('/health/ready', async (_req: Request, res: Response) => {
@@ -344,7 +361,7 @@ router.get('/health', async (req: Request, res: Response) => {
   const hasStale = prices.some((p) => Date.now() / 1000 - p.timestamp > 120);
   const status = prices.length === 0 ? 'unhealthy' : hasStale ? 'degraded' : 'healthy';
 
-  const data: Record<string, any> = {
+  const data: Record<string, unknown> = {
     service: 'stellar-price-oracle-api',
     version: '2',
     status,

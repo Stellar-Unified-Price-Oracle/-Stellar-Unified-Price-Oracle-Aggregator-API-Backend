@@ -1,8 +1,12 @@
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, Vec};
 
 use crate::errors::OracleError;
 use crate::storage;
 use crate::types::{AssetPrice, MultiSigConfig, PriceDataPoint, SourceReputation};
+use crate::utils::{append_history, apply_reputation_decay, calculate_usd_price, deviation_exceeds, update_reputation, vec_contains_address};
+
+// Issue #375 — minimum delay between a queued WASM upgrade and its execution.
+const UPGRADE_TIMELOCK_SECS: u64 = 172_800; // 48 hours
 
 // Issue #68: Proxy contract with upgradeability via WASM hash replacement.
 //
@@ -111,6 +115,68 @@ impl ProxyContract {
             return Err(OracleError::ThresholdNotMet);
         }
 
+        if timelock_secs < MIN_UPGRADE_TIMELOCK_SECS {
+            return Err(OracleError::InvalidThreshold);
+        }
+
+        let mut approvals: Vec<Address> = Vec::new(&env);
+        approvals.push_back(admin);
+
+        storage::set_pending_upgrade(
+            &env,
+            &PendingProxyUpgrade {
+                new_wasm_hash,
+                unlock_time: env.ledger().timestamp() + timelock_secs,
+                approvals,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn approve_upgrade(env: Env, signer: Address) -> Result<(), OracleError> {
+        signer.require_auth();
+
+        let config = storage::get_multisig_config(&env).ok_or(OracleError::MultiSigNotInitialized)?;
+        if !vec_contains_address(&config.signers, &signer) {
+            return Err(OracleError::NotASigner);
+        }
+
+        let mut pending = storage::get_pending_upgrade(&env).ok_or(OracleError::NoPendingUpgrade)?;
+        if vec_contains_address(&pending.approvals, &signer) {
+            return Err(OracleError::AlreadyApproved);
+        }
+        pending.approvals.push_back(signer);
+        storage::set_pending_upgrade(&env, &pending);
+        Ok(())
+    }
+
+    pub fn cancel_upgrade(env: Env, admin: Address) -> Result<(), OracleError> {
+        admin.require_auth();
+        storage::verify_admin(&env, &admin)?;
+        storage::clear_pending_upgrade(&env);
+        Ok(())
+    }
+
+    pub fn get_pending_upgrade(env: Env) -> Option<PendingProxyUpgrade> {
+        storage::get_pending_upgrade(&env)
+    }
+
+    pub fn upgrade_wasm(env: Env, admin: Address) -> Result<(), OracleError> {
+        admin.require_auth();
+        storage::verify_admin(&env, &admin)?;
+
+        let pending = storage::get_pending_upgrade(&env).ok_or(OracleError::NoPendingUpgrade)?;
+
+        if env.ledger().timestamp() < pending.unlock_time {
+            return Err(OracleError::TimeLockNotElapsed);
+        }
+
+        if let Some(config) = storage::get_multisig_config(&env) {
+            if (pending.approvals.len()) < config.threshold {
+                return Err(OracleError::ThresholdNotMet);
+            }
+        }
+
         let current_version = storage::get_contract_version(&env);
         storage::set_contract_version(&env, current_version + 1);
         storage::clear_pending_upgrade(&env);
@@ -118,7 +184,7 @@ impl ProxyContract {
         env.events()
             .publish(("upgrade_executed", new_wasm_hash.clone()), current_version + 1);
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        env.deployer().update_current_contract_wasm(pending.new_wasm_hash);
         Ok(())
     }
 
@@ -191,6 +257,64 @@ impl ProxyContract {
         env.events()
             .publish(("canary_promoted", canary), current_version + 1);
         Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue #375 — canary rollout. The canary candidate is a separately
+    // deployed contract address; `resolve_target` lets an off-chain router or
+    // client SDK decide which address to invoke for a given caller so a
+    // configurable share of traffic reaches the candidate before the
+    // canonical WASM upgrade goes out to everyone.
+    // -------------------------------------------------------------------------
+
+    pub fn propose_canary(
+        env: Env,
+        admin: Address,
+        candidate: Address,
+        share_bps: u32,
+    ) -> Result<(), OracleError> {
+        admin.require_auth();
+        storage::verify_admin(&env, &admin)?;
+
+        if share_bps > 10_000 {
+            return Err(OracleError::InvalidThreshold);
+        }
+
+        storage::set_canary_config(&env, &CanaryConfig { candidate, share_bps });
+        env.events().publish(("canary_set", admin), share_bps);
+        Ok(())
+    }
+
+    pub fn clear_canary(env: Env, admin: Address) -> Result<(), OracleError> {
+        admin.require_auth();
+        storage::verify_admin(&env, &admin)?;
+        storage::clear_canary_config(&env);
+        Ok(())
+    }
+
+    pub fn get_canary(env: Env) -> Option<CanaryConfig> {
+        storage::get_canary_config(&env)
+    }
+
+    /// Deterministically route a share of traffic to the canary candidate.
+    /// The same caller always resolves the same way for a given canary
+    /// configuration, avoiding per-call flapping.
+    pub fn resolve_target(env: Env, caller: Address) -> Address {
+        let canonical = storage::get_implementation(&env).unwrap_or_else(|| env.current_contract_address());
+
+        let canary = match storage::get_canary_config(&env) {
+            Some(c) => c,
+            None => return canonical,
+        };
+        if canary.share_bps == 0 {
+            return canonical;
+        }
+
+        if address_bucket(&env, &caller) < canary.share_bps {
+            canary.candidate
+        } else {
+            canonical
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -342,9 +466,7 @@ impl ProxyContract {
 
         storage::set_latest_price(&env, &asset, &data_point);
 
-        let mut history = storage::get_price_history(&env, &asset);
-        history.push_back(data_point.clone());
-        storage::set_price_history(&env, &asset, &history);
+        append_history(&env, &asset, data_point.clone());
 
         env.events()
             .publish(("price_submitted", asset, source), (price, timestamp));
@@ -409,6 +531,16 @@ impl ProxyContract {
         Ok(())
     }
 
+    /// Issue #376 — extend this contract instance's TTL (Admin, Implementation,
+    /// PendingProxyUpgrade, CanaryConfig, etc. all live in instance storage).
+    pub fn extend_instance_ttl(env: Env, threshold: u32, extend_to: u32) {
+        storage::extend_instance_ttl(&env, threshold, extend_to);
+    }
+
+    pub fn extend_price_history_ttl(env: Env, asset: String, threshold: u32, extend_to: u32) {
+        storage::extend_price_history_ttl(&env, &asset, threshold, extend_to);
+    }
+
     pub fn set_trusted_asset(
         env: Env,
         admin: Address,
@@ -421,97 +553,3 @@ impl ProxyContract {
         Ok(())
     }
 }
-
-// -------------------------------------------------------------------------
-// Shared helpers (duplicated from contract.rs; cannot call across contracts
-// within the same crate without cross-contract invocation overhead)
-// -------------------------------------------------------------------------
-
-const REPUTATION_ACCURACY_THRESHOLD_BPS: u128 = 2000;
-const REPUTATION_DECAY_PERIOD_SECS: u64 = 604_800;
-// Issue #375 — minimum delay between a queued WASM upgrade and its execution.
-const UPGRADE_TIMELOCK_SECS: u64 = 172_800; // 48 hours
-
-fn vec_contains_address(vec: &Vec<Address>, target: &Address) -> bool {
-    for i in 0..vec.len() {
-        if let Some(addr) = vec.get(i) {
-            if &addr == target {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn deviation_exceeds(new_price: i128, prev_price: i128, threshold_bps: u32) -> bool {
-    if prev_price == 0 {
-        return false;
-    }
-    let prev_abs = prev_price.unsigned_abs();
-    let diff: u128 = if (new_price >= 0) == (prev_price >= 0) {
-        let new_abs = new_price.unsigned_abs();
-        if new_abs >= prev_abs { new_abs - prev_abs } else { prev_abs - new_abs }
-    } else {
-        new_price.unsigned_abs().saturating_add(prev_abs)
-    };
-    diff.saturating_mul(10_000) / prev_abs > threshold_bps as u128
-}
-
-fn update_reputation(env: &Env, source: &Address, new_price: i128, asset: &String, timestamp: u64) {
-    let is_accurate = match storage::get_latest_price(env, asset) {
-        None => true,
-        Some(prev) => !deviation_exceeds(new_price, prev.price, REPUTATION_ACCURACY_THRESHOLD_BPS as u32),
-    };
-
-    let mut rep = storage::get_source_reputation(env, source).unwrap_or(SourceReputation {
-        score: 10_000,
-        total_submissions: 0,
-        accurate_submissions: 0,
-        last_updated: timestamp,
-    });
-
-    rep.total_submissions = rep.total_submissions.saturating_add(1);
-    if is_accurate {
-        rep.accurate_submissions = rep.accurate_submissions.saturating_add(1);
-    }
-    rep.score = if rep.total_submissions == 0 {
-        10_000
-    } else {
-        (rep.accurate_submissions as u32).saturating_mul(10_000) / rep.total_submissions
-    };
-    rep.last_updated = timestamp;
-    storage::set_source_reputation(env, source, &rep);
-}
-
-fn apply_reputation_decay(env: &Env, mut rep: SourceReputation) -> SourceReputation {
-    let now = env.ledger().timestamp();
-    let elapsed = now.saturating_sub(rep.last_updated);
-    if elapsed < REPUTATION_DECAY_PERIOD_SECS {
-        return rep;
-    }
-    let periods = (elapsed / REPUTATION_DECAY_PERIOD_SECS).min(40) as u32;
-    for _ in 0..periods {
-        rep.score = rep.score.saturating_mul(95) / 100;
-    }
-    rep
-}
-
-fn calculate_usd_price(env: &Env, asset: &String, price: i128, decimals: u32) -> Option<i128> {
-    let xlm = String::from_str(env, "XLM");
-    if asset == &xlm {
-        return Some(price);
-    }
-    let usdc = String::from_str(env, "USDC");
-    if let Some(usdc_anchor) = storage::get_latest_price(env, &usdc) {
-        if asset == &usdc {
-            return Some(10i128.pow(decimals));
-        }
-        if let Some(xlm_price) = storage::get_latest_price(env, &xlm) {
-            let base_asset_price = (price * xlm_price.price * 10i128.pow(decimals))
-                / (10i128.pow(decimals) * 10i128.pow(usdc_anchor.decimals));
-            return Some(base_asset_price);
-        }
-    }
-    None
-}
-

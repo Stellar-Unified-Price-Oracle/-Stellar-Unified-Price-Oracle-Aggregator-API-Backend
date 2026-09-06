@@ -1,5 +1,13 @@
 import { logger } from '../observability/logger';
 
+export type RetryEvent = { key: string; submission: RetryableSubmission } & (
+  | { event: 'retry'; attemptCount: number }
+  | { event: 'failure'; reason: string }
+);
+
+export type RetryScheduledEvent = RetryEvent & { event: 'retry'; attemptCount: number };
+export type RetryFailedEvent = RetryEvent & { event: 'failure'; reason: string };
+
 export interface RetryableSubmission {
   asset: string;
   price: bigint;
@@ -100,7 +108,8 @@ export class SubmissionRetryQueue {
           attemptCount: submission.attemptCount,
           lastError: submission.lastError,
         });
-        this.emit('failure', {
+        this.emit({
+          event: 'failure',
           key,
           submission,
           reason: `Max retries (${this.maxRetries}) exceeded`,
@@ -114,7 +123,12 @@ export class SubmissionRetryQueue {
           nextRetryMs: backoffMs,
           queueSize: this.queue.size,
         });
-        this.emit('retry', { key, submission, attemptCount: submission.attemptCount });
+        this.emit({
+          event: 'retry',
+          key,
+          submission,
+          attemptCount: submission.attemptCount,
+        });
       }
     }
 
@@ -154,22 +168,36 @@ export class SubmissionRetryQueue {
     return this.queue.delete(key);
   }
 
-  private listeners: Map<string, Array<(data: any) => void>> = new Map();
+  private listeners: {
+    retry: Array<(data: RetryScheduledEvent) => void>;
+    failure: Array<(data: RetryFailedEvent) => void>;
+  } = { retry: [], failure: [] };
 
-  on(event: 'retry' | 'failure', handler: (data: any) => void): void {
-    if (!this.listeners.has(event)) {
-      this.listeners.set(event, []);
-    }
-    this.listeners.get(event)!.push(handler);
+  on(event: 'retry', handler: (data: RetryScheduledEvent) => void): void;
+  on(event: 'failure', handler: (data: RetryFailedEvent) => void): void;
+  on(
+    event: 'retry' | 'failure',
+    handler: ((data: RetryScheduledEvent) => void) | ((data: RetryFailedEvent) => void),
+  ): void {
+    this.listeners[event].push(handler as never);
   }
 
-  private emit(event: string, data: any): void {
-    const handlers = this.listeners.get(event) || [];
-    for (const handler of handlers) {
-      try {
-        handler(data);
-      } catch (err) {
-        logger.error(`[RetryQueue] Error in ${event} handler:`, err);
+  private emit(data: RetryEvent): void {
+    if (data.event === 'retry') {
+      for (const handler of this.listeners.retry) {
+        try {
+          handler(data);
+        } catch (err) {
+          logger.error('[RetryQueue] Error in retry handler:', err);
+        }
+      }
+    } else {
+      for (const handler of this.listeners.failure) {
+        try {
+          handler(data);
+        } catch (err) {
+          logger.error('[RetryQueue] Error in failure handler:', err);
+        }
       }
     }
   }

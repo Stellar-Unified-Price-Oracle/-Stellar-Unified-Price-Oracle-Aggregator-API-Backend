@@ -1,0 +1,171 @@
+name: Backup & Restore Test
+
+on:
+  schedule:
+    - cron: '0 1 * * 0'
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  restore-test:
+    name: Restore integrity test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: oracle
+          POSTGRES_PASSWORD: oracle
+          POSTGRES_DB: oracle_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Seed test data for restore assertions
+        run: |
+          PGPASSWORD=oracle psql \
+            -h localhost -U oracle -d oracle_test \
+            -c "CREATE TABLE IF NOT EXISTS price_history (
+                  id SERIAL PRIMARY KEY,
+                  asset TEXT NOT NULL,
+                  price TEXT NOT NULL,
+                  decimals INTEGER NOT NULL DEFAULT 7,
+                  source TEXT NOT NULL,
+                  timestamp BIGINT NOT NULL,
+                  created_at TIMESTAMPTZ DEFAULT NOW()
+                );"
+          PGPASSWORD=oracle psql \
+            -h localhost -U oracle -d oracle_test \
+            -c "INSERT INTO price_history (asset, price, decimals, source, timestamp)
+                VALUES
+                  ('XLM',  '0.1200000', 7, 'chainlink', 1700000000),
+                  ('BTC',  '68000.000', 7, 'redstone',  1700000000),
+                  ('ETH',  '3500.0000', 7, 'band',      1700000000),
+                  ('USDC', '1.0000000', 7, 'reflector', 1700000000),
+                  ('USDT', '1.0000000', 7, 'chainlink', 1700000000)
+                ON CONFLICT DO NOTHING;"
+
+      - name: Create pg_dump backup
+        run: |
+          mkdir -p /tmp/restore-test-backups
+          PGPASSWORD=oracle pg_dump \
+            --format=plain --no-password \
+            "postgresql://oracle:oracle@localhost:5432/oracle_test" \
+            | gzip > /tmp/restore-test-backups/backup_test.sql.gz
+        env:
+          PGPASSWORD: oracle
+
+      - name: Run restore tester
+        id: restore_test
+        run: |
+          node -e "
+          const path = require('path');
+          const fs   = require('fs');
+
+          process.env.DATABASE_URL = 'postgresql://oracle:oracle@localhost:5432/oracle_test';
+
+          const { RestoreTester } = require('./dist/infrastructure/restore-tester');
+          const { BackupService } = require('./dist/infrastructure/backup');
+          const winston = require('winston');
+
+          const logger = winston.createLogger({
+            transports: [new winston.transports.Console()],
+            format: winston.format.simple(),
+          });
+
+          const backupSvc = new BackupService(
+            process.env.DATABASE_URL,
+            logger,
+            { backupDir: '/tmp/restore-test-backups' }
+          );
+
+          const tester = new RestoreTester(
+            process.env.DATABASE_URL,
+            backupSvc,
+            logger,
+            {
+              dataDir: path.resolve('../data'),
+              configFiles: [
+                path.resolve('../.env.example'),
+                path.resolve('../config/cost-model.json'),
+              ],
+            }
+          );
+
+          tester.runAll().then((results) => {
+            const report = { timestamp: new Date().toISOString(), results };
+            fs.mkdirSync('/tmp/restore-report', { recursive: true });
+            fs.writeFileSync('/tmp/restore-report/results.json', JSON.stringify(report, null, 2));
+            console.log(JSON.stringify(report, null, 2));
+
+            const failures = results.filter((r) => !r.success);
+            if (failures.length > 0) {
+              console.error('RESTORE TEST FAILURES:', failures.map((f) => f.error).join('; '));
+              process.exit(1);
+            }
+            console.log('All restore tests passed.');
+          }).catch((err) => {
+            console.error('Restore tester crashed:', err);
+            process.exit(1);
+          });
+          "
+        env:
+          DATABASE_URL: postgresql://oracle:oracle@localhost:5432/oracle_test
+          PGPASSWORD: oracle
+          NODE_ENV: test
+
+      - name: Write restore report summary
+        if: always()
+        run: |
+          if [ -f /tmp/restore-report/results.json ]; then
+            echo "## Restore Test Report" >> /tmp/restore-report/summary.md
+            echo "" >> /tmp/restore-report/summary.md
+            echo "**Run:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> /tmp/restore-report/summary.md
+            echo "" >> /tmp/restore-report/summary.md
+            echo '```json' >> /tmp/restore-report/summary.md
+            cat /tmp/restore-report/results.json >> /tmp/restore-report/summary.md
+            echo '```' >> /tmp/restore-report/summary.md
+          else
+            echo "## Restore Test Report" > /tmp/restore-report/summary.md
+            echo "" >> /tmp/restore-report/summary.md
+            echo "No results file generated — restore tester may have crashed before writing output." >> /tmp/restore-report/summary.md
+          fi
+
+      - name: Upload restore report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-report
+          path: /tmp/restore-report/
+          retention-days: 30
+
+      - name: Alert on restore failure
+        if: failure() && steps.restore_test.outcome == 'failure'
+        run: |
+          echo "::error::One or more restore integrity assertions failed. Check the restore-report artifact for details."
+          exit 1

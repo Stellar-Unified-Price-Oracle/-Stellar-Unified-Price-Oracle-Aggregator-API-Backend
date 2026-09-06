@@ -16,6 +16,21 @@ interface Bucket {
   byAsset: Map<string, number>;
 }
 
+interface ComplianceReport {
+  id: string;
+  reportType: string;
+  period: string;
+  generatedAt: number;
+  data: Record<string, unknown>;
+  status: 'pending_review' | 'approved' | 'submitted';
+}
+
+const REQUIRED_REPORTS: ReadonlyArray<{ name: string; period: 'daily' | 'weekly' | 'monthly' }> = [
+  { name: 'Daily usage report', period: 'daily' },
+  { name: 'Weekly usage report', period: 'weekly' },
+  { name: 'Monthly usage report', period: 'monthly' },
+];
+
 function newBucket(): Bucket {
   return { count: 0, byEndpoint: new Map(), byKey: new Map(), byAsset: new Map() };
 }
@@ -39,6 +54,8 @@ export class UsageAnalytics {
   private hourly = new Map<number, Bucket>();
   private events: UsageEvent[] = [];
   private readonly maxEvents = 5000;
+  private complianceReports: ComplianceReport[] = [];
+  private complianceScheduler?: ReturnType<typeof setInterval>;
 
   record(event: UsageEvent): void {
     this.events.push(event);
@@ -139,6 +156,54 @@ export class UsageAnalytics {
       }
     }
     return anomalies;
+  }
+
+  generateComplianceReports(): void {
+    const now = Date.now();
+    for (const rep of REQUIRED_REPORTS) {
+      this.complianceReports.push({
+        id: `${rep.period}-${now}`,
+        reportType: rep.name,
+        period: rep.period,
+        generatedAt: Math.floor(now / 1000),
+        data: this.report(rep.period),
+        status: 'pending_review',
+      });
+    }
+  }
+
+  getPendingComplianceReports(): Array<ComplianceReport & { status: 'pending_review' }> {
+    return this.complianceReports.filter(
+      (r): r is ComplianceReport & { status: 'pending_review' } => r.status === 'pending_review'
+    );
+  }
+
+  reviewComplianceReport(id: string): boolean {
+    const report = this.complianceReports.find((r) => r.id === id);
+    if (!report || report.status !== 'pending_review') return false;
+    report.status = 'approved';
+    return true;
+  }
+
+  submitComplianceReport(id: string): boolean {
+    const report = this.complianceReports.find((r) => r.id === id);
+    if (!report || report.status !== 'approved') return false;
+    // Delivery placeholder: in production, send via email/portal.
+    console.log(`Delivering compliance report ${id} (${report.reportType})`);
+    report.status = 'submitted';
+    return true;
+  }
+
+  startScheduledComplianceReports(intervalMs = 24 * HOUR_MS): void {
+    if (this.complianceScheduler) return;
+    this.complianceScheduler = setInterval(() => this.generateComplianceReports(), intervalMs);
+  }
+
+  stopScheduledComplianceReports(): void {
+    if (this.complianceScheduler) {
+      clearInterval(this.complianceScheduler);
+      this.complianceScheduler = undefined;
+    }
   }
 }
 

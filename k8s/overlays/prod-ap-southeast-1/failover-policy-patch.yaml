@@ -1,0 +1,16 @@
+- op: replace
+  path: /data/policy
+  value: |
+    active-active
+    primary-region: ap-southeast-1
+    regions:
+      - us-east-1
+      - eu-west-1
+      - ap-southeast-1
+    failoverWindowMs: 150
+    healthCheckPath: /api/v1/health
+    healthCheckIntervalSeconds: 5
+    routingPolicy: latency
+    promotionThreshold: 1
+    trafficDrainGracePeriodMs: 150
+    quarantineOnAccuracyDegradation: true

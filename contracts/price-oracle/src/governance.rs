@@ -23,7 +23,7 @@ fn require_gov(env: &Env) -> Result<GovernanceConfig, OracleError> {
 }
 
 fn voting_power(env: &Env, config: &GovernanceConfig, account: &Address) -> i128 {
-    TokenClient::new(env, &config.token).balance(env.clone(), account.clone())
+    TokenClient::new(env, &config.token).balance(account)
 }
 
 fn resolve_proposal(env: &Env, proposal: &mut GovernanceProposal, config: &GovernanceConfig) {
@@ -161,6 +161,7 @@ impl GovernanceContract {
 
         storage::record_vote(&env, proposal_id, &voter, support);
         storage::set_gov_proposal(&env, &proposal);
+        env.events().publish(("gov_voted", proposal_id, voter), support);
         Ok(())
     }
 
@@ -177,6 +178,7 @@ impl GovernanceContract {
         match proposal.status {
             ProposalStatus::Queued | ProposalStatus::Ready => {
                 storage::set_gov_proposal(&env, &proposal);
+                env.events().publish(("gov_queued", proposal_id), proposal.execution_time);
                 Ok(())
             }
             ProposalStatus::Defeated => Err(OracleError::ProposalDefeated),
@@ -241,6 +243,7 @@ impl GovernanceContract {
 
         proposal.status = ProposalStatus::Cancelled;
         storage::set_gov_proposal(&env, &proposal);
+        env.events().publish(("gov_cancelled", proposal_id, caller), ());
         Ok(())
     }
 
@@ -296,6 +299,13 @@ impl GovernanceContract {
     /// Return the current governance configuration.
     pub fn get_governance_config(env: Env) -> Option<GovernanceConfig> {
         storage::get_gov_config(&env)
+    }
+
+    /// Issue #376 — extend this contract instance's TTL (covers GovConfig and
+    /// every GovernanceProposal, which live in instance storage). Permissionless
+    /// for the same reason as PriceOracleContract's extend_instance_ttl.
+    pub fn extend_instance_ttl(env: Env, threshold: u32, extend_to: u32) {
+        storage::extend_instance_ttl(&env, threshold, extend_to);
     }
 }
 

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod governance_tests {
-    use soroban_sdk::{testutils::Address as TestAddress, Address, Env, String};
+    use soroban_sdk::{testutils::{Address as TestAddress, Ledger}, Address, Env, String};
 
     use crate::governance::{GovernanceContract, GovernanceContractClient};
     use crate::types::{GovernanceConfig, ProposalAction, ProposalStatus};
@@ -49,6 +49,7 @@ mod governance_tests {
 
     fn setup() -> Ctx {
         let env = Env::default();
+        env.mock_all_auths();
 
         let gov_id = env.register_contract(None, GovernanceContract);
         let token_id = env.register_contract(None, MockToken);
@@ -128,8 +129,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
-            1,
+            String::from_str(&ctx.env,"XLM"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -153,8 +154,8 @@ mod governance_tests {
         ctx.token.set_balance(&poor, &50_000i128); // below 100_000 threshold
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "BTC"),
-            1,
+            String::from_str(&ctx.env,"BTC"),
+            true,
         );
         assert!(ctx.gov.try_propose(
             &poor,
@@ -169,8 +170,8 @@ mod governance_tests {
         // governance not initialised
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
-            1,
+            String::from_str(&ctx.env,"XLM"),
+            true,
         );
         assert!(ctx.gov.try_propose(
             &ctx.proposer,
@@ -188,8 +189,8 @@ mod governance_tests {
 
         for i in 0u32..3 {
             let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
-            (i % 2) as u32,
+            String::from_str(&ctx.env,"XLM"),
+            i % 2 == 1,
         );
         ctx.gov.propose(
                 &ctx.proposer,
@@ -208,8 +209,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "ETH"),
-            1,
+            String::from_str(&ctx.env,"ETH"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -235,8 +236,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "ETH"),
-            1,
+            String::from_str(&ctx.env,"ETH"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -254,8 +255,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "USDC"),
-            0,
+            String::from_str(&ctx.env,"USDC"),
+            false,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -284,8 +285,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
-            1,
+            String::from_str(&ctx.env,"XLM"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -310,8 +311,8 @@ mod governance_tests {
         ctx.token.set_balance(&ctx.voter_b, &700_000i128);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
-            1,
+            String::from_str(&ctx.env,"XLM"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -325,8 +326,9 @@ mod governance_tests {
 
         assert!(ctx.gov.try_queue(&id).is_err());
 
-        let p = ctx.gov.get_proposal(&id).unwrap();
-        assert!(matches!(p.status, ProposalStatus::Defeated));
+        // A failed queue call reverts in Soroban, so the stored status stays
+        // Active, but the proposal is permanently barred from execution.
+        assert!(ctx.gov.try_execute(&id).is_err());
     }
 
     #[test]
@@ -343,8 +345,8 @@ mod governance_tests {
         ctx.gov.initialize(&ctx.admin, &cfg);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "BTC"),
-            1,
+            String::from_str(&ctx.env,"BTC"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -357,8 +359,9 @@ mod governance_tests {
 
         assert!(ctx.gov.try_queue(&id).is_err());
 
-        let p = ctx.gov.get_proposal(&id).unwrap();
-        assert!(matches!(p.status, ProposalStatus::Defeated));
+        // The proposal is barred from execution even though the stored status
+        // remains Active (the failed queue call reverted).
+        assert!(ctx.gov.try_execute(&id).is_err());
     }
 
     // ── Execution ─────────────────────────────────────────────────────────────
@@ -369,8 +372,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "BTC"),
-            1,
+            String::from_str(&ctx.env,"BTC"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -392,8 +395,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "BTC"),
-            1,
+            String::from_str(&ctx.env,"BTC"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -418,8 +421,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "ETH"),
-            1,
+            String::from_str(&ctx.env,"ETH"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -444,8 +447,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "USDT"),
-            1,
+            String::from_str(&ctx.env,"USDT"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -498,8 +501,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "USDT"),
-            0,
+            String::from_str(&ctx.env,"USDT"),
+            false,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -519,8 +522,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "USDT"),
-            0,
+            String::from_str(&ctx.env,"USDT"),
+            false,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -540,8 +543,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
-            1,
+            String::from_str(&ctx.env,"XLM"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -559,8 +562,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
-            1,
+            String::from_str(&ctx.env,"XLM"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -583,8 +586,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "BTC"),
-            0,
+            String::from_str(&ctx.env,"BTC"),
+            false,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -605,8 +608,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "ETH"),
-            0,
+            String::from_str(&ctx.env,"ETH"),
+            false,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -624,8 +627,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "ETH"),
-            0,
+            String::from_str(&ctx.env,"ETH"),
+            false,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -652,8 +655,8 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
-            1,
+            String::from_str(&ctx.env,"XLM"),
+            true,
         );
         let id = ctx.gov.propose(
             &ctx.proposer,
@@ -670,12 +673,12 @@ mod governance_tests {
         init(&ctx);
 
         let action_a = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
-            1,
+            String::from_str(&ctx.env,"XLM"),
+            true,
         );
         let action_b = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "BTC"),
-            1,
+            String::from_str(&ctx.env,"BTC"),
+            true,
         );
 
         let id_a = ctx.gov.propose(
@@ -708,7 +711,7 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "ETH"),
+            String::from_str(&ctx.env,"ETH"),
             true,
         );
         let id = ctx.gov.propose(
@@ -732,7 +735,7 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
+            String::from_str(&ctx.env,"XLM"),
             true,
         );
         let id = ctx.gov.propose(
@@ -751,7 +754,7 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
+            String::from_str(&ctx.env,"XLM"),
             true,
         );
         let id = ctx.gov.propose(
@@ -776,7 +779,7 @@ mod governance_tests {
         // No balance set → balance defaults to 0
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
+            String::from_str(&ctx.env,"XLM"),
             true,
         );
         let id = ctx.gov.propose(
@@ -800,7 +803,7 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "ETH"),
+            String::from_str(&ctx.env,"ETH"),
             true,
         );
         let id = ctx.gov.propose(
@@ -826,7 +829,7 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
+            String::from_str(&ctx.env,"XLM"),
             true,
         );
         let id = ctx.gov.propose(
@@ -857,7 +860,7 @@ mod governance_tests {
         ctx.token.set_balance(&ctx.voter_b, &700_000i128);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
+            String::from_str(&ctx.env,"XLM"),
             true,
         );
         let id = ctx.gov.propose(
@@ -883,7 +886,7 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "BTC"),
+            String::from_str(&ctx.env,"BTC"),
             false,
         );
         let id = ctx.gov.propose(
@@ -932,7 +935,7 @@ mod governance_tests {
         ctx.token.set_balance(&ctx.voter_b, &700_000i128);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
+            String::from_str(&ctx.env,"XLM"),
             true,
         );
         let id = ctx.gov.propose(
@@ -961,7 +964,7 @@ mod governance_tests {
         init(&ctx);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "ETH"),
+            String::from_str(&ctx.env,"ETH"),
             false,
         );
         let id = ctx.gov.propose(
@@ -986,7 +989,7 @@ mod governance_tests {
 
         // With current threshold 100_000, low_balance cannot propose
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
+            String::from_str(&ctx.env,"XLM"),
             true,
         );
         assert!(ctx.gov.try_propose(
@@ -1047,7 +1050,7 @@ mod governance_tests {
 
         // Proposer has 1_000_000, now below new threshold of 1_500_000
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
+            String::from_str(&ctx.env,"XLM"),
             true,
         );
         assert!(ctx.gov.try_propose(
@@ -1064,7 +1067,7 @@ mod governance_tests {
 
         // Create a proposal with current config
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
+            String::from_str(&ctx.env,"XLM"),
             true,
         );
         let id = ctx.gov.propose(
@@ -1134,7 +1137,7 @@ mod governance_tests {
         ctx.token.set_balance(&small_voter, &20_000i128);
 
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
+            String::from_str(&ctx.env,"XLM"),
             true,
         );
         let id = ctx.gov.propose(
@@ -1159,7 +1162,7 @@ mod governance_tests {
 
         // Create a proposal — quorum is 200_000
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "XLM"),
+            String::from_str(&ctx.env,"XLM"),
             true,
         );
         let id = ctx.gov.propose(
@@ -1194,8 +1197,10 @@ mod governance_tests {
         ctx.env.ledger().with_mut(|l| l.timestamp += 500);
         assert!(ctx.gov.try_queue(&id).is_err());
 
-        let p = ctx.gov.get_proposal(&id).unwrap();
-        assert!(matches!(p.status, ProposalStatus::Defeated));
+        // The proposal resolves against the new quorum and is barred from
+        // execution (the failed queue call reverted, so the stored status
+        // remains Active).
+        assert!(ctx.gov.try_execute(&id).is_err());
     }
 
     #[test]
@@ -1237,7 +1242,7 @@ mod governance_tests {
 
         // New proposal: voter_a alone (500_000) is below new quorum of 800_000
         let action = ProposalAction::SetTrustedAsset(
-            String::from_str(&ctx.env, "BTC"),
+            String::from_str(&ctx.env,"BTC"),
             true,
         );
         let id = ctx.gov.propose(
@@ -1246,17 +1251,20 @@ mod governance_tests {
             &String::from_str(&ctx.env, "Trust BTC"),
         );
         ctx.gov.vote(&ctx.voter_a, &id, &true);
-        ctx.env.ledger().with_mut(|l| l.timestamp += 700);
 
+        // Still inside the 600s voting window: voter_a alone (500_000) is
+        // below the new 800_000 quorum, so the proposal cannot be queued yet.
         assert!(ctx.gov.try_queue(&id).is_err());
 
-        // voter_b adds 300_000 → total 800_000 = exactly meets quorum
+        // voter_b adds 300_000 while the window is still open → total
+        // 800_000 = exactly meets the new quorum
         ctx.gov.vote(&ctx.voter_b, &id, &true);
 
         let p = ctx.gov.get_proposal(&id).unwrap();
         assert_eq!(p.votes_for, 800_000i128);
 
-        // Now queue should work since quorum is met
+        // After the window closes, queue resolves with the new quorum met
+        ctx.env.ledger().with_mut(|l| l.timestamp += 700);
         ctx.gov.queue(&id);
         let p2 = ctx.gov.get_proposal(&id).unwrap();
         assert!(matches!(p2.status, ProposalStatus::Queued));

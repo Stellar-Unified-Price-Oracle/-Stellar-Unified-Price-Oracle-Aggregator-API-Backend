@@ -10,6 +10,7 @@ import {
 import { config } from '../infrastructure/config';
 import { logger } from '../observability/logger';
 import { AggregatedPrice } from '../infrastructure/types';
+import { contractSubmissionGas, contractSubmissionGasTotal } from '../observability/metrics';
 import { SubmissionRetryQueue } from './retry-queue';
 
 interface ContractCallLog {
@@ -30,6 +31,37 @@ interface GasAlert {
   function: string;
   fee: number;
   threshold: number;
+}
+
+/**
+ * Fields of the Soroban RPC simulate response read by the publisher.
+ *
+ * A superset of the SDK's simplified success/error shapes: the publisher
+ * reads `minResourceFee`/`cost.feeCharged` (only present on success) and
+ * `error` (only present on failure), so the local type keeps every branch
+ * assignable and marks the divergent fields optional.
+ */
+interface SimulateResponse {
+  minResourceFee?: string;
+  cost?: { feeCharged?: string; cpuInsns?: string; memBytes?: string };
+  results?: unknown[];
+  error?: unknown;
+  result?: { retval?: xdr.ScVal };
+  id?: string;
+  latestLedger?: number;
+}
+
+/** Fields of the Soroban RPC send response read by the publisher. */
+interface SendResponse {
+  fee?: string;
+  status?: string;
+  hash?: string;
+}
+
+/** Fields of the Soroban RPC getTransaction response read by the publisher. */
+interface GetTransactionResponse {
+  status?: string;
+  resultMetaXdr?: unknown;
 }
 
 const GAS_ALERT_THRESHOLD = parseInt(process.env.CONTRACT_GAS_ALERT_THRESHOLD || '50000', 10);
@@ -133,7 +165,7 @@ export class ContractPublisher {
       tx.sign(this.keypair);
       txHash = tx.hash().toString('hex');
 
-      const simulateResponse: any = await this.server.simulateTransaction(tx);
+      const simulateResponse: SimulateResponse = await this.server.simulateTransaction(tx);
       const simulationFee = simulateResponse?.minResourceFee ?? simulateResponse?.cost?.feeCharged ?? 'unknown';
 
       logger.debug(`[Contract] Simulation result for ${fnName} ${asset}`, {
@@ -158,9 +190,14 @@ export class ContractPublisher {
         return null;
       }
 
-      const sendResponse: any = await this.server.sendTransaction(tx);
+      const sendResponse: SendResponse = await this.server.sendTransaction(tx);
       const actualFee = sendResponse?.fee ?? simulationFee;
       const feeNum = parseInt(String(actualFee), 10);
+
+      if (!Number.isNaN(feeNum)) {
+        contractSubmissionGas.observe({ function: fnName, asset, status: 'success' }, feeNum);
+        contractSubmissionGasTotal.inc({ function: fnName, asset, status: 'success' }, feeNum);
+      }
 
       emitContractLog({
         txHash,
@@ -230,12 +267,12 @@ export class ContractPublisher {
         .build();
 
       tx.sign(this.keypair);
-      const simulateResponse: any = await this.server.simulateTransaction(tx);
+      const simulateResponse: SimulateResponse = await this.server.simulateTransaction(tx);
       if (simulateResponse.error || !simulateResponse.result?.retval) {
         return null;
       }
 
-      const decoded: any = scValToNative(simulateResponse.result.retval);
+      const decoded = scValToNative(simulateResponse.result.retval) as { timestamp?: unknown } | undefined;
       if (decoded === undefined || decoded === null || decoded.timestamp === undefined) {
         return null;
       }
@@ -250,7 +287,7 @@ export class ContractPublisher {
 
   private async captureContractEvents(txHash: string): Promise<void> {
     try {
-      const response: any = await this.server.getTransaction(txHash);
+      const response: GetTransactionResponse = await this.server.getTransaction(txHash);
       if (!response || response.status === 'NOT_FOUND') return;
 
       const events: xdr.DiagnosticEvent[] = response?.resultMetaXdr

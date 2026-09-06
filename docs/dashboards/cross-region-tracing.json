@@ -1,0 +1,12 @@
+{
+  "title": "Cross-Region Tracing",
+  "panels": [
+    { "title": "Stage latency p95 (source_fetch)", "query": "histogram_quantile(0.95, sum(rate(pipeline_stage_latency_ms_bucket{stage=\"source_fetch\"}[5m])) by (le, region))" },
+    { "title": "Stage latency p95 (aggregation)", "query": "histogram_quantile(0.95, sum(rate(pipeline_stage_latency_ms_bucket{stage=\"aggregation\"}[5m])) by (le, region))" },
+    { "title": "Replication bus transit p95 by region pair", "query": "histogram_quantile(0.95, sum(rate(replication_bus_transit_ms_bucket[5m])) by (le, region_source, region_target))" },
+    { "title": "Stage latency p95 (api_read)", "query": "histogram_quantile(0.95, sum(rate(pipeline_stage_latency_ms_bucket{stage=\"api_read\"}[5m])) by (le, region))" },
+    { "title": "End-to-end trace duration p95 (source -> api read)", "query": "histogram_quantile(0.95, sum(rate(trace_end_to_end_duration_ms_bucket[5m])) by (le))" },
+    { "title": "Cross-region spans / sec", "query": "sum(rate(span_count_total{cross_region=\"true\"}[5m])) by (region_source, region_target)" },
+    { "title": "Traces missing a replication span", "query": "sum(rate(trace_missing_replication_span_total[5m]))" }
+  ]
+}

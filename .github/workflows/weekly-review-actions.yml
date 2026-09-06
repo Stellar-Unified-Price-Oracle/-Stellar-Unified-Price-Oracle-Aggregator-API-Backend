@@ -1,0 +1,36 @@
+name: Weekly Postmortem Action Review
+on:
+  schedule:
+    - cron: '0 15 * * 1' # Mondays 15:00 UTC
+
+jobs:
+  weekly_review:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Compile open postmortem actions
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const res = await github.rest.issues.listForRepo({
+              owner, repo, labels: 'postmortem-action', state: 'open', per_page: 100
+            });
+            const issues = res.data || [];
+            if (issues.length === 0) {
+              console.log('No open postmortem action items.');
+              return;
+            }
+            const today = new Date().toISOString().slice(0,10);
+            let body = `Weekly Postmortem Action Review - ${today}\n\nOpen action items (${issues.length}):\n\n`;
+            for (const it of issues) {
+              body += `- [ ] ${it.title} — ${it.html_url}\n`;
+            }
+            await github.rest.issues.create({
+              owner, repo,
+              title: `Weekly Postmortem Action Review - ${today}`,
+              body,
+              labels: ['postmortem','postmortem-review']
+            });

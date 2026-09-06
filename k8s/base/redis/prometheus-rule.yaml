@@ -1,0 +1,90 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: redis-ha-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: stellar-oracle
+    app.kubernetes.io/component: redis
+    prometheus: kube-prometheus
+spec:
+  groups:
+    - name: redis.ha
+      interval: 30s
+      rules:
+        - alert: RedisDown
+          expr: |
+            redis_up == 0
+          for: 1m
+          labels:
+            severity: critical
+            component: redis
+          annotations:
+            summary: Redis instance is down ({{ $labels.instance }})
+            description: >
+              Redis instance {{ $labels.instance }} in namespace
+              {{ $labels.namespace }} has been unreachable for more than 1 minute.
+              Sentinel will attempt automatic failover if this is the master.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/redis-ha-rpo-rto.md#failover-procedure
+
+        - alert: RedisSentinelNoQuorum
+          expr: |
+            redis_sentinel_sentinels{state="ok"} < 2
+          for: 2m
+          labels:
+            severity: critical
+            component: redis-sentinel
+          annotations:
+            summary: Redis Sentinel quorum is lost ({{ $labels.master_name }})
+            description: >
+              Redis Sentinel for master {{ $labels.master_name }} has fewer than
+              2 sentinels in OK state (current: {{ $value }}). Automatic failover
+              cannot proceed without quorum. Investigate sentinel pod health immediately.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/redis-ha-rpo-rto.md#failover-procedure
+
+        - alert: RedisReplicationLag
+          expr: |
+            redis_connected_slaves == 0 and redis_instance_info{role="master"} == 1
+          for: 5m
+          labels:
+            severity: warning
+            component: redis
+          annotations:
+            summary: Redis master has no connected replicas ({{ $labels.instance }})
+            description: >
+              Redis master {{ $labels.instance }} has had zero connected replicas
+              for more than 5 minutes. Replication is not functioning, which
+              increases the risk of data loss during a failover.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/redis-ha-rpo-rto.md#failover-procedure
+
+        - alert: RedisMasterMissing
+          expr: |
+            redis_sentinel_masters{status="ok"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            component: redis-sentinel
+          annotations:
+            summary: Redis Sentinel reports no master is available ({{ $labels.name }})
+            description: >
+              Redis Sentinel cannot find a healthy master for cluster {{ $labels.name }}.
+              This means all write operations are failing. Sentinel may be in the
+              middle of a failover or all nodes are down.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/redis-ha-rpo-rto.md#failover-procedure
+
+        - alert: RedisRateStateLost
+          expr: |
+            (redis_keyspace_keys == 0 or absent(redis_keyspace_keys))
+            and redis_instance_info{role="master"} == 1
+          for: 5m
+          labels:
+            severity: warning
+            component: redis
+          annotations:
+            summary: Redis rate-limit state appears lost on master ({{ $labels.instance }})
+            description: >
+              Redis master {{ $labels.instance }} reports zero keys or is unreachable
+              for more than 5 minutes. Rate-limit counters and cache state may have
+              been lost, possibly after a failover without replication. Clients will
+              experience reset rate-limit windows.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/redis-ha-rpo-rto.md#failover-procedure

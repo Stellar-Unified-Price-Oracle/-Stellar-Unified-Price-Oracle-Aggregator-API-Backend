@@ -170,10 +170,24 @@ let secureHttpsAgent: https.Agent | null = null;
 
 export function getSecureAgents(): { httpAgent: http.Agent; httpsAgent: https.Agent } {
   if (!secureHttpAgent) {
-    secureHttpAgent = new http.Agent({ lookup: secureLookup, keepAlive: true });
+    secureHttpAgent = new http.Agent({
+      lookup: secureLookup,
+      keepAlive: true,
+      keepAliveMsecs: 30_000,
+      maxSockets: 64,
+      maxFreeSockets: 16,
+      timeout: 30_000,
+    });
   }
   if (!secureHttpsAgent) {
-    secureHttpsAgent = new https.Agent({ lookup: secureLookup, keepAlive: true });
+    secureHttpsAgent = new https.Agent({
+      lookup: secureLookup,
+      keepAlive: true,
+      keepAliveMsecs: 30_000,
+      maxSockets: 64,
+      maxFreeSockets: 16,
+      timeout: 30_000,
+    });
   }
   return { httpAgent: secureHttpAgent, httpsAgent: secureHttpsAgent };
 }

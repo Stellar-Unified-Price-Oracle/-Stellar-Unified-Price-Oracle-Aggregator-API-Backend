@@ -1,0 +1,81 @@
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: 'smtp.internal:587'
+  smtp_from: 'alertmanager@stellar-oracle.internal'
+
+route:
+  receiver: 'ops-warning'
+  group_by: ['alertname', 'namespace', 'severity', 'asset']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 6h
+  routes:
+    - receiver: 'pagerduty-critical'
+      matchers:
+        - severity="critical"
+      continue: false
+    - receiver: 'slack-warning'
+      matchers:
+        - severity="warning"
+      continue: false
+    - receiver: 'slack-info'
+      matchers:
+        - severity="info"
+      continue: false
+    - receiver: 'silence-known-degradation'
+      matchers:
+        - alertname="OracleSourceUptimeDegraded"
+      continue: false
+
+receivers:
+  - name: 'ops-warning'
+    webhook_configs:
+      - url: 'http://ops-webhook.default.svc.cluster.local/alerts'
+        send_resolved: true
+        max_alerts_per_batch: 20
+
+  - name: 'slack-warning'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/REPLACE_WITH_SLACK_WEBHOOK'
+        channel: '#stellar-oracle-alerts'
+        send_resolved: true
+        text: '{{ template "slack.default.text" . }}'
+
+  - name: 'slack-info'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/REPLACE_WITH_SLACK_WEBHOOK'
+        channel: '#stellar-oracle-low-priority'
+        send_resolved: true
+        text: '{{ template "slack.default.text" . }}'
+
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - routing_key: 'REPLACE_WITH_PAGERDUTY_ROUTING_KEY'
+        severity: '{{ if eq .CommonLabels.severity "critical" }}critical{{ else }}warning{{ end }}'
+        description: '{{ .CommonAnnotations.summary }}'
+        send_resolved: true
+
+  - name: 'silence-known-degradation'
+    webhook_configs:
+      - url: 'http://runbook-automation.default.svc.cluster.local/acknowledge'
+        send_resolved: true
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: ['alertname', 'namespace', 'asset']
+  - source_matchers:
+      - alertname="OracleSourceSlaBreachRateCritical"
+    target_matchers:
+      - alertname="OracleSourceSlaBreachRateHigh"
+    equal: ['source', 'namespace']
+  - source_matchers:
+      - alertname="OracleSourceSlaBreachRateHigh"
+    target_matchers:
+      - alertname="OracleSourceUptimeDegraded"
+    equal: ['source', 'namespace']
+
+templates:
+  - '/etc/alertmanager/config/*.tmpl'

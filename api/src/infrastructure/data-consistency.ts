@@ -3,6 +3,8 @@ import client from 'prom-client';
 import { register } from '../observability/metrics';
 import { DatabaseClient } from './database';
 
+export type ReconciliationLayer = 'aggregator→db' | 'db-integrity' | 'chain→db' | 'cache→db';
+
 export const consistencyChecksTotal = new client.Counter({
   name: 'data_consistency_checks_total',
   help: 'Total data consistency checks run, by result',

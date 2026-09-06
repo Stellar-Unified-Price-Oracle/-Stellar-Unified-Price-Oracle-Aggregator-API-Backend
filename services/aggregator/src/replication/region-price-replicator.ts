@@ -1,6 +1,7 @@
 import { config } from '../infrastructure/config';
 import { AggregatedPrice } from '../infrastructure/types';
 import { LwwPriceRegister, RegionPriceRecord } from './price-crdt';
+import { propagateForHop, TraceHeaders } from './trace-context';
 
 export interface DriftReport {
   maxDriftPercent: number;
@@ -22,6 +23,23 @@ export class RegionPriceReplicator {
 
   getLatestPrices(): RegionPriceRecord[] {
     return this.register.latestAll();
+  }
+
+  /**
+   * Trace headers to attach to an outbound replication message for `asset`
+   * (issue #419). Continues the trace carried by the last inbound record for
+   * that asset, or starts a fresh one, and tags this region into `tracestate`.
+   */
+  outboundTraceHeaders(asset: string, inbound?: TraceHeaders): TraceHeaders {
+    const carried = inbound
+      ?? this.register
+        .byAsset(asset)
+        .filter((r) => r.source === 'remote' && r.traceparent)
+        .sort((a, b) => b.receivedAt - a.receivedAt)[0];
+    return propagateForHop(
+      carried ? { traceparent: carried.traceparent, tracestate: carried.tracestate } : undefined,
+      config.region.id,
+    );
   }
 
   getDriftReport(now = Date.now()): DriftReport {

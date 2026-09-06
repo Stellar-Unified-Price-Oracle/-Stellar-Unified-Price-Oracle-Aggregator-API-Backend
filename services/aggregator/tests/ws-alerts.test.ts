@@ -33,6 +33,41 @@ describe('WebSocket Alert Broadcasting (Issue #228)', () => {
   const connect = (): WebSocket =>
     new WebSocket(`ws://localhost:${WS_PORT + 1}`, { origin: 'http://localhost' });
 
+  it('should suppress duplicate alerts within the dedup window', async () => {
+    const alert: AlertEvent = {
+      timestamp: Math.floor(Date.now() / 1000),
+      asset: 'BTC',
+      type: 'deviation',
+      message: 'Price deviation alert for BTC: 5.25% change',
+      previousPrice: '43000.00',
+      currentPrice: '45260.00',
+      deviationPercent: 5.25,
+    };
+
+    const first = await (alertManager as any).emitAlert(alert);
+    const second = await (alertManager as any).emitAlert({ ...alert, timestamp: Math.floor(Date.now() / 1000) + 1 });
+
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+  });
+
+  it('should suppress flapping alerts when the same signal re-triggered within the suppression window', async () => {
+    const alert: AlertEvent = {
+      timestamp: Math.floor(Date.now() / 1000),
+      asset: 'ETH',
+      type: 'source_down',
+      message: 'All sources down for ETH (3 consecutive failures)',
+    };
+
+    const first = await (alertManager as any).emitAlert(alert);
+    const second = await (alertManager as any).emitAlert({ ...alert, timestamp: Math.floor(Date.now() / 1000) + 2 });
+    const third = await (alertManager as any).emitAlert({ ...alert, timestamp: Math.floor(Date.now() / 1000) + 3 });
+
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    expect(third).toBe(false);
+  });
+
   it('should broadcast price deviation alerts to WebSocket clients', async () => {
     return new Promise<void>((done) => {
       const client = connect();

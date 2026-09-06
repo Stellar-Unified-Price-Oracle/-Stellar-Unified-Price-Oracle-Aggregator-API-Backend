@@ -3,6 +3,13 @@ import { config } from '../infrastructure/config';
 import { NormalizedPrice, OracleSourceName } from '../infrastructure/types';
 import { BaseSource } from './base';
 
+interface RedstonePriceData {
+  value: string | number;
+  decimals?: number;
+}
+
+type RedstonePricesResponse = Record<string, RedstonePriceData | undefined>;
+
 export class RedstoneSource extends BaseSource {
   name: OracleSourceName = 'redstone';
 
@@ -15,7 +22,7 @@ export class RedstoneSource extends BaseSource {
 
   async fetchPrice(asset: string): Promise<NormalizedPrice | null> {
     const symbol = asset.toUpperCase();
-    const response = await httpClient.get(`${this.baseUrl}/prices`, {
+    const response = await httpClient.get<RedstonePricesResponse>(`${this.baseUrl}/prices`, {
       params: { symbols: symbol, provider: 'redstone' },
     });
 

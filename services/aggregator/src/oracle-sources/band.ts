@@ -3,6 +3,12 @@ import { config } from '../infrastructure/config';
 import { NormalizedPrice, OracleSourceName } from '../infrastructure/types';
 import { BaseSource } from './base';
 
+interface BandFeedData {
+  price: string;
+  decimals?: number;
+  updated_at?: number;
+}
+
 export class BandSource extends BaseSource {
   name: OracleSourceName = 'band';
 
@@ -15,7 +21,7 @@ export class BandSource extends BaseSource {
 
   async fetchPrice(asset: string): Promise<NormalizedPrice | null> {
     const symbol = this.toSymbol(asset);
-    const response = await httpClient.get(
+    const response = await httpClient.get<{ data?: BandFeedData }>(
       `${this.baseUrl}/oracle/v1/feeds/${symbol}`,
     );
 

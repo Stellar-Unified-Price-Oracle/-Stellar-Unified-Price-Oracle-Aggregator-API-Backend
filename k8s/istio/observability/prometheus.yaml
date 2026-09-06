@@ -17,6 +17,7 @@ data:
               severity: warning
             annotations:
               summary: High p99 latency for {{ $labels.destination_service }}
+              runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/istio-high-request-latency.md
           - alert: IstioHighErrorRate
             expr: sum(rate(istio_requests_total{destination_service_namespace="stellar-oracle",response_code!~"2.*"}[5m])) by (destination_service) / sum(rate(istio_requests_total{destination_service_namespace="stellar-oracle"}[5m])) by (destination_service) > 0.05
             for: 5m
@@ -24,6 +25,7 @@ data:
               severity: critical
             annotations:
               summary: Elevated 5xx rate for {{ $labels.destination_service }}
+              runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/high-error-rate.md
           - alert: ApiCanaryImbalance
             expr: abs(sum(rate(istio_requests_total{destination_service="api.stellar-oracle.svc.cluster.local",destination_version="stable"}[5m])) - 9 * sum(rate(istio_requests_total{destination_service="api.stellar-oracle.svc.cluster.local",destination_version="canary"}[5m]))) > 50
             for: 10m
@@ -31,6 +33,7 @@ data:
               severity: warning
             annotations:
               summary: API canary traffic split diverging from 90/10 target
+              runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/api-canary-imbalance.md
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor

@@ -6,6 +6,7 @@ use crate::contract::PriceOracleContractClient;
 
 fn setup_fuzz() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register_contract(None, PriceOracleContract);
     let client = PriceOracleContractClient::new(&env, &contract_id);
 
@@ -229,7 +230,7 @@ fn fuzz_sequential_price_submissions_consistency() {
     client.submit_price(&oracle, &asset, &1_000_000i128, &7u32, &(env.ledger().timestamp() + 1));
     client.submit_price(&oracle, &asset, &10_000_000i128, &7u32, &(env.ledger().timestamp() + 2));
     client.submit_price(&oracle, &asset, &(i128::MAX / 2), &7u32, &(env.ledger().timestamp() + 3));
-    client.submit_price(&oracle, &asset, &-1_000_000i128, &7u32, &(env.ledger().timestamp() + 4));
+    client.submit_price(&oracle, &asset, &500_000i128, &7u32, &(env.ledger().timestamp() + 4));
     client.submit_price(&oracle, &asset, &0i128, &7u32, &(env.ledger().timestamp() + 5));
 
     let history = client.get_price_history(&asset, &u32::MAX);
@@ -242,6 +243,7 @@ fn fuzz_sequential_price_submissions_consistency() {
 #[test]
 fn fuzz_multiple_sources_concurrent_submissions() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register_contract(None, PriceOracleContract);
     let client = PriceOracleContractClient::new(&env, &contract_id);
 

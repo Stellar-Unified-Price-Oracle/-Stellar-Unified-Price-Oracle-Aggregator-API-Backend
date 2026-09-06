@@ -1,15 +1,17 @@
 import { config } from './infrastructure/config';
+import { tryCatchAsync } from './infrastructure/result';
 import { logger } from './observability/logger';
 import { ChainlinkSource, RedstoneSource, BandSource, ReflectorSource } from './oracle-sources';
 import { PriceAggregator } from './price-aggregation/aggregator';
-import { AggregatedPrice } from './infrastructure/types';
+import { anomalyDetector } from './price-aggregation/anomaly-detector';
+import { AggregatedPrice, type OracleSourceName } from './infrastructure/types';
 import { ContractPublisher } from './contract-publishing/publisher';
 import { appendHistoricalPrice } from './persistence/history';
 import { appendUptimeSnapshot } from './persistence/uptime-history';
 import { FileArchivalService } from './persistence/file-archival';
 import { RegionPriceReplicator } from './replication/region-price-replicator';
 import { RegionQuarantineManager } from './replication/region-quarantine';
-import { oracleSourceUptimePercent, onChainPriceStalenessSeconds, onChainHeartbeatAlertsTotal } from './observability/metrics';
+import { oracleSourceUptimePercent, onChainPriceStalenessSeconds, onChainHeartbeatAlertsTotal, serviceStartupDurationMs, pipelineStageLatencyMs } from './observability/metrics';
 import { DatabaseClient } from './persistence/database';
 import { BaseSource } from './oracle-sources/base';
 import { WebSocketServer } from './infrastructure/ws-server';
@@ -45,6 +47,7 @@ const alertManager = new AlertManager({
   webhookUrl: process.env.ALERT_WEBHOOK_URL ? decryptSecret(process.env.ALERT_WEBHOOK_URL) : undefined,
   slackWebhookUrl: process.env.ALERT_SLACK_WEBHOOK_URL ? decryptSecret(process.env.ALERT_SLACK_WEBHOOK_URL) : undefined,
   pagerDutyRoutingKey: process.env.ALERT_PAGERDUTY_ROUTING_KEY ? decryptSecret(process.env.ALERT_PAGERDUTY_ROUTING_KEY) : undefined,
+  opsGenieApiKey: process.env.ALERT_OPSGENIE_API_KEY ? decryptSecret(process.env.ALERT_OPSGENIE_API_KEY) : undefined,
   emailWebhookUrl: process.env.ALERT_EMAIL_WEBHOOK_URL ? decryptSecret(process.env.ALERT_EMAIL_WEBHOOK_URL) : undefined,
   emailRecipients: (process.env.ALERT_EMAIL_RECIPIENTS || '').split(',').map((s) => s.trim()).filter(Boolean),
   sourceDisagreementThresholdPercent: parseFloat(process.env.ALERT_SOURCE_DISAGREEMENT_PERCENT || '5'),
@@ -53,6 +56,8 @@ const alertManager = new AlertManager({
 });
 
 let lastAggregated: AggregatedPrice[] = [];
+const startupStartedAt = Date.now();
+let startupTimeMs = 0;
 // Issue #382 — on-chain price staleness heartbeat, seconds since last on-chain
 // update per asset; surfaced on the /health status page.
 const onChainHeartbeat: Record<string, number> = {};
@@ -62,6 +67,7 @@ let pollSources: BaseSource[] = [];
 async function poll(): Promise<AggregatedPrice[]> {
   const sources: BaseSource[] = pollSources;
   const sourcePricesByAsset: Map<string, { source: string; price: string }[]> = new Map();
+  const sourceFetchStarted = performance.now();
 
   for (const source of sources) {
     const prices = await source.fetchAll(config.assets);
@@ -106,8 +112,15 @@ async function poll(): Promise<AggregatedPrice[]> {
     }
   }
 
+  pipelineStageLatencyMs.observe({ stage: 'source_fetch', status: 'ok' }, performance.now() - sourceFetchStarted);
+
+  const aggregationStarted = performance.now();
   const aggregated = aggregator.getAllPrices();
+  pipelineStageLatencyMs.observe({ stage: 'aggregation', status: 'ok' }, performance.now() - aggregationStarted);
+
+  const replicationStarted = performance.now();
   regionReplicator.mergeLocalPrices(aggregated);
+  pipelineStageLatencyMs.observe({ stage: 'replication', status: 'ok' }, performance.now() - replicationStarted);
   const allSourceNames = ['chainlink', 'redstone', 'band', 'reflector'];
   for (const ap of aggregated) {
     // Publish PriceAggregatedEvent
@@ -132,7 +145,7 @@ async function poll(): Promise<AggregatedPrice[]> {
 
     const participation: Record<string, number> = {};
     for (const src of allSourceNames) {
-      participation[src] = ap.sources.includes(src as any) ? 1 : 0;
+      participation[src] = ap.sources.includes(src as OracleSourceName) ? 1 : 0;
     }
     logger.debug(`[Metrics] Source participation for ${ap.asset}`, participation);
 
@@ -177,7 +190,14 @@ async function poll(): Promise<AggregatedPrice[]> {
 
   if (config.soroban.contractId) {
     const publisher = new ContractPublisher();
-    await publisher.publishAggregated(aggregated);
+    const published = await tryCatchAsync(() => publisher.publishAggregated(aggregated));
+    if (!published.ok) {
+      logger.error('Failed to publish aggregated prices to the contract', {
+        assetCount: aggregated.length,
+        error: published.error.message,
+        errorStack: published.error.stack,
+      });
+    }
 
     // Publish PricePublishedEvent
     eventBus.publish({
@@ -222,6 +242,12 @@ async function main(): Promise<void> {
   logger.info('Stellar Price Oracle Aggregator starting...');
   logger.info(`Polling interval: ${config.pollingIntervalMs}ms`);
   logger.info(`Watched assets: ${config.assets.join(', ')}`);
+
+  for (const asset of config.assets) {
+    anomalyDetector.applyRuntimeConfig(asset);
+    const summary = anomalyDetector.getConfigSummary(asset);
+    logger.info(`[AnomalyConfig] ${asset}: zscore=${summary.config.zScoreThreshold}, deviation=${summary.config.movingAverageDeviationPercent}%, volatility=${summary.config.volatilityMultiplier}, false_positive_rate=${summary.falsePositiveRate.toFixed(3)}`);
+  }
 
   // Initialize Vault for contract admin key management
   try {
@@ -301,11 +327,15 @@ async function main(): Promise<void> {
     circuitBreakerMetrics: aggregator.getCircuitBreakerMetrics(),
     circuitBreakerStates: sourceCircuitBreaker.getAllStatuses(),
     uptime: process.uptime(),
+    startupTimeMs,
     onChainHeartbeat,
   }));
   healthServer.start();
 
   await poll();
+  startupTimeMs = Date.now() - startupStartedAt;
+  serviceStartupDurationMs.set({ service: 'aggregator' }, startupTimeMs);
+  logger.info(`Aggregator startup complete in ${startupTimeMs}ms`);
 
   setInterval(async () => {
     try {

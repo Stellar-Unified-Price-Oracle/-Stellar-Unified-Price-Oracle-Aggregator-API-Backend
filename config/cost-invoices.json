@@ -1,0 +1,13 @@
+{
+  "currency": "USD",
+  "note": "Monthly reconciliation of the modeled requested-capacity run rate against the provider invoice. Append one entry per month; run `npm run cost:reconcile` to compute variance.",
+  "invoices": [
+    {
+      "month": "2026-07",
+      "invoicedTotal": 27.4,
+      "byService": { "api": 9.1, "aggregator": 7.8, "timescaledb": 10.5 },
+      "reconciledBy": "platform-oncall",
+      "notes": "Baseline capture; egress and control-plane fees folded into per-service split."
+    }
+  ]
+}

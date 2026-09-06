@@ -1,0 +1,95 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: stellar-oracle-cardinality-alerts
+  labels:
+    app: stellar-price-oracle
+    component: observability
+spec:
+  groups:
+    - name: stellar-oracle.cardinality
+      interval: 1m
+      rules:
+        # Pre-aggregation: keep per-asset detail as a recording rule so the
+        # high-cardinality raw label never has to be scraped live (#414).
+        - record: oracle:source_request_duration_seconds:p99_5m
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (source, le) (rate(oracle_source_request_duration_seconds_bucket[5m]))
+            )
+
+        - record: prometheus:tsdb_head_series:ratio
+          expr: |
+            prometheus_tsdb_head_series
+              / scalar(max(prometheus_tsdb_head_series_limit > 0) or vector(2000000))
+
+        - alert: MetricCardinalityExplosion
+          expr: |
+            topk(1, count by (__name__) ({__name__=~".+"})) > 100000
+          for: 15m
+          labels:
+            severity: warning
+            component: observability
+          annotations:
+            summary: Metric {{ $labels.__name__ }} has over 100k active series
+            description: >
+              {{ $labels.__name__ }} has {{ $value | humanize }} active series.
+              A single metric this large usually means an unbounded label
+              (per-asset, per-key, per-URL). Audit it against
+              docs/observability/METRICS_CARDINALITY.md and drop or
+              pre-aggregate the offending label.
+
+        - alert: PrometheusHighSeriesChurn
+          expr: |
+            deriv(prometheus_tsdb_head_series[1h]) * 3600
+              / prometheus_tsdb_head_series > 0.10
+          for: 30m
+          labels:
+            severity: warning
+            component: observability
+          annotations:
+            summary: Prometheus head series growing >10%/hour
+            description: >
+              Active series are growing at {{ $value | humanizePercentage }}/hour.
+              Sustained churn drives memory use and remote-write cost. Check for a
+              newly deployed target emitting high-cardinality labels.
+
+        - alert: PrometheusTSDBHeadSeriesHigh
+          expr: prometheus:tsdb_head_series:ratio > 0.80
+          for: 15m
+          labels:
+            severity: warning
+            component: observability
+          annotations:
+            summary: Prometheus head series at {{ $value | humanizePercentage }} of limit
+            description: >
+              The TSDB head is approaching the configured series limit. Reduce
+              cardinality or scale Prometheus before ingestion starts failing.
+
+        - alert: PrometheusScrapeSampleLimitHit
+          expr: increase(prometheus_target_scrapes_exceeded_sample_limit_total[10m]) > 0
+          for: 10m
+          labels:
+            severity: critical
+            component: observability
+          annotations:
+            summary: A scrape target exceeded its sample_limit
+            description: >
+              At least one target returned more samples than the configured
+              sample_limit and was dropped entirely. Metrics from that target are
+              now missing. Identify the target and cut its series count.
+
+        - alert: PrometheusRemoteWriteCostBudget
+          expr: |
+            sum(rate(prometheus_remote_storage_samples_in_total[30m])) > 750000
+          for: 1h
+          labels:
+            severity: warning
+            component: observability
+          annotations:
+            summary: Remote-write sample rate over the cost budget
+            description: >
+              Ingesting {{ $value | humanize }} samples/s to remote storage,
+              above the {{ "750000" }} samples/s budget that maps to the monthly
+              vendor bill. Reduce cardinality or raise the budget deliberately.

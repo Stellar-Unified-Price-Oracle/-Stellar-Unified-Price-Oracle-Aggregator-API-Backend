@@ -1,0 +1,125 @@
+name: DR Drill
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      target_region:
+        description: 'Region to partition during the drill'
+        required: false
+        default: 'us-east-1'
+      convergence_timeout:
+        description: 'Seconds to wait for CRDT convergence after heal'
+        required: false
+        default: '120'
+
+env:
+  CHAOS_TARGET_ENV: staging
+
+jobs:
+  dr-drill:
+    name: Regional failover DR drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make drill script executable
+        run: chmod +x scripts/dr-drill.sh
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run DR drill
+        id: drill
+        env:
+          TARGET_REGION: ${{ github.event.inputs.target_region || 'us-east-1' }}
+          CONVERGENCE_TIMEOUT: ${{ github.event.inputs.convergence_timeout || '120' }}
+          REPORT_DIR: docs/chaos-engineering/reports
+          REGION_US_HEALTH: ${{ vars.REGION_US_HEALTH || 'http://us-east-1.oracle.example/api/v1/health' }}
+          REGION_EU_HEALTH: ${{ vars.REGION_EU_HEALTH || 'http://eu-west-1.oracle.example/api/v1/health' }}
+          REGION_AP_HEALTH: ${{ vars.REGION_AP_HEALTH || 'http://ap-southeast-1.oracle.example/api/v1/health' }}
+          REGION_US_PRICES: ${{ vars.REGION_US_PRICES || 'http://us-east-1.oracle.example/api/v1/prices' }}
+          REGION_EU_PRICES: ${{ vars.REGION_EU_PRICES || 'http://eu-west-1.oracle.example/api/v1/prices' }}
+          REGION_AP_PRICES: ${{ vars.REGION_AP_PRICES || 'http://ap-southeast-1.oracle.example/api/v1/prices' }}
+        run: |
+          mkdir -p docs/chaos-engineering/reports
+          ./scripts/dr-drill.sh
+        continue-on-error: true
+
+      - name: Run 50% regional traffic-loss load test
+        id: load_test
+        env:
+          REGION_URLS: >-
+            ${{ vars.REGION_US_HEALTH && format('{0},{1}',
+              replace(vars.REGION_US_HEALTH, '/api/v1/health', ''),
+              replace(vars.REGION_EU_HEALTH, '/api/v1/health', ''))
+            || 'http://localhost:3000,http://localhost:3000' }}
+        run: |
+          k6 run \
+            --env REGION_URLS="${REGION_URLS}" \
+            --out json=load-tests/results/dr-drill-traffic-loss.json \
+            load-tests/k6/regional-traffic-loss.js
+        continue-on-error: true
+
+      - name: Generate drill report
+        id: report
+        run: |
+          REPORT_FILE="docs/chaos-engineering/reports/dr-drill-$(date -u +%Y%m%d-%H%M%S).md"
+          mkdir -p docs/chaos-engineering/reports
+
+          DRILL_RESULT="${{ steps.drill.outcome }}"
+          LOAD_RESULT="${{ steps.load_test.outcome }}"
+          OVERALL="PASS"
+          if [[ "$DRILL_RESULT" != "success" || "$LOAD_RESULT" != "success" ]]; then
+            OVERALL="FAIL"
+          fi
+
+          cat > "$REPORT_FILE" <<EOF
+          # DR Drill Report — $(date -u +%Y-%m-%d)
+
+          | Field | Value |
+          |-------|-------|
+          | Date (UTC) | $(date -u +%Y-%m-%dT%H:%M:%SZ) |
+          | Target Region | ${{ github.event.inputs.target_region || 'us-east-1' }} |
+          | Environment | staging |
+          | Overall Result | ${OVERALL} |
+          | Drill Phase | ${DRILL_RESULT} |
+          | Load Test Phase | ${LOAD_RESULT} |
+          | Triggered By | ${{ github.event_name }} |
+          | Run URL | ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} |
+
+          ## Success Criteria
+
+          | Criterion | Status |
+          |-----------|--------|
+          | Blocked region detected and remaining two regions serve traffic | $( [[ "$DRILL_RESULT" == "success" ]] && echo "✅" || echo "❌") |
+          | CRDT convergence verified after heal | $( [[ "$DRILL_RESULT" == "success" ]] && echo "✅" || echo "❌") |
+          | 50% traffic-loss load scenario within thresholds | $( [[ "$LOAD_RESULT" == "success" ]] && echo "✅" || echo "❌") |
+
+          ## Artifacts
+
+          - Drill log: see workflow run linked above
+          - Load test results: \`load-tests/results/dr-drill-traffic-loss.json\`
+          EOF
+
+          echo "report_file=${REPORT_FILE}" >> "$GITHUB_OUTPUT"
+          echo "overall=${OVERALL}" >> "$GITHUB_OUTPUT"
+          cat "$REPORT_FILE"
+
+      - name: Upload drill report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dr-drill-report-${{ github.run_number }}
+          path: |
+            docs/chaos-engineering/reports/
+            load-tests/results/dr-drill-traffic-loss.json
+
+      - name: Fail workflow if drill did not pass
+        if: steps.report.outputs.overall == 'FAIL'
+        run: |
+          echo "DR drill failed — see report artifact for details"
+          exit 1

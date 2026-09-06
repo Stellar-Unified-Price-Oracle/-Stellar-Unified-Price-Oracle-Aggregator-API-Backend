@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Bytes, BytesN, Env, String, Vec};
 
 use crate::errors::OracleError;
-use crate::types::{DataKey, GovernanceConfig, GovernanceProposal, MultiSigConfig, MultiSigProposal, PriceDataPoint, SourceReputation};
+use crate::types::{CanaryConfig, DataKey, GovernanceConfig, GovernanceProposal, MultiSigConfig, MultiSigProposal, PendingProxyUpgrade, PriceDataPoint, SourceReputation};
 
 // Maximum number of historical data points kept per asset.
 // Older entries beyond this cap are dropped on each write, keeping instance
@@ -19,6 +19,10 @@ pub fn get_admin(env: &Env) -> Address {
         .instance()
         .get(&DataKey::Admin)
         .expect("admin not initialized")
+}
+
+pub fn has_admin(env: &Env) -> bool {
+    env.storage().instance().has(&DataKey::Admin)
 }
 
 pub fn verify_admin(env: &Env, admin: &Address) -> Result<(), OracleError> {
@@ -178,6 +182,20 @@ pub fn get_price_history(env: &Env, asset: &String) -> Vec<PriceDataPoint> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
+// Issue #376 — TTL / rent extension. Called periodically by an off-chain job
+// so PriceHistory (persistent) and the contract instance (Admin, GovConfig,
+// proposals, etc. — all instance storage) never hit their TTL floor and get
+// archived/evicted.
+pub fn extend_price_history_ttl(env: &Env, asset: &String, threshold: u32, extend_to: u32) {
+    env.storage()
+        .persistent()
+        .extend_ttl(&DataKey::PriceHistory(asset.clone()), threshold, extend_to);
+}
+
+pub fn extend_instance_ttl(env: &Env, threshold: u32, extend_to: u32) {
+    env.storage().instance().extend_ttl(threshold, extend_to);
+}
+
 pub fn get_all_assets(env: &Env) -> Vec<String> {
     env.storage()
         .instance()
@@ -221,14 +239,81 @@ pub fn increment_batch_nonce(env: &Env) -> u64 {
     next
 }
 
+// Issue #385 — Merkle batch replay / DoS hardening.
+//
+// Only the most recent RETAINED_BATCH_ROOTS roots are retained.  Older roots
+// (and their applied-leaf trackers) are pruned on every new batch commit so
+// batch bookkeeping cannot grow without bound over the contract's lifetime.
+// A watermark avoids rescanning already-pruned nonces on each commit.
+pub const RETAINED_BATCH_ROOTS: u64 = 16;
+
 pub fn set_batch_root(env: &Env, nonce: u64, root: &Bytes) {
     env.storage()
         .instance()
         .set(&DataKey::BatchRoot(nonce), root);
+    // The just-committed root is at `nonce`; the next batch will be `nonce + 1`.
+    prune_batch_roots(env, nonce + 1);
 }
 
 pub fn get_batch_root(env: &Env, nonce: u64) -> Option<Bytes> {
     env.storage().instance().get(&DataKey::BatchRoot(nonce))
+}
+
+fn prune_batch_roots(env: &Env, current_nonce: u64) {
+    let keep_from = current_nonce.saturating_sub(RETAINED_BATCH_ROOTS);
+    let watermark = get_batch_prune_watermark(env);
+    let prune_to = keep_from.max(watermark).min(current_nonce);
+
+    let mut k = watermark;
+    while k < prune_to {
+        env.storage().instance().remove(&DataKey::BatchRoot(k));
+        env.storage()
+            .instance()
+            .remove(&DataKey::BatchAppliedLeaves(k));
+        k += 1;
+    }
+    if prune_to > watermark {
+        env.storage()
+            .instance()
+            .set(&DataKey::BatchPruneWatermark, &prune_to);
+    }
+}
+
+pub fn get_batch_prune_watermark(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::BatchPruneWatermark)
+        .unwrap_or(0)
+}
+
+/// Applied-leaf tracker for a committed batch (Issue #385).
+///
+/// `apply_batch_entry` is permissionless (the Merkle proof is the
+/// authorization), so without a per-batch applied-set anyone could re-apply
+/// the same leaf repeatedly, spamming history with duplicate entries.  The
+/// tracker makes each leaf single-use per batch; it is pruned together with
+/// its root once the batch ages out of RETAINED_BATCH_ROOTS.
+pub fn get_batch_applied_leaves(env: &Env, nonce: u64) -> Vec<u32> {
+    env.storage()
+        .instance()
+        .get(&DataKey::BatchAppliedLeaves(nonce))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn mark_batch_leaf_applied(env: &Env, nonce: u64, leaf_index: u32) -> Result<(), OracleError> {
+    let mut applied = get_batch_applied_leaves(env, nonce);
+    for i in 0..applied.len() {
+        if let Some(idx) = applied.get(i) {
+            if idx == leaf_index {
+                return Err(OracleError::BatchEntryAlreadyApplied);
+            }
+        }
+    }
+    applied.push_back(leaf_index);
+    env.storage()
+        .instance()
+        .set(&DataKey::BatchAppliedLeaves(nonce), &applied);
+    Ok(())
 }
 
 pub fn set_query_fee(env: &Env, fee: &i128) {
@@ -285,11 +370,21 @@ pub fn get_multisig_config(env: &Env) -> Option<MultiSigConfig> {
 pub fn get_msig_proposal_count(env: &Env) -> u32 {
     env.storage()
         .instance()
-        .get(&DataKey::MultiSigProposalCount)
+        .get(&DataKey::ProposalCount)
         .unwrap_or(0)
 }
 
 pub fn set_msig_proposal_count(env: &Env, count: u32) {
+    env.storage().instance().set(&DataKey::ProposalCount, &count);
+}
+
+pub fn set_proposal_count(env: &Env, count: u32) {
+    set_msig_proposal_count(env, count);
+}
+
+/// Increment the multi-sig proposal counter (alias used by contract.rs and
+/// multisig.rs after creating a proposal).
+pub fn set_proposal_count(env: &Env, count: u32) {
     env.storage().instance().set(&DataKey::MultiSigProposalCount, &count);
 }
 
@@ -338,6 +433,10 @@ pub fn set_gov_proposal(env: &Env, proposal: &GovernanceProposal) {
         .set(&DataKey::GovernanceProposal(proposal.id), proposal);
 }
 
+pub fn get_gov_proposal(env: &Env, id: u32) -> Option<GovernanceProposal> {
+    env.storage().instance().get(&DataKey::GovernanceProposal(id))
+}
+
 pub fn set_multisig_proposal(env: &Env, proposal: &MultiSigProposal) {
     env.storage()
         .instance()
@@ -346,28 +445,6 @@ pub fn set_multisig_proposal(env: &Env, proposal: &MultiSigProposal) {
 
 pub fn get_multisig_proposal(env: &Env, id: u32) -> Option<MultiSigProposal> {
     env.storage().instance().get(&DataKey::MultiSigProposal(id))
-}
-
-// ── Governance ────────────────────────────────────────────────────────────────
-
-pub fn get_gov_config(env: &Env) -> Option<GovernanceConfig> {
-    env.storage().instance().get(&DataKey::GovernanceConfig)
-}
-
-pub fn set_gov_config(env: &Env, config: &GovernanceConfig) {
-    env.storage().instance().set(&DataKey::GovernanceConfig, config);
-}
-
-pub fn increment_proposal_count(env: &Env) -> u32 {
-    let count = get_proposal_count(env);
-    set_proposal_count(env, count + 1);
-    count + 1
-}
-
-pub fn set_gov_proposal(env: &Env, proposal: &GovernanceProposal) {
-    env.storage()
-        .instance()
-        .set(&DataKey::GovernanceProposal(proposal.id), proposal);
 }
 
 pub fn get_gov_proposal(env: &Env, id: u32) -> Option<GovernanceProposal> {
@@ -513,4 +590,30 @@ pub fn set_slash_count(env: &Env, addr: &Address, count: &u32) {
     env.storage()
         .instance()
         .set(&DataKey::SlashCount(addr.clone()), count);
+}
+
+// ── Proxy upgrade governance (Issue #375) ───────────────────────────────────
+
+pub fn set_pending_upgrade(env: &Env, upgrade: &PendingProxyUpgrade) {
+    env.storage().instance().set(&DataKey::PendingProxyUpgrade, upgrade);
+}
+
+pub fn get_pending_upgrade(env: &Env) -> Option<PendingProxyUpgrade> {
+    env.storage().instance().get(&DataKey::PendingProxyUpgrade)
+}
+
+pub fn clear_pending_upgrade(env: &Env) {
+    env.storage().instance().remove(&DataKey::PendingProxyUpgrade);
+}
+
+pub fn set_canary_config(env: &Env, config: &CanaryConfig) {
+    env.storage().instance().set(&DataKey::CanaryConfig, config);
+}
+
+pub fn get_canary_config(env: &Env) -> Option<CanaryConfig> {
+    env.storage().instance().get(&DataKey::CanaryConfig)
+}
+
+pub fn clear_canary_config(env: &Env) {
+    env.storage().instance().remove(&DataKey::CanaryConfig);
 }

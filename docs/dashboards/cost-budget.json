@@ -1,0 +1,12 @@
+{
+  "title": "Cost & Budget",
+  "panels": [
+    { "title": "Requested monthly cost (total)", "query": "stellar_oracle:requested_monthly_cost_usd" },
+    { "title": "Budget warning threshold", "query": "vector(24)" },
+    { "title": "Budget exceeded threshold", "query": "vector(30)" },
+    { "title": "Requested monthly cost by service / team", "query": "stellar_oracle:requested_monthly_cost_usd_by_service_team" },
+    { "title": "Budget utilization %", "query": "stellar_oracle:requested_monthly_cost_usd / 30 * 100" },
+    { "title": "Active cost alerts", "query": "ALERTS{alertname=~\"StellarOracleCostBudget.*\"}" },
+    { "title": "Modeled vs invoiced variance %", "query": "stellar_oracle:cost_invoice_variance_percent" }
+  ]
+}

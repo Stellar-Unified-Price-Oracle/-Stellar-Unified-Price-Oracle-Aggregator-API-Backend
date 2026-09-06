@@ -1,12 +1,12 @@
 # Runbook: High API Error Rate
 
-**Linked alerts:** `HighErrorRate`, `APILatencyHigh`
+**Linked alerts:** `HighErrorRate`, `IstioHighRequestLatency`
 **Severity:** P1
 
 ## Symptoms
 
 - `HighErrorRate` alert fires (5xx rate >5% over 5 minutes)
-- `APILatencyHigh` fires (p95 >1s)
+- `IstioHighRequestLatency` fires (p99 >2s)
 - Consumers reporting errors or timeouts
 
 ## Diagnosis

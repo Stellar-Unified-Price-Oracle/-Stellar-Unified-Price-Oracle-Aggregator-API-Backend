@@ -7,7 +7,7 @@ import path from 'path';
 import { config } from '../infrastructure/config';
 import { decrypt, encrypt, isEncrypted } from '../infrastructure/crypto';
 import { logger } from '../observability/logger';
-import { DATA_DIR, HISTORY_FILE, historyEncryptionEnabled, readHistoryFile, writeHistoryFile } from './history';
+import { DATA_DIR, HISTORY_FILE, historyEncryptionEnabled, readHistoryFile, writeHistoryFile, type HistoricalPriceEntry } from './history';
 
 const SECONDS_PER_DAY = 86400;
 
@@ -20,12 +20,7 @@ export interface FileArchivalResult {
   dryRun: boolean;
 }
 
-interface HistoryEntry {
-  price: string;
-  decimals: number;
-  source: string;
-  timestamp: number;
-}
+type HistoryEntry = HistoricalPriceEntry;
 
 /**
  * File-based data archival for historical price records (issue #43).
@@ -78,7 +73,7 @@ export class FileArchivalService {
       for (const filePath of this.listAssetFiles()) {
         try {
           const history = readHistoryFile(filePath);
-          result.archivedCount += history.filter((h: any) => h.timestamp < cutoffArchive).length;
+          result.archivedCount += history.filter((h) => h.timestamp < cutoffArchive).length;
         } catch { /* skip corrupt files */ }
       }
       logger.info(
@@ -94,7 +89,7 @@ export class FileArchivalService {
 
     for (const filePath of this.listAssetFiles()) {
       const asset = path.basename(filePath, '.json').replace('history-', '').toUpperCase();
-      let history: any[];
+      let history: HistoryEntry[];
       try {
         history = readHistoryFile(filePath);
       } catch {
@@ -191,14 +186,14 @@ export class FileArchivalService {
     const asset = assetMatch[1].toLowerCase();
 
     const historyPath = HISTORY_FILE(asset);
-    let current: any[];
+    let current: HistoryEntry[];
     try {
       current = readHistoryFile(historyPath);
     } catch {
       current = [];
     }
     const existing = new Set(
-      current.map((h: any) => `${h.timestamp}:${h.source}`),
+      current.map((h) => `${h.timestamp}:${h.source}`),
     );
 
     const archive = await this.readArchivePayload(filePath);
@@ -216,7 +211,7 @@ export class FileArchivalService {
     }
 
     if (count > 0) {
-      current.sort((a: any, b: any) => a.timestamp - b.timestamp);
+      current.sort((a, b) => a.timestamp - b.timestamp);
       writeHistoryFile(historyPath, current);
     }
     return count;

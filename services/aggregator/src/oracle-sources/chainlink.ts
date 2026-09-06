@@ -3,6 +3,12 @@ import { config } from '../infrastructure/config';
 import { NormalizedPrice, OracleSourceName } from '../infrastructure/types';
 import { BaseSource } from './base';
 
+interface ChainlinkPriceResponse {
+  USD?: {
+    PRICE: string | number;
+  };
+}
+
 export class ChainlinkSource extends BaseSource {
   name: OracleSourceName = 'chainlink';
 
@@ -15,7 +21,7 @@ export class ChainlinkSource extends BaseSource {
 
   async fetchPrice(asset: string): Promise<NormalizedPrice | null> {
     const symbol = this.toSymbol(asset);
-    const response = await httpClient.get(`${this.baseUrl}/price`, {
+    const response = await httpClient.get<ChainlinkPriceResponse>(`${this.baseUrl}/price`, {
       params: { fsym: symbol, tsym: 'USD', api_key: config.sources.chainlink.apiKey },
     });
 

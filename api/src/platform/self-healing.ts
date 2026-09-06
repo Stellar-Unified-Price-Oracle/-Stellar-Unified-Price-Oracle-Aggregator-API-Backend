@@ -25,6 +25,17 @@ interface Playbook {
   successCriteria: string;
 }
 
+export const incidentDisclosurePolicy = {
+  summary: 'The platform discloses material incidents within 24 hours for customer-impacting events and within 72 hours for non-material operational issues.',
+  timeliness: {
+    critical: 'within 24 hours of classification',
+    high: 'within 72 hours of classification',
+    medium: 'within 5 business days',
+  },
+  channels: ['status page', 'support email', 'runbook entry', 'customer notification log'],
+  consumerNotificationPath: 'Create a post-mortem, classify the incident, publish a status page update, and notify all affected consumers via the support and API notification channels.',
+};
+
 const playbooks: Playbook[] = [
   {
     type: 'source_api_timeout',
@@ -142,6 +153,11 @@ export function postMortem(incidentId: string) {
     generatedAt: new Date().toISOString(),
     timeline: audit.filter((entry) => (entry.data as Record<string, unknown>).incidentId === incidentId),
     diagnosis: incident,
+    disclosure: {
+      status: 'published',
+      policy: incidentDisclosurePolicy,
+      notificationPath: incidentDisclosurePolicy.consumerNotificationPath,
+    },
     recommendations: ['review thresholds', 'add regression chaos scenario', 'confirm owner runbook'],
     followUpIssue: {
       title: `Improve self-healing coverage for ${incident.type}`,
@@ -150,6 +166,10 @@ export function postMortem(incidentId: string) {
   };
   auditAction('postmortem', report);
   return report;
+}
+
+export function getIncidentDisclosurePolicy() {
+  return incidentDisclosurePolicy;
 }
 
 export function metrics() {

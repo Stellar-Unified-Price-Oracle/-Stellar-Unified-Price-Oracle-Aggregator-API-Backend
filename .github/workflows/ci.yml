@@ -23,6 +23,19 @@ jobs:
       - name: Verify cost analysis report
         run: npm run cost:check
 
+  price-correctness:
+    name: Price correctness validation suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Validate aggregated price correctness
+        run: npm run validate:prices
+
   aggregator:
     name: Aggregator service build
     runs-on: ubuntu-latest
@@ -128,6 +141,36 @@ jobs:
               body,
             });
 
+  kustomize-validate:
+    name: Kustomize overlay validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          mv kustomize /usr/local/bin/
+
+      - name: Validate dev overlay
+        run: kustomize build k8s/overlays/dev
+
+      - name: Validate staging overlay
+        run: kustomize build k8s/overlays/staging
+
+      - name: Validate prod overlay
+        run: kustomize build k8s/overlays/prod
+
+      - name: Validate prod-us-east-1 overlay
+        run: kustomize build k8s/overlays/prod-us-east-1
+
+      - name: Validate prod-eu-west-1 overlay
+        run: kustomize build k8s/overlays/prod-eu-west-1
+
+      - name: Validate prod-ap-southeast-1 overlay
+        run: kustomize build k8s/overlays/prod-ap-southeast-1
+
   benchmark:
     name: Performance regression check
     runs-on: ubuntu-latest
@@ -186,6 +229,7 @@ jobs:
           BENCHMARK_BASE_URL: http://localhost:3000
           BENCHMARK_THRESHOLD_PCT: '20'
           BENCHMARK_ITERATIONS: '20'
+          BENCHMARK_TARGET_TPS: '100000'
 
       - name: Upload benchmark results
         if: always()

@@ -1,0 +1,41 @@
+# Stellar Unified Price Oracle — SLI / SLO definitions (#306)
+#
+# Canonical SLO definitions. These are mirrored in scripts/generate-slo-report.ts
+# (kept in sync manually) which renders a monthly compliance report from
+# Prometheus. The operations guide lives in docs/MONITORING_AND_ALERTING.md.
+version: "1"
+window: 30d
+
+slos:
+  # Percentage of API requests that do not return a 5xx error.
+  - name: api-availability
+    description: API availability
+    target: 99.9
+    window: 30d
+    sli:
+      good_events: 'sum(rate(http_requests_total{job="stellar-api",status_code!~"5.."}[5m]))'
+      total_events: 'sum(rate(http_requests_total{job="stellar-api"}[5m]))'
+
+  # Percentage of API requests served under 1s (p95 target).
+  - name: api-latency
+    description: API latency p95 under 1s
+    target: 99.0
+    window: 30d
+    sli:
+      good_events: 'sum(rate(http_request_duration_seconds_bucket{job="stellar-api",le="1"}[5m]))'
+      total_events: 'sum(rate(http_request_duration_seconds_count{job="stellar-api"}[5m]))'
+
+  # Percentage of time published asset prices are younger than the staleness
+  # threshold.
+  - name: price-freshness
+    description: Published price freshness
+    target: 99.5
+    window: 30d
+    sli:
+      good_events: 'sum(rate(stellar_oracle_price_checks_total{stale="false"}[5m]))'
+      total_events: 'sum(rate(stellar_oracle_price_checks_total[5m]))'
+
+# Error-budget burn-rate alert thresholds (see docs/MONITORING_AND_ALERTING.md).
+# > 14.4x burn over 1h drains the monthly budget at a reviewable pace.
+alerting:
+  burn_rate_long_window_multiplier: 14.4

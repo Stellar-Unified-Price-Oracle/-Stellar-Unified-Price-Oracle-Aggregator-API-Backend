@@ -3,6 +3,7 @@ import path from 'path';
 import { AggregatedPrice } from '../infrastructure/types';
 import { logger } from './logger';
 import { WebSocketServer } from '../infrastructure/ws-server';
+import { resolveEscalationRoute } from './escalation-policy';
 
 export interface AlertThresholds {
   asset: string;
@@ -36,6 +37,8 @@ export interface AlertConfig {
   slackWebhookUrl?: string;
   /** PagerDuty Events API v2 integration/routing key */
   pagerDutyRoutingKey?: string;
+  /** Opsgenie API key for routed incidents */
+  opsGenieApiKey?: string;
   /** Generic transactional email API webhook (e.g. SendGrid/Mailgun) */
   emailWebhookUrl?: string;
   emailRecipients?: string[];
@@ -47,6 +50,12 @@ export interface AlertConfig {
   slaBreachWindowSeconds?: number;
   /** SLA threshold in seconds (must match SLA_THRESHOLD_SECONDS in base.ts) */
   slaThresholdSeconds?: number;
+  /** Suppress identical alerts for this long after the first trigger */
+  dedupWindowSeconds?: number;
+  /** Suppress flapping alerts when the same key re-triggers too often */
+  flapSuppressionWindowSeconds?: number;
+  /** Number of re-triggers permitted in the flap suppression window */
+  flapMaxTriggers?: number;
 }
 
 class AlertManager {
@@ -56,6 +65,8 @@ class AlertManager {
   private config: AlertConfig;
   private alertHistory: AlertEvent[] = [];
   private slaBreachTimestamps: Map<string, number[]> = new Map();
+  private lastAlertAtByKey: Map<string, number> = new Map();
+  private alertTriggerHistory: Map<string, number[]> = new Map();
   private static readonly DEFAULT_CONFIG: AlertConfig = {
     webhookRetries: 3,
     webhookRetryDelayMs: 1000,
@@ -65,6 +76,9 @@ class AlertManager {
     slaBreachMaxPerWindow: 10,
     slaBreachWindowSeconds: 300,
     slaThresholdSeconds: 5,
+    dedupWindowSeconds: 300,
+    flapSuppressionWindowSeconds: 1800,
+    flapMaxTriggers: 3,
   };
 
   constructor(config: Partial<AlertConfig> = {}) {
@@ -238,15 +252,44 @@ class AlertManager {
     }
   }
 
-  private async emitAlert(alert: AlertEvent): Promise<void> {
+  private async emitAlert(alert: AlertEvent): Promise<boolean> {
+    const dedupKey = this.getAlertKey(alert);
+    const now = Math.floor(Date.now() / 1000);
+    const dedupWindowSeconds = this.config.dedupWindowSeconds ?? 300;
+    const lastAlertAt = this.lastAlertAtByKey.get(dedupKey);
+
+    if (lastAlertAt && now - lastAlertAt < dedupWindowSeconds) {
+      logger.debug(`Suppressing duplicate alert for ${dedupKey} within ${dedupWindowSeconds}s dedup window`);
+      return false;
+    }
+
+    if (this.isFlapping(dedupKey, now)) {
+      logger.warn(`Suppressing flapping alert for ${dedupKey} within the suppression window`);
+      return false;
+    }
+
+    this.lastAlertAtByKey.set(dedupKey, now);
+    this.recordAlertTrigger(dedupKey, now);
     this.alertHistory.push(alert);
 
+    const escalation = resolveEscalationRoute({
+      type: alert.type,
+      asset: alert.asset,
+      message: alert.message,
+    });
+
     if (this.config.enableConsoleLog) {
-      this.logToConsole(alert);
+      this.logToConsole({
+        ...alert,
+        message: `${alert.message} | escalation=${escalation.severity}/${escalation.primaryChannel}/${escalation.primaryTarget}`,
+      });
     }
 
     if (this.config.enableFileLog && this.config.alertHistoryPath) {
-      this.logToFile(alert);
+      this.logToFile({
+        ...alert,
+        message: `${alert.message} | escalation=${escalation.severity}/${escalation.primaryChannel}/${escalation.primaryTarget}`,
+      });
     }
 
     const wss = WebSocketServer.getInstance();
@@ -266,9 +309,40 @@ class AlertManager {
       await this.sendPagerDuty(alert);
     }
 
+    if (this.config.opsGenieApiKey) {
+      await this.sendOpsgenie(alert);
+    }
+
     if (this.config.emailWebhookUrl) {
       await this.sendEmail(alert);
     }
+
+    return true;
+  }
+
+  private getAlertKey(alert: AlertEvent): string {
+    const target = alert.source ?? alert.affectedSources?.join(',') ?? 'global';
+    return `${alert.asset.toUpperCase()}:${alert.type}:${target}`;
+  }
+
+  private isFlapping(alertKey: string, now: number): boolean {
+    const suppressionWindow = this.config.flapSuppressionWindowSeconds ?? 1800;
+    const maxTriggers = this.config.flapMaxTriggers ?? 3;
+    const history = this.alertTriggerHistory.get(alertKey) || [];
+    const recent = history.filter((ts) => now - ts <= suppressionWindow);
+
+    if (recent.length >= maxTriggers) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private recordAlertTrigger(alertKey: string, now: number): void {
+    const history = this.alertTriggerHistory.get(alertKey) || [];
+    const trimmed = history.filter((ts) => now - ts <= (this.config.flapSuppressionWindowSeconds ?? 1800));
+    trimmed.push(now);
+    this.alertTriggerHistory.set(alertKey, trimmed);
   }
 
   private async sendSlack(alert: AlertEvent): Promise<void> {
@@ -310,6 +384,37 @@ class AlertManager {
       }
     } catch (error) {
       logger.error('Failed to deliver PagerDuty alert:', (error as Error).message);
+    }
+  }
+
+  private async sendOpsgenie(alert: AlertEvent): Promise<void> {
+    try {
+      const priority = alert.type === 'source_down' || alert.type === 'sla_breach' ? 'P1' : 'P3';
+      const response = await fetch('https://api.opsgenie.com/v2/alerts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `GenieKey ${this.config.opsGenieApiKey}`,
+        },
+        body: JSON.stringify({
+          message: alert.message,
+          description: `${alert.asset}: ${alert.type} alert triggered. Runbook: docs/runbooks/README.md`,
+          alias: `${alert.asset}:${alert.type}`,
+          priority,
+          tags: ['price-oracle', alert.asset, alert.type],
+          details: {
+            asset: alert.asset,
+            type: alert.type,
+            summary: alert.message,
+            timestamp: alert.timestamp,
+          },
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+    } catch (error) {
+      logger.error('Failed to deliver Opsgenie alert:', (error as Error).message);
     }
   }
 

@@ -150,7 +150,7 @@ export class DatabaseClient {
 
     try {
       let query = 'SELECT * FROM price_history WHERE asset = $1';
-      const params: any[] = [asset];
+      const params: unknown[] = [asset];
       let paramIndex = 2;
 
       if (from) {

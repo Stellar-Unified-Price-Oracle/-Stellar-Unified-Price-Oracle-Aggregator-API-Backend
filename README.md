@@ -48,6 +48,11 @@ A Soroban-based price oracle aggregator that pulls from **Chainlink**, **Redston
 ## Documentation
 
 - [`docs/index.md`](docs/index.md) — documentation home, architecture overview, and links to ADRs, runbooks, and the API reference
+- [`docs/terms-of-service.md`](docs/terms-of-service.md) — consumer terms and legal boundaries for the API
+- [`docs/acceptable-use-policy.md`](docs/acceptable-use-policy.md) — permitted use, security requirements, and abuse handling
+- [`docs/service-sla.md`](docs/service-sla.md) — SLO-aligned uptime, latency, and response commitments
+- [`docs/fee-schedule.md`](docs/fee-schedule.md) — billing model, tiered access, and fee collection path
+- [`docs/audit-log-retention.md`](docs/audit-log-retention.md) — audit retention policy and tamper-evident verification steps
 - [`DEPLOY.md`](DEPLOY.md) — step-by-step deploy guide (local, Docker, Soroban contract)
 - [`INTEGRATION_TESTS.md`](INTEGRATION_TESTS.md) — integration test setup and execution
 - [`api/docs/API.md`](api/docs/API.md) — full REST + WebSocket API reference: auth, rate limiting, error codes, request/response examples

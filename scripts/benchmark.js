@@ -29,6 +29,7 @@ const path = require('path');
 const BASE_URL = process.env.BENCHMARK_BASE_URL || 'http://localhost:3000';
 const THRESHOLD_PCT = parseFloat(process.env.BENCHMARK_THRESHOLD_PCT || '20');
 const ITERATIONS = parseInt(process.env.BENCHMARK_ITERATIONS || '20', 10);
+const THROUGHPUT_TARGET_RPS = parseFloat(process.env.BENCHMARK_TARGET_TPS || '0');
 const BASELINE_PATH = path.join(__dirname, 'benchmark-baseline.json');
 const UPDATE_BASELINE = process.argv.includes('--update-baseline');
 
@@ -112,10 +113,12 @@ async function runBenchmark() {
       continue;
     }
 
-    results[key] = { ...stats(durations), errors };
+    const totalDurationMs = durations.reduce((sum, current) => sum + current, 0);
+    const throughputRps = durations.length > 0 && totalDurationMs > 0 ? durations.length / (totalDurationMs / 1000) : 0;
+    results[key] = { ...stats(durations), errors, throughputRps };
     const s = results[key];
     console.log(
-      `  ${key.padEnd(40)} p50=${s.p50}ms  p95=${s.p95}ms  p99=${s.p99}ms  err=${errors}`
+      `  ${key.padEnd(40)} p50=${s.p50}ms  p95=${s.p95}ms  p99=${s.p99}ms  rps=${throughputRps.toFixed(1)}  err=${errors}`
     );
   }
 
@@ -131,6 +134,15 @@ async function runBenchmark() {
   // ---------------------------------------------------------------------------
   // Regression check
   // ---------------------------------------------------------------------------
+  if (THROUGHPUT_TARGET_RPS > 0) {
+    const maxRps = Object.values(results).reduce((max, entry) => Math.max(max, Number(entry.throughputRps || 0)), 0);
+    if (maxRps < THROUGHPUT_TARGET_RPS) {
+      console.error(`\nBenchmark throughput ${maxRps.toFixed(1)} rps is below target ${THROUGHPUT_TARGET_RPS} rps.`);
+      process.exit(1);
+    }
+    console.log(`\nThroughput checkpoint: ${maxRps.toFixed(1)} rps (target ${THROUGHPUT_TARGET_RPS} rps)`);
+  }
+
   if (!fs.existsSync(BASELINE_PATH)) {
     console.warn(
       `\nNo baseline found at ${BASELINE_PATH}. ` +

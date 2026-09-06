@@ -34,6 +34,9 @@ an emergency that requires an out-of-band change.
 - Admin transfer (`TransferAdmin` / `SetAdmin`) must be proposed and approved
   the same way; it is never performed via a direct, unproposed transaction.
 - Signer keys should be custodied per `docs/KEY_MANAGEMENT.md`.
+- For the complete operator runbook — signer setup, threshold guidance, the
+  create → approve → execute lifecycle, emergency guardian procedures, and
+  troubleshooting — see [Multi-Sig Administration & Operations](./MULTISIG_ADMINISTRATION.md).
 
 ## Proxy upgrade procedure
 

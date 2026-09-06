@@ -6,7 +6,7 @@ metadata:
     app: timescaledb
 spec:
   serviceName: timescaledb
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: timescaledb
@@ -15,73 +15,104 @@ spec:
       labels:
         app: timescaledb
     spec:
+      serviceAccountName: timescaledb-patroni
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: timescaledb
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: timescaledb
       containers:
         - name: timescaledb
-          image: timescale/timescaledb:latest-pg16
+          image: timescale/timescaledb-ha:pg16-latest
           ports:
             - name: postgres
               containerPort: 5432
+            - name: patroni
+              containerPort: 8008
           env:
-            - name: POSTGRES_USER
-              value: oracle
-            - name: POSTGRES_PASSWORD
+            - name: PATRONI_KUBERNETES_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PATRONI_KUBERNETES_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: PATRONI_KUBERNETES_LABELS
+              value: '{"app": "timescaledb"}'
+            - name: PATRONI_SUPERUSER_USERNAME
+              value: postgres
+            - name: PATRONI_SUPERUSER_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: timescaledb-credentials
-                  key: password
-            - name: POSTGRES_DB
-              value: stellar_oracle
-          # DR (issue #106) — Tier 1 point-in-time recovery: continuous WAL archiving
-          # to a volume separate from the data PVC. archive_timeout forces a WAL
-          # switch at least every 60s even under light write load, bounding RPO for
-          # scripts/dr/restore-pitr.sh to well under the 5-minute target.
-          args:
-            - '-c'
-            - 'archive_mode=on'
-            - '-c'
-            - 'archive_command=test ! -f /var/lib/postgresql/wal-archive/%f && cp %p /var/lib/postgresql/wal-archive/%f'
-            - '-c'
-            - 'archive_timeout=60'
-            - '-c'
-            - 'wal_level=replica'
-            - '-c'
-            - 'max_wal_senders=4'
+                  key: superuser-password
+            - name: PATRONI_REPLICATION_USERNAME
+              value: replicator
+            - name: PATRONI_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: timescaledb-credentials
+                  key: replication-password
+            - name: PATRONI_SCOPE
+              value: stellar-oracle-tsdb
+            - name: PATRONI_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
-            - name: wal-archive
-              mountPath: /var/lib/postgresql/wal-archive
+            - name: pgbackrest-config
+              mountPath: /etc/pgbackrest
+              readOnly: true
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+            initialDelaySeconds: 30
+            periodSeconds: 10
           readinessProbe:
             exec:
               command:
                 - pg_isready
                 - -U
-                - oracle
-                - -d
-                - stellar_oracle
-            initialDelaySeconds: 10
-            periodSeconds: 10
+                - postgres
+            initialDelaySeconds: 15
+            periodSeconds: 5
           resources:
             requests:
-              cpu: 250m
-              memory: 512Mi
-            limits:
-              cpu: "1"
+              cpu: 500m
               memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+      volumes:
+        - name: pgbackrest-config
+          configMap:
+            name: timescaledb-pgbackrest-config
   volumeClaimTemplates:
     - metadata:
         name: data
+        annotations:
+          volume.beta.kubernetes.io/storage-class: gp3
       spec:
         accessModes:
           - ReadWriteOnce
+        storageClassName: gp3
         resources:
           requests:
-            storage: 10Gi
-    - metadata:
-        name: wal-archive
-      spec:
-        accessModes:
-          - ReadWriteOnce
-        resources:
-          requests:
-            storage: 5Gi
+            storage: 50Gi

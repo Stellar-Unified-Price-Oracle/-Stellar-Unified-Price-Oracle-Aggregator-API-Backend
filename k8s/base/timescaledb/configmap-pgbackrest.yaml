@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: timescaledb-pgbackrest-config
+  labels:
+    app: timescaledb
+data:
+  pgbackrest.conf: |
+    [global]
+    repo1-type=s3
+    repo1-s3-bucket=stellar-oracle-db-backups
+    repo1-s3-region=us-east-1
+    repo1-path=/pgbackrest/stellar-oracle-tsdb
+    repo1-retention-full=7
+    repo1-retention-diff=3
+    start-fast=y
+    log-level-console=info
+    log-level-file=detail
+    delta=y
+    compress-type=lz4
+
+    [stellar-oracle-tsdb]
+    pg1-path=/var/lib/postgresql/data/pgdata
+    pg1-port=5432
+    pg1-user=postgres

@@ -1,0 +1,54 @@
+name: Create action issues from postmortem checklist
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  create_actions:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: Create action issues from checklist
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const comment = context.payload.comment && context.payload.comment.body && context.payload.comment.body.trim();
+            if (comment !== '/create-actions') return;
+            const issue = context.payload.issue;
+            if (!issue) return;
+            // Only operate on postmortem issues
+            if (!Array.isArray(issue.labels) || !issue.labels.some(l => l.name === 'postmortem')) return;
+            const body = issue.body || '';
+            const lines = body.split('\n');
+            const unchecked = [];
+            const uncheckedRegex = /^- \[ \] (.+)$/;
+            for (const line of lines) {
+              const m = line.match(uncheckedRegex);
+              if (m) unchecked.push(m[1].trim());
+            }
+            if (unchecked.length === 0) {
+              console.log('No unchecked action items found.');
+              return;
+            }
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            // Try to extract original incident
+            let incidentMatch = body.match(/Original Incident: #?(\d+)/);
+            const incidentRef = incidentMatch ? `#${incidentMatch[1]}` : '';
+            for (const task of unchecked) {
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title: `PM Action: ${task.substring(0,80)}`,
+                body: `Action from postmortem: ${issue.html_url}\n\n${task}\n\nRelated Incident: ${incidentRef}`,
+                labels: ['postmortem-action']
+              });
+            }
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issue.number,
+              body: `Created ${unchecked.length} action issue(s) for the open checklist items.`
+            });

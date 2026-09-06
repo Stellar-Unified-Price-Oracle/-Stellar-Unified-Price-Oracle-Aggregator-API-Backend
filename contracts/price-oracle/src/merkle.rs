@@ -13,9 +13,21 @@
 //   the current index is even (left child) or odd (right child).  The proof is
 //   valid iff the recomputed root matches the stored batch root.
 
-use soroban_sdk::{Bytes, Env};
+use soroban_sdk::{Bytes, Env, String};
 
 use crate::types::BatchPriceEntry;
+
+// Soroban's `String` has no direct byte accessor; `copy_into_slice` requires an
+// exact-length buffer.  Asset symbols and strkey-encoded addresses are always
+// well under this cap in practice.
+const MAX_STRING_LEN: usize = 64;
+
+fn string_to_bytes(env: &Env, s: &String) -> Bytes {
+    let len = s.len() as usize;
+    let mut buf = [0u8; MAX_STRING_LEN];
+    s.copy_into_slice(&mut buf[..len]);
+    Bytes::from_slice(env, &buf[..len])
+}
 
 // ── Leaf encoding ─────────────────────────────────────────────────────────────
 
@@ -34,7 +46,7 @@ pub fn hash_leaf(env: &Env, entry: &BatchPriceEntry) -> Bytes {
     let mut buf = Bytes::new(env);
 
     // Asset string bytes
-    buf.append(&entry.asset.to_bytes());
+    buf.append(&string_to_bytes(env, &entry.asset));
     // Separator
     buf.push_back(0x00);
     // price: i128 as 16-byte big-endian
@@ -47,7 +59,7 @@ pub fn hash_leaf(env: &Env, entry: &BatchPriceEntry) -> Bytes {
     let ts_bytes = entry.timestamp.to_be_bytes();
     buf.append(&Bytes::from_array(env, &ts_bytes));
     // source address bytes (32 bytes for Stellar public key)
-    buf.append(&entry.source.to_string().to_bytes());
+    buf.append(&string_to_bytes(env, &entry.source.to_string()));
 
     env.crypto().sha256(&buf).into()
 }
@@ -79,6 +91,10 @@ pub fn verify_proof(
     siblings: &soroban_sdk::Vec<Bytes>,
     root: &Bytes,
 ) -> bool {
+    if siblings.len() > MAX_PROOF_SIBLINGS {
+        return false;
+    }
+
     let mut current = hash_leaf(env, entry);
     let mut index = leaf_index;
 

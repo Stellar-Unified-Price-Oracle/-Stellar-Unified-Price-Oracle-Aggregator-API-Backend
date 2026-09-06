@@ -3,6 +3,16 @@ import { config } from '../infrastructure/config';
 import { NormalizedPrice, OracleSourceName } from '../infrastructure/types';
 import { BaseSource } from './base';
 
+interface ReflectorPriceData {
+  price: string | number;
+  decimals?: number;
+  timestamp?: number;
+}
+
+interface ReflectorPricesResponse {
+  prices?: Record<string, ReflectorPriceData | undefined>;
+}
+
 export class ReflectorSource extends BaseSource {
   name: OracleSourceName = 'reflector';
 
@@ -15,7 +25,7 @@ export class ReflectorSource extends BaseSource {
 
   async fetchPrice(asset: string): Promise<NormalizedPrice | null> {
     const symbol = `Crypto.${asset}/USD`;
-    const response = await httpClient.get(`${this.baseUrl}/v1/prices`, {
+    const response = await httpClient.get<ReflectorPricesResponse>(`${this.baseUrl}/v1/prices`, {
       params: { asset: symbol },
     });
 

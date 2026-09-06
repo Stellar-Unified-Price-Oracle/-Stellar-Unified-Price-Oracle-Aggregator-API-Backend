@@ -1,0 +1,57 @@
+name: Create postmortem from incident
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  create_postmortem:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Create postmortem issue
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const label = context.payload.label && context.payload.label.name;
+            if (!label) return;
+            if (!['severity/P0','severity/P1','incident'].includes(label)) return;
+            const incident = context.payload.issue;
+            const incidentNumber = incident.number;
+            const incidentTitle = incident.title.replace(/\n/g, ' ');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const body = `Auto-created postmortem for incident #${incidentNumber}.
+
+Original Incident: #${incidentNumber}
+
+## Summary
+
+- **Incident:** #${incidentNumber}
+- **Title:** ${incidentTitle}
+- **Severity:** ${label}
+
+## Timeline
+
+- TBD
+
+## Root Cause
+
+- TBD
+
+## Impact
+
+- TBD
+
+## Action Items
+
+- [ ] 
+
+*(Run /create-actions on this postmortem to convert checklist items into tracked issues.)*`;
+            await github.rest.issues.create({
+              owner,
+              repo,
+              title: `Postmortem: ${incidentTitle} (#${incidentNumber})`,
+              body,
+              labels: ['postmortem','incident-postmortem']
+            });

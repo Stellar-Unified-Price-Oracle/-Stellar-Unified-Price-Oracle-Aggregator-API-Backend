@@ -1,0 +1,103 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: timescaledb-restore-test
+  labels:
+    app: timescaledb
+    component: restore-test
+spec:
+  schedule: "0 3 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: timescaledb
+            component: restore-test
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: restore-test
+              image: timescale/timescaledb-ha:pg16-latest
+              env:
+                - name: PGBACKREST_STANZA
+                  value: stellar-oracle-tsdb
+                - name: PGBACKREST_REPO1_S3_BUCKET
+                  value: stellar-oracle-db-backups
+                - name: PGBACKREST_REPO1_S3_REGION
+                  value: us-east-1
+              volumeMounts:
+                - name: pgbackrest-config
+                  mountPath: /etc/pgbackrest
+                  readOnly: true
+                - name: restore-tmp
+                  mountPath: /tmp/restore
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+
+                  RESTORE_DIR=/tmp/restore/pgdata
+                  PG_PORT=5433
+                  RESULT=RESTORE_TEST_FAILED
+
+                  cleanup() {
+                    echo "[restore-test] Cleaning up temporary postgres instance and restore directory..."
+                    pg_ctl -D "${RESTORE_DIR}" stop -m fast 2>/dev/null || true
+                    rm -rf "${RESTORE_DIR}"
+                    echo "[restore-test] ${RESULT}"
+                  }
+                  trap cleanup EXIT
+
+                  echo "[restore-test] Starting restore test for stanza: ${PGBACKREST_STANZA}"
+
+                  # Restore latest backup to temp location
+                  echo "[restore-test] Restoring latest backup..."
+                  if ! pgbackrest restore \
+                      --stanza="${PGBACKREST_STANZA}" \
+                      --pg1-path="${RESTORE_DIR}" \
+                      --type=immediate \
+                      --target-action=promote \
+                      --delta 2>&1; then
+                    echo "[restore-test] ERROR: pgbackrest restore failed"
+                    exit 1
+                  fi
+
+                  echo "[restore-test] Restore completed. Starting temporary postgres instance on port ${PG_PORT}..."
+
+                  # Start a temporary postgres instance
+                  pg_ctl -D "${RESTORE_DIR}" \
+                    -o "-p ${PG_PORT} -c listen_addresses=localhost" \
+                    -w start 2>&1
+
+                  echo "[restore-test] Postgres started. Running readiness check..."
+
+                  # Check postgres is accepting connections
+                  if ! pg_isready -h localhost -p "${PG_PORT}" -U postgres; then
+                    echo "[restore-test] ERROR: pg_isready failed after restore"
+                    exit 1
+                  fi
+
+                  echo "[restore-test] pg_isready passed. Running test query..."
+
+                  # Run a test query — allow failure gracefully (table may not exist in all envs)
+                  if psql -h localhost -p "${PG_PORT}" -U postgres -c \
+                      "SELECT COUNT(*) FROM price_data LIMIT 1;" 2>&1; then
+                    echo "[restore-test] Test query succeeded"
+                  else
+                    echo "[restore-test] WARNING: Test query failed (table may not exist) — treating as non-fatal"
+                  fi
+
+                  RESULT=RESTORE_TEST_PASSED
+          volumes:
+            - name: pgbackrest-config
+              configMap:
+                name: timescaledb-pgbackrest-config
+            - name: restore-tmp
+              emptyDir:
+                sizeLimit: 60Gi

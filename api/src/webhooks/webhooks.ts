@@ -1,6 +1,7 @@
+import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { webhookService } from './webhook-service';
+import { webhookService, type WebhookRegistration } from './webhook-service';
 import { links, withLinks } from '../price-serving/hypermedia';
 
 const router = Router();
@@ -33,12 +34,24 @@ router.post('/', (req: Request, res: Response) => {
     { ...parsed.data.trigger, asset: parsed.data.trigger.asset.toUpperCase() },
   );
 
-  res.status(201).json({ success: true, data: withLinks(webhook, links.webhook(webhook.id)) });
+  res.status(201).json({
+    success: true,
+    data: {
+      ...withLinks(webhook, links.webhook(webhook.id)),
+      verificationKey: webhook.verificationKey,
+      status: webhook.status,
+      failureCount: webhook.failureCount,
+    },
+  });
 });
 
 router.get('/', (req: Request, res: Response) => {
-  const data = webhookService.list(keyPrefixOf(req)).map((w: any) => withLinks(w, links.webhook(w.id)));
+  const data = webhookService.list(keyPrefixOf(req)).map((w: WebhookRegistration) => withLinks(w, links.webhook(w.id)));
   res.json({ success: true, data, _links: links.root() });
+});
+
+router.get('/verification-key', (_req: Request, res: Response) => {
+  res.json({ success: true, data: { verificationKey: crypto.createHash('sha256').update(process.env.WEBHOOK_SIGNING_SECRET || 'default').digest('hex') } });
 });
 
 router.get('/:id', (req: Request, res: Response) => {

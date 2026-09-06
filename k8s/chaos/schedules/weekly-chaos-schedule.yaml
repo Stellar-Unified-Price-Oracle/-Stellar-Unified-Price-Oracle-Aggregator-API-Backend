@@ -18,6 +18,8 @@ spec:
         children:
           - step-pod-kill-api
           - step-pod-kill-aggregator
+          - step-db-primary-failover
+          - step-region-partition
           - step-network-latency
           - step-network-partition
           - step-dns-failure
@@ -49,6 +51,34 @@ spec:
               - stellar-oracle
             labelSelectors:
               app: aggregator
+      - name: step-db-primary-failover
+        templateType: PodChaos
+        deadline: 30m
+        podChaos:
+          action: pod-kill
+          mode: one
+          duration: 5m
+          selector:
+            namespaces:
+              - stellar-oracle
+            labelSelectors:
+              app: timescaledb
+      - name: step-region-partition
+        templateType: NetworkChaos
+        deadline: 45m
+        networkChaos:
+          action: partition
+          mode: all
+          duration: 10m
+          selector:
+            namespaces:
+              - stellar-oracle-prod-us-east-1
+          direction: both
+          target:
+            selector:
+              namespaces:
+                - stellar-oracle-prod-eu-west-1
+            mode: all
       - name: step-network-latency
         templateType: NetworkChaos
         deadline: 15m

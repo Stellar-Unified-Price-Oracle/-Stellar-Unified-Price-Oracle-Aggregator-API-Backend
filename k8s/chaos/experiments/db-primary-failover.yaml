@@ -1,0 +1,17 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: db-primary-failover
+  labels:
+    chaos.stellar-oracle.io/experiment: db-primary-failover
+    chaos.stellar-oracle.io/target: timescaledb
+spec:
+  action: pod-kill
+  mode: one
+  # Allow slightly longer window to observe database failover/recovery behaviour
+  duration: 5m
+  selector:
+    namespaces:
+      - stellar-oracle
+    labelSelectors:
+      app: timescaledb

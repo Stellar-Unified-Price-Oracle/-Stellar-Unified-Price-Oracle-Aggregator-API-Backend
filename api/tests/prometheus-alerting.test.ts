@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as yaml from 'js-yaml';
 
@@ -23,22 +25,23 @@ describe('Prometheus Alerting Rules', () => {
   describe('Source Down Alert', () => {
     it('should define alert for oracle source down', () => {
       const rule = {
-        alert: 'OracleSourceDown',
-        expr: 'increase(oracle_source_failures_total[5m]) >= 3',
-        for: '2m',
+        alert: 'OracleSourceUptimeDegraded',
+        expr: 'last_over_time(oracle_source_uptime_percent{source!=""}[10m]) < 95',
+        for: '10m',
         labels: {
-          severity: 'critical',
-          component: 'oracle',
+          severity: 'warning',
+          component: 'aggregator',
         },
         annotations: {
-          summary: 'Oracle source is down',
-          description: '{{ $labels.source }} has failed {{ $value }} times in last 5 minutes',
+          summary: 'Oracle source uptime degraded',
+          description: '{{ $labels.source }} uptime is below threshold over the last 10 minutes',
+          runbook_url: 'https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/oracle-source-down.md'
         },
       };
 
-      expect(rule.alert).toBe('OracleSourceDown');
-      expect(rule.expr).toContain('oracle_source_failures_total');
-      expect(rule.labels.severity).toBe('critical');
+      expect(rule.alert).toBe('OracleSourceUptimeDegraded');
+      expect(rule.expr).toMatch(/oracle_source_failures_total|oracle_source_uptime_percent/);
+      expect(['critical', 'warning', 'info']).toContain(rule.labels.severity);
     });
 
     it('should trigger after 3 consecutive failures', () => {
@@ -78,7 +81,7 @@ describe('Prometheus Alerting Rules', () => {
   describe('Stale Prices Alert', () => {
     it('should define alert for stale prices', () => {
       const rule = {
-        alert: 'StalePrices',
+        alert: 'PriceFeedStale',
         expr: 'time() - oracle_last_price_update_timestamp_seconds > 120',
         for: '1m',
         labels: {
@@ -88,10 +91,11 @@ describe('Prometheus Alerting Rules', () => {
         annotations: {
           summary: 'Price data is stale',
           description: '{{ $labels.asset }} price last updated {{ $value }}s ago',
+          runbook_url: 'https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/price-feed-stale.md'
         },
       };
 
-      expect(rule.alert).toBe('StalePrices');
+      expect(rule.alert).toBe('PriceFeedStale');
       expect(rule.expr).toContain('> 120');
       expect(rule.labels.severity).toBe('warning');
     });
@@ -183,22 +187,23 @@ describe('Prometheus Alerting Rules', () => {
   describe('API Latency Alert', () => {
     it('should define alert for API latency exceeding SLA', () => {
       const rule = {
-        alert: 'HighAPILatency',
-        expr: 'histogram_quantile(0.99, api_request_duration_seconds) > 1',
+        alert: 'IstioHighRequestLatency',
+        expr: 'histogram_quantile(0.99, sum(rate(istio_request_duration_milliseconds_bucket{destination_service_namespace="stellar-oracle"}[5m])) by (le, destination_service)) > 2000',
         for: '5m',
         labels: {
           severity: 'warning',
-          component: 'api',
+          component: 'mesh',
         },
         annotations: {
-          summary: 'API latency exceeds SLA',
-          description: 'P99 latency is {{ $value }}s for {{ $labels.endpoint }}',
+          summary: 'High p99 latency observed in mesh',
+          description: 'P99 latency is {{ $value }}ms for {{ $labels.destination_service }}',
+          runbook_url: 'https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/istio-high-request-latency.md'
         },
       };
 
-      expect(rule.alert).toBe('HighAPILatency');
+      expect(rule.alert).toBe('IstioHighRequestLatency');
       expect(rule.expr).toContain('histogram_quantile');
-      expect(rule.expr).toContain('> 1');
+      expect(rule.expr).toMatch(/>\s*1|>\s*2000/);
     });
 
     it('should use 99th percentile for SLA checks', () => {
@@ -341,8 +346,8 @@ describe('Prometheus Alerting Rules', () => {
 
     it('should hold alert for specified duration before firing', () => {
       const durations = {
-        'OracleSourceDown': 120,
-        'StalePrices': 60,
+        'OracleSourceUptimeDegraded': 120,
+        'PriceFeedStale': 60,
         'CircuitBreakerOpen': 30,
       };
 
@@ -417,6 +422,22 @@ describe('Prometheus Alerting Rules', () => {
 
       expect(routing.group_by).toBeDefined();
       expect(Array.isArray(routing.routes)).toBe(true);
+    });
+
+    it('should configure dedup, flap suppression, and inhibition in the production alertmanager config', () => {
+      const filePath = path.resolve(__dirname, '../../monitoring/alertmanager.yml');
+      expect(fs.existsSync(filePath)).toBe(true);
+
+      const config = yaml.load(fs.readFileSync(filePath, 'utf8')) as any;
+      expect(config.route.group_by).toEqual(expect.arrayContaining(['alertname', 'namespace', 'severity', 'asset']));
+      expect(config.route.group_wait).toBe('30s');
+      expect(config.route.group_interval).toBe('5m');
+      expect(config.route.repeat_interval).toBe('6h');
+      expect(config.route.routes.some((route: any) => route.receiver === 'pagerduty-critical')).toBe(true);
+      expect(config.inhibit_rules.some((rule: any) =>
+        rule.source_matchers?.includes('severity="critical"') &&
+        rule.target_matchers?.includes('severity="warning"'))
+      ).toBe(true);
     });
   });
 

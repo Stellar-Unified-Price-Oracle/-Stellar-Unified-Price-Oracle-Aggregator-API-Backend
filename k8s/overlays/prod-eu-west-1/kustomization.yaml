@@ -44,3 +44,11 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 2
+  - path: geo-config-patch.yaml
+    target:
+      kind: ConfigMap
+      name: stellar-oracle-global-config
+  - path: failover-policy-patch.yaml
+    target:
+      kind: ConfigMap
+      name: region-failover-policy

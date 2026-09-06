@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import crypto, { randomUUID } from 'crypto';
 import { config } from '../infrastructure/config';
 import { logger } from '../observability/logger';
 import { getVaultClient } from '@stellar-oracle/vault-client';
@@ -18,10 +18,14 @@ export interface WebhookRegistration {
   apiKeyPrefix: string;
   trigger: WebhookTrigger;
   secret: string;
+  verificationKey: string;
   active: boolean;
+  status: 'healthy' | 'degraded' | 'dead-letter';
   createdAt: number;
   lastTriggeredAt?: number;
   lastPrice?: number;
+  lastFailure?: string;
+  failureCount: number;
 }
 
 export interface WebhookDeliveryLog {
@@ -40,6 +44,27 @@ function backoffDelayMs(attempt: number): number {
   return Math.min(delay, config.webhooks.maxDelayMs);
 }
 
+export function signWebhookPayload(secret: string, body: string): string {
+  return crypto.createHmac('sha256', secret).update(body).digest('hex');
+}
+
+export function verifyWebhookSignature(secret: string, body: string, signature: string): boolean {
+  if (!secret || !body || !signature) return false;
+
+  const normalized = signature.startsWith('sha256=') ? signature.slice('sha256='.length) : signature;
+  const expected = signWebhookPayload(secret, body);
+  const expectedBuf = Buffer.from(expected, 'hex');
+  const actualBuf = Buffer.from(normalized, 'hex');
+
+  if (expectedBuf.length !== actualBuf.length) return false;
+
+  try {
+    return crypto.timingSafeEqual(expectedBuf, actualBuf);
+  } catch {
+    return false;
+  }
+}
+
 class WebhookService {
   private webhooks = new Map<string, WebhookRegistration>();
   private deliveryLog: WebhookDeliveryLog[] = [];
@@ -50,14 +75,19 @@ class WebhookService {
     apiKeyPrefix: string,
     trigger: WebhookTrigger,
   ): WebhookRegistration {
+    const secret = randomUUID();
+    const verificationKey = crypto.createHash('sha256').update(secret).digest('hex');
     const webhook: WebhookRegistration = {
       id: randomUUID(),
       url,
       apiKeyPrefix,
       trigger,
-      secret: randomUUID(),
+      secret,
+      verificationKey,
       active: true,
+      status: 'healthy',
       createdAt: Date.now(),
+      failureCount: 0,
     };
     this.webhooks.set(webhook.id, webhook);
 
@@ -76,6 +106,7 @@ class WebhookService {
       await vault.saveWebhookSecret(webhook.apiKeyPrefix, {
         webhookId: webhook.id,
         secret: webhook.secret,
+        verificationKey: webhook.verificationKey,
         apiKeyPrefix: webhook.apiKeyPrefix,
         createdAt: webhook.createdAt,
       });
@@ -140,6 +171,7 @@ class WebhookService {
    */
   async deliver(webhook: WebhookRegistration, payload: Record<string, unknown>): Promise<void> {
     const body = JSON.stringify({ webhookId: webhook.id, ...payload });
+    const signature = signWebhookPayload(webhook.secret, body);
     let attempt = 0;
 
     while (attempt < config.webhooks.maxRetries) {
@@ -152,13 +184,15 @@ class WebhookService {
           headers: {
             'Content-Type': 'application/json',
             'X-Webhook-Id': webhook.id,
+            'X-Webhook-Signature': `sha256=${signature}`,
+            'X-Webhook-Timestamp': String(Math.floor(Date.now() / 1000)),
           },
           body,
           signal: controller.signal,
         });
         clearTimeout(timeout);
 
-        this.logDelivery({
+        const entry = {
           id: randomUUID(),
           webhookId: webhook.id,
           url: webhook.url,
@@ -166,17 +200,31 @@ class WebhookService {
           success: res.ok,
           statusCode: res.status,
           timestamp: Date.now(),
-        });
+        };
+        this.logDelivery(entry);
 
-        if (res.ok) return;
+        if (res.ok) {
+          webhook.status = 'healthy';
+          webhook.failureCount = 0;
+          webhook.lastFailure = undefined;
+          return;
+        }
+
+        webhook.lastFailure = `HTTP ${res.status}`;
+        webhook.status = 'degraded';
+        webhook.failureCount += 1;
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        webhook.lastFailure = message;
+        webhook.status = 'degraded';
+        webhook.failureCount += 1;
         this.logDelivery({
           id: randomUUID(),
           webhookId: webhook.id,
           url: webhook.url,
           attempt,
           success: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: message,
           timestamp: Date.now(),
         });
       }
@@ -186,6 +234,7 @@ class WebhookService {
       }
     }
 
+    webhook.status = 'dead-letter';
     logger.warn(`Webhook ${webhook.id} failed after ${attempt} attempts`);
   }
 

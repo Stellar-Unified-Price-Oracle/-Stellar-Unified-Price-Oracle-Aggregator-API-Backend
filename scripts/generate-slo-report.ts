@@ -49,17 +49,30 @@ const SLOS: SloDef[] = [
       total_events: 'sum(rate(stellar_oracle_price_checks_total[5m]))',
     },
   },
+  {
+    name: 'audit-log-completeness',
+    description: 'Percentage of audit events successfully recorded without loss',
+    target: 99.99,
+    window: '30d',
+    sli: {
+      good_events: 'sum(rate(audit_log_events_total{result="written"}[5m]))',
+      total_events: 'sum(rate(audit_log_events_total[5m]))',
+    },
+  },
 ];
 
-function parseArgs(): { prometheusUrl: string; outDir: string } {
+function parseArgs(): { prometheusUrl: string; outDir: string; schedule: boolean; review: boolean } {
   const args = process.argv.slice(2);
   const get = (flag: string, fallback: string) => {
     const found = args.find((a) => a.startsWith(`--${flag}=`));
     return found ? found.split('=').slice(1).join('=') : fallback;
   };
+  const has = (flag: string) => args.includes(`--${flag}`);
   return {
     prometheusUrl: get('prometheus-url', process.env.PROMETHEUS_URL || 'http://localhost:9090'),
     outDir: get('out', path.resolve(__dirname, '../reports')),
+    schedule: has('schedule'),
+    review: has('review'),
   };
 }
 
@@ -77,7 +90,7 @@ async function queryRange(prometheusUrl: string, expr: string): Promise<number |
 }
 
 async function main() {
-  const { prometheusUrl, outDir } = parseArgs();
+  const { prometheusUrl, outDir, schedule, review } = parseArgs();
 
   const now = new Date();
   const reportLines: string[] = [
@@ -101,10 +114,16 @@ async function main() {
     reportLines.push(`- **${slo.name}**: ${slo.description} (target ${slo.target}%, window ${slo.window})`);
   }
 
-  fs.mkdirSync(outDir, { recursive: true });
-  const outPath = path.join(outDir, `slo-report-${now.toISOString().slice(0, 7)}.md`);
+  const reportDir = review ? path.join(outDir, 'drafts') : outDir;
+  fs.mkdirSync(reportDir, { recursive: true });
+  const outPath = path.join(reportDir, `slo-report-${now.toISOString().slice(0, 7)}.md`);
   fs.writeFileSync(outPath, reportLines.join('\n') + '\n', 'utf-8');
   console.log(`SLO report written to ${outPath}`);
+
+  if (schedule) {
+    console.log('Cron schedule for this report (review before submission):');
+    console.log('0 0 1 * * tsx scripts/generate-slo-report.ts --review');
+  }
 }
 
 main().catch((err) => {

@@ -1,0 +1,31 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: regional-partition
+  namespace: stellar-oracle
+  labels:
+    chaos.stellar-oracle.io/experiment: regional-partition
+    chaos.stellar-oracle.io/target: region
+    chaos.stellar-oracle.io/scope: dr-drill
+spec:
+  action: partition
+  mode: all
+  duration: 5m
+  selector:
+    namespaces:
+      - stellar-oracle
+    labelSelectors:
+      app: api
+      topology.kubernetes.io/region: us-east-1
+  direction: both
+  target:
+    selector:
+      namespaces:
+        - stellar-oracle
+      expressionSelectors:
+        - key: topology.kubernetes.io/region
+          operator: In
+          values:
+            - eu-west-1
+            - ap-southeast-1
+    mode: all

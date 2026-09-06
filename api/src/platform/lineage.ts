@@ -29,6 +29,8 @@ export interface LineageRecord {
   stellar_anchor: {
     status: 'pending' | 'anchored';
     ledger?: string;
+    tx_hash?: string;
+    network?: string;
     hash: string;
   };
   openlineage: {
@@ -157,6 +159,37 @@ export function verifyLineage(provenanceId: string): { valid: boolean; provenanc
     previousHash = current.hash;
   }
   return { valid: previousHash === record.root_hash, provenanceId, rootHash: record.root_hash };
+}
+
+export function anchorLineageRecord(
+  provenanceId: string,
+  anchor: { ledger: string; txHash: string; network?: string },
+): LineageRecord | undefined {
+  const record = records.get(provenanceId);
+  if (!record) return undefined;
+
+  const anchorStep = record.steps.find((step) => step.type === 'stellar_anchor');
+  if (anchorStep) {
+    anchorStep.data = {
+      ...anchorStep.data,
+      anchor_policy: 'periodic_batch',
+      status: 'anchored',
+      ledger: anchor.ledger,
+      tx_hash: anchor.txHash,
+      network: anchor.network ?? 'testnet',
+    };
+    anchorStep.hash = hash({ type: anchorStep.type, timestamp: anchorStep.timestamp, data: anchorStep.data }, anchorStep.previousHash);
+  }
+
+  record.stellar_anchor = {
+    status: 'anchored',
+    ledger: anchor.ledger,
+    tx_hash: anchor.txHash,
+    network: anchor.network ?? 'testnet',
+    hash: record.root_hash,
+  };
+
+  return record;
 }
 
 export function explainLineage(provenanceId: string): string | undefined {

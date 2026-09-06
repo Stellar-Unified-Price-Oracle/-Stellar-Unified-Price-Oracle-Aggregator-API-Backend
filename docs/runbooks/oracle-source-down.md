@@ -1,11 +1,11 @@
 # Runbook: Oracle Source Down
 
-**Linked alerts:** `OracleSourceDowntime`, `SourceHealthDegraded`, `NoOracleSourcesHealthy`
+**Linked alerts:** `OracleSourceSlaBreachRateHigh`, `OracleSourceSlaBreachRateCritical`, `OracleSourceUptimeDegraded`
 **Severity:** P1 (single source) / P0 (all sources)
 
 ## Symptoms
 
-- Prometheus alert `OracleSourceDowntime` fires
+- Prometheus alerts `OracleSourceSlaBreachRateHigh` / `OracleSourceSlaBreachRateCritical` / `OracleSourceUptimeDegraded` fire
 - `/api/v1/health` returns `degraded` or `unhealthy`
 - Aggregated prices show reduced `confidence` or `degradationLevel: critical`
 - Logs show repeated `[source] Failed to fetch <asset>` messages

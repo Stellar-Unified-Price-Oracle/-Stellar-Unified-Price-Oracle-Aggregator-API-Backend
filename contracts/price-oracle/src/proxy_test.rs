@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod proxy_tests {
-    use soroban_sdk::testutils::Address as TestAddress;
+    use soroban_sdk::testutils::{Address as TestAddress, Ledger};
     use soroban_sdk::{Address, BytesN, Env, String, Vec};
 
     use crate::proxy::{ProxyContract, ProxyContractClient};

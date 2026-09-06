@@ -1,4 +1,5 @@
 import { ErrorCode, getErrorDetails } from './catalog';
+import { fail, type FailEnvelope } from './response';
 
 export interface ErrorContext {
   [key: string]: unknown;
@@ -37,17 +38,19 @@ export class AppError extends Error {
       title: this.title,
       status: this.status,
       detail: this.message,
+      code: this.code,
+      message: this.message,
       instance: this.instance,
       ...(this.context && { context: this.context }),
     };
   }
 
-  toResponseObject() {
-    return {
-      success: false,
-      error: this.toJSON(),
-      timestamp: new Date().toISOString(),
-    };
+  /**
+   * #302 — returns the failure half of the API response discriminated union
+   * (`success: false` narrows the payload to `error`, never `data`).
+   */
+  toResponseObject(): FailEnvelope & { timestamp: string } {
+    return { ...fail(this.toJSON()), timestamp: new Date().toISOString() };
   }
 }
 

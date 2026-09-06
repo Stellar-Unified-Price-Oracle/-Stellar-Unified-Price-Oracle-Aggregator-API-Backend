@@ -1,0 +1,42 @@
+{
+  "note": "Known-good aggregation cases for the price correctness validation suite (issue #420). `sources` are per-source prices in the same unit; `expectedMedian` is the correct aggregate after dropping outliers; `expectedOutliers` lists sources a correct implementation must exclude (deviation from the all-source median above `outlierDeviationPercent`).",
+  "medianTolerancePercent": 0.01,
+  "outlierDeviationPercent": 10,
+  "cases": [
+    {
+      "name": "odd count, tight cluster - BTC",
+      "asset": "BTC",
+      "sources": [{ "source": "a", "price": 42010.5 }, { "source": "b", "price": 42005.0 }, { "source": "c", "price": 42015.25 }],
+      "expectedMedian": 42010.5,
+      "expectedOutliers": []
+    },
+    {
+      "name": "even count - average of middle two - ETH",
+      "asset": "ETH",
+      "sources": [{ "source": "a", "price": 2200.0 }, { "source": "b", "price": 2202.0 }, { "source": "c", "price": 2204.0 }, { "source": "d", "price": 2206.0 }],
+      "expectedMedian": 2203.0,
+      "expectedOutliers": []
+    },
+    {
+      "name": "single obvious outlier is rejected - BTC",
+      "asset": "BTC",
+      "sources": [{ "source": "a", "price": 42000.0 }, { "source": "b", "price": 42010.0 }, { "source": "c", "price": 41995.0 }, { "source": "d", "price": 63000.0 }],
+      "expectedMedian": 42000.0,
+      "expectedOutliers": ["d"]
+    },
+    {
+      "name": "two-sided outliers - XLM",
+      "asset": "XLM",
+      "sources": [{ "source": "a", "price": 0.115 }, { "source": "b", "price": 0.116 }, { "source": "c", "price": 0.1155 }, { "source": "d", "price": 0.05 }, { "source": "e", "price": 0.30 }],
+      "expectedMedian": 0.1155,
+      "expectedOutliers": ["d", "e"]
+    },
+    {
+      "name": "minimal quorum of two sources - USDC",
+      "asset": "USDC",
+      "sources": [{ "source": "a", "price": 1.0 }, { "source": "b", "price": 1.0009 }],
+      "expectedMedian": 1.00045,
+      "expectedOutliers": []
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Result, err, ok } from './result';
 
 /**
  * Encryption at rest for sensitive configuration and historical data (issue #41).
@@ -122,15 +123,28 @@ export function decrypt(value: string, explicit?: EncryptionKeys): string {
 }
 
 /**
+ * Decrypt an `enc:` payload as a {@link Result} instead of throwing (issue
+ * #299). Plain (unencrypted) values are returned as `ok(value)` so config can
+ * mix encrypted and plaintext entries during migration.
+ */
+export function decryptResult(value: string, explicit?: EncryptionKeys): Result<string, Error> {
+  if (!isEncrypted(value)) return ok(value);
+
+  try {
+    return ok(decrypt(value, explicit));
+  } catch (thrown) {
+    return err(thrown instanceof Error ? thrown : new Error(String(thrown)));
+  }
+}
+
+/**
  * Decrypt a sensitive configuration value if it is encrypted; otherwise return
- * it unchanged. Safe to call on every env-sourced secret.
+ * it unchanged. Safe to call on every env-sourced secret. Failures are logged
+ * with context by the caller via the returned {@link Result} when needed.
  */
 export function decryptSecret(value: string): string {
-  try {
-    return decrypt(value);
-  } catch {
-    // Never crash config loading on a bad payload — surface the raw value and
-    // let downstream validation fail loudly instead.
-    return value;
-  }
+  // Never crash config loading on a bad payload — surface the raw value and
+  // let downstream validation fail loudly instead.
+  const result = decryptResult(value);
+  return result.ok ? result.value : value;
 }

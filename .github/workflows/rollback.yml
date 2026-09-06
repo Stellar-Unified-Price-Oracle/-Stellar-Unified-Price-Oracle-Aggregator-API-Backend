@@ -77,6 +77,15 @@ jobs:
           mkdir -p ~/.kube
           echo "${KUBECONFIG_VALUE}" > ~/.kube/config
 
+      - name: Freeze aggregator
+        run: |
+          FREEZE_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "FREEZE_TIMESTAMP=${FREEZE_TS}" >> "$GITHUB_ENV"
+          echo "Freeze timestamp: ${FREEZE_TS}"
+          kubectl scale deployment/aggregator \
+            --replicas=0 \
+            -n "stellar-oracle-${{ github.event.inputs.environment }}"
+
       - name: Deploy rollback images
         run: |
           bash scripts/deploy-k8s.sh \

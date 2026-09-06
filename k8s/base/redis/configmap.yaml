@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: stellar-oracle-redis
+  labels:
+    app.kubernetes.io/part-of: stellar-oracle
+    app.kubernetes.io/component: redis
+data:
+  redis-master.conf: |
+    bind 0.0.0.0
+    port 6379
+    requirepass $(REDIS_PASSWORD)
+    masterauth $(REDIS_PASSWORD)
+    appendonly yes
+    appendfsync everysec
+    no-appendfsync-on-rewrite no
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+    maxmemory-policy allkeys-lru
+    save 900 1
+    save 300 10
+    save 60 10000
+    loglevel notice
+
+  redis-replica.conf: |
+    bind 0.0.0.0
+    port 6379
+    requirepass $(REDIS_PASSWORD)
+    masterauth $(REDIS_PASSWORD)
+    replicaof redis-master-0.redis-master.stellar-oracle-redis.svc.cluster.local 6379
+    replica-read-only yes
+    appendonly yes
+    appendfsync everysec
+    no-appendfsync-on-rewrite no
+    maxmemory-policy allkeys-lru
+    loglevel notice
+
+  sentinel.conf: |
+    port 26379
+    sentinel resolve-hostnames yes
+    sentinel announce-hostnames yes
+    sentinel monitor mymaster redis-master-0.redis-master.stellar-oracle-redis.svc.cluster.local 6379 2
+    sentinel auth-pass mymaster $(REDIS_PASSWORD)
+    sentinel down-after-milliseconds mymaster 5000
+    sentinel failover-timeout mymaster 60000
+    sentinel parallel-syncs mymaster 1
+    sentinel deny-scripts-reconfig yes
+    loglevel notice

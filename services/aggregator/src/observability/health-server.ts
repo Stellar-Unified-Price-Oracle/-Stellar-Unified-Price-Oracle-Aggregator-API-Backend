@@ -5,14 +5,23 @@ import { SourceCBStatus } from '../price-aggregation/source-circuit-breaker';
 import { register } from './metrics';
 import { getDailyCounts } from '../infrastructure/cost-model';
 import { getUptimeHistory, getUptimeForPeriod, getLatestUptime } from '../persistence/uptime-history';
+import type { SourceHealthStatus, AggregatedPrice } from '@stellar-oracle/types';
+import type { RegionPriceRecord } from '../replication/price-crdt';
 
-interface HealthSnapshot {
-  sourceHealth: Record<string, any>;
-  lastAggregated: any[];
+export interface CircuitBreakerMetrics {
+  totalSources: number;
+  suspiciousSources: number;
+  suspiciousSourcesList: Array<{ key: string; deviations: number }>;
+}
+
+export interface HealthSnapshot {
+  sourceHealth: Record<string, SourceHealthStatus>;
+  lastAggregated: AggregatedPrice[];
   uptime: number;
+  startupTimeMs?: number;
   region?: { region: string; quarantined: boolean; reason?: string };
-  replicatedPrices?: any[];
-  circuitBreakerMetrics?: any;
+  replicatedPrices?: RegionPriceRecord[];
+  circuitBreakerMetrics?: CircuitBreakerMetrics;
   circuitBreakerStates?: Record<string, SourceCBStatus>;
   // Issue #382 — seconds since last on-chain update, per asset.
   onChainHeartbeat?: Record<string, number>;
@@ -69,6 +78,7 @@ export class HealthServer {
           status: ready ? 'ready' : 'not_ready',
           hasPrices,
           quarantined,
+          startupTimeMs: snap.startupTimeMs ?? 0,
           openCircuitBreakers: openCircuits.length,
         }));
         return;
@@ -104,7 +114,7 @@ export class HealthServer {
 
       if (url.pathname === '/health/uptime') {
         const snap = this.getSnapshot();
-        const uptimeSummary = Object.entries(snap.sourceHealth).map(([name, h]: [string, any]) => ({
+        const uptimeSummary = Object.entries(snap.sourceHealth).map(([name, h]) => ({
           source: name,
           current: {
             healthy: h.healthy,
@@ -120,17 +130,18 @@ export class HealthServer {
 
       if (url.pathname === '/health' || url.pathname === '/') {
         const snap = this.getSnapshot();
-        const allHealthy = Object.values(snap.sourceHealth).every((s: any) => s.healthy);
-        const someHealthy = Object.values(snap.sourceHealth).some((s: any) => s.healthy);
+        const allHealthy = Object.values(snap.sourceHealth).every((s) => s.healthy);
+        const someHealthy = Object.values(snap.sourceHealth).some((s) => s.healthy);
         const status = allHealthy ? 'healthy' : someHealthy ? 'degraded' : 'unhealthy';
 
-        const body: Record<string, any> = {
+        const body: Record<string, unknown> = {
           service: 'stellar-price-oracle-aggregator',
           status,
           uptime: snap.uptime,
+          startupTimeMs: snap.startupTimeMs ?? 0,
           region: snap.region,
           timestamp: Math.floor(Date.now() / 1000),
-          sources: Object.entries(snap.sourceHealth).map(([name, h]: [string, any]) => ({
+          sources: Object.entries(snap.sourceHealth).map(([name, h]) => ({
             name,
             healthy: h.healthy,
             consecutiveFailures: h.consecutiveFailures,

@@ -43,7 +43,7 @@ spec:
           annotations:
             summary: Stellar Oracle projected monthly cost is above 80% of budget
             description: Requested-capacity run rate is {{ $value | humanize }} USD against the 30 USD monthly budget.
-            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/COST_OPTIMIZATION.md
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/cost-optimization.md
         - alert: StellarOracleCostBudgetExceeded
           expr: stellar_oracle:requested_monthly_cost_usd > 30
           for: 15m
@@ -54,4 +54,4 @@ spec:
           annotations:
             summary: Stellar Oracle projected monthly cost exceeds budget
             description: Requested-capacity run rate is {{ $value | humanize }} USD and exceeds the 30 USD monthly budget.
-            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/COST_OPTIMIZATION.md
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/cost-optimization.md

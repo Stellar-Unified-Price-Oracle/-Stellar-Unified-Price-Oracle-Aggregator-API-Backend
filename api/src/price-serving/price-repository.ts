@@ -1,5 +1,13 @@
-import { getDb, isDbAvailable } from '../infrastructure/database';
+import { getDb, isDbAvailable, type PriceHistory } from '../infrastructure/database';
 import { logger } from '../observability/logger';
+
+interface AggregatorStateRow {
+  asset: string;
+  latest_price: string;
+  latest_timestamp: number;
+  confidence: number | string;
+  active_sources: string | null;
+}
 
 export interface PriceRecord {
   asset: string;
@@ -45,7 +53,7 @@ class PriceRepository {
     try {
       const db = await getDb();
       let query = 'SELECT * FROM price_history WHERE asset = $1';
-      const params: any[] = [asset.toUpperCase()];
+      const params: unknown[] = [asset.toUpperCase()];
       let paramIndex = 2;
 
       if (from) {
@@ -63,8 +71,8 @@ class PriceRepository {
       query += ` ORDER BY timestamp DESC LIMIT $${paramIndex}`;
       params.push(limit);
 
-      const result = await db.readQuery(query, params);
-      return result.rows.map((row: any) => ({
+      const result = await db.readQuery<PriceHistory>(query, params);
+      return result.rows.map((row) => ({
         asset: row.asset,
         price: row.price,
         decimals: row.decimals,
@@ -142,13 +150,13 @@ class PriceRepository {
 
       if (result.rows.length === 0) return null;
 
-      const row = result.rows[0];
+      const row = result.rows[0] as unknown as AggregatorStateRow;
       return {
         asset: row.asset,
         latestPrice: row.latest_price,
         latestTimestamp: row.latest_timestamp,
-        confidence: row.confidence,
-        activeSources: JSON.parse(row.active_sources || '[]'),
+        confidence: typeof row.confidence === 'number' ? row.confidence : Number(row.confidence ?? 0),
+        activeSources: JSON.parse(row.active_sources ?? '[]') as string[],
       };
     } catch (error) {
       logger.error('Failed to get aggregator state:', error);
@@ -161,8 +169,8 @@ class PriceRepository {
 
     try {
       const db = await getDb();
-      const result = await db.readQuery('SELECT DISTINCT asset FROM aggregator_state WHERE active = true');
-      return result.rows.map((row: any) => row.asset);
+      const result = await db.readQuery<{ asset: string }>('SELECT DISTINCT asset FROM aggregator_state WHERE active = true');
+      return result.rows.map((row) => row.asset);
     } catch (error) {
       logger.error('Failed to get all assets:', error);
       return [];

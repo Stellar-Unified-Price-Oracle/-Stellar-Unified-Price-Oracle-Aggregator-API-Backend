@@ -9,6 +9,8 @@ Tracked outcomes from chaos experiments. Update after each game day or automated
 | R-001 | pod-kill-api | Pending first run | — | open | — |
 | R-002 | network-partition | Pending first run | — | open | — |
 | R-003 | dns-failure | Pending first run | — | open | — |
+| R-004 | db-primary-failover | Pending first run — observe primary promotion and write continuity | high | open | — |
+| R-005 | region-partition | Pending first run — observe global routing and replication behaviour | critical | open | — |
 
 ## Resolved findings
 

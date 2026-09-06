@@ -10,7 +10,7 @@
  * Uses Vault's KV v2 secrets engine with token-based authentication.
  */
 
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -38,6 +38,7 @@ export interface ApiKeyEntry {
   key: string;
   tier: string;
   role: string;
+  scopes?: string[];
   rateLimitPerMin: number;
   description?: string;
   createdAt: number;
@@ -47,6 +48,7 @@ export interface ApiKeyEntry {
 export interface WebhookSecretEntry {
   webhookId: string;
   secret: string;
+  verificationKey?: string;
   apiKeyPrefix: string;
   createdAt: number;
 }
@@ -148,8 +150,8 @@ export class VaultClient {
         }),
       );
       return resp.data.data.data as T;
-    } catch (err: any) {
-      if (err.response?.status === 404) return null;
+    } catch (err: unknown) {
+      if (err instanceof AxiosError && err.response?.status === 404) return null;
       throw err;
     }
   }
@@ -196,8 +198,8 @@ export class VaultClient {
         }),
       );
       return resp.data.data?.keys ?? [];
-    } catch (err: any) {
-      if (err.response?.status === 404) return [];
+    } catch (err: unknown) {
+      if (err instanceof AxiosError && err.response?.status === 404) return [];
       throw err;
     }
   }
@@ -329,9 +331,9 @@ export class VaultClient {
         { headers: { 'X-Vault-Token': this.vaultToken }, timeout: 10000 },
       );
       this.logAudit('MOUNT_KV', 'sys/mounts/secret');
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Mount may already exist — only log if the error is not "path already in use"
-      if (err.response?.status !== 400) {
+      if (err instanceof AxiosError && err.response?.status !== 400) {
         throw err;
       }
     }
@@ -342,10 +344,10 @@ export class VaultClient {
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
         return await fn();
-      } catch (err: any) {
+      } catch (err: unknown) {
         lastErr = err;
         // Only retry on server/network errors (5xx, ECONNREFUSED, etc.)
-        const status = err.response?.status;
+        const status = err instanceof AxiosError ? err.response?.status : undefined;
         if (status && status < 500 && status !== 429) throw err;
         if (attempt < this.maxRetries) {
           await this.sleep(this.retryBaseMs * 2 ** attempt);

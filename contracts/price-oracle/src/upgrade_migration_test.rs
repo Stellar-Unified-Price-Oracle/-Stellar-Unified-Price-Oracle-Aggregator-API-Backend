@@ -62,7 +62,9 @@ mod upgrade_migration_tests {
         let assets_before = v1.get_assets();
         let xlm_price_before: AssetPrice = v1.get_price(&xlm).expect("xlm price should exist");
         let history_before = v1.get_price_history(&xlm, &1000u32);
-        let multisig_before = storage::get_multisig_config(&env).expect("multisig config should exist");
+        let multisig_before = env
+            .as_contract(&contract_id, || storage::get_multisig_config(&env))
+            .expect("multisig config should exist");
 
         // ── Upgrade to v2 (same contract id, new implementation) ────────────
         env.register_contract(Some(&contract_id), ProxyContract);
@@ -81,10 +83,13 @@ mod upgrade_migration_tests {
         assert_eq!(history_after.get(history_after.len() - 1), history_before.get(history_before.len() - 1));
 
         // Batch nonce survives (read directly — ProxyContract doesn't expose it).
-        assert_eq!(storage::get_batch_nonce(&env), nonce_before);
+        let nonce_after = env.as_contract(&contract_id, || storage::get_batch_nonce(&env));
+        assert_eq!(nonce_after, nonce_before);
 
         // Multi-sig ("governance") config survives.
-        let multisig_after = storage::get_multisig_config(&env).expect("multisig config should survive upgrade");
+        let multisig_after = env
+            .as_contract(&contract_id, || storage::get_multisig_config(&env))
+            .expect("multisig config should survive upgrade");
         assert_eq!(multisig_after.threshold, multisig_before.threshold);
         assert_eq!(multisig_after.signers.len(), multisig_before.signers.len());
     }

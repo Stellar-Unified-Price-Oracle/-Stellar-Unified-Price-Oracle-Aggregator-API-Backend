@@ -42,6 +42,15 @@
 <main>
   <section id="explorer" class="active">
     <div class="card">
+      <h3>Legal &amp; policy</h3>
+      <p class="muted">Review the published operating terms, acceptable-use policy, and service-level commitments before going live.</p>
+      <div class="row">
+        <a href="/portal/terms-of-service.html">Terms of Service</a>
+        <a href="/portal/acceptable-use-policy.html">Acceptable Use Policy</a>
+        <a href="/portal/service-sla.html">Service SLA</a>
+      </div>
+    </div>
+    <div class="card">
       <p class="muted">Interactive Swagger UI for every endpoint, including request/response schemas and live "try it out".</p>
       <iframe src="/api/v1/docs" title="API Explorer"></iframe>
     </div>
@@ -87,6 +96,22 @@
 
   <section id="usage">
     <div class="card">
+      <h3>Quick-start SDKs</h3>
+      <p class="muted">Production-ready examples for the most common client libraries, plus links to the sandbox and live API docs.</p>
+      <ul>
+        <li><a href="https://github.com/Stellar-Unified-Price-Oracle" target="_blank" rel="noreferrer">TypeScript SDK</a></li>
+        <li><a href="https://github.com/Stellar-Unified-Price-Oracle" target="_blank" rel="noreferrer">Python SDK</a></li>
+        <li><a href="https://github.com/Stellar-Unified-Price-Oracle" target="_blank" rel="noreferrer">Go SDK</a></li>
+      </ul>
+      <pre>curl -H 'x-api-key: &lt;api_key&gt;' 'https://api.example.com/api/v1/prices?asset=XLM'</pre>
+    </div>
+    <div class="card">
+      <h3>Sandbox</h3>
+      <p class="muted">Use the isolated sandbox to validate your app before hitting production endpoints.</p>
+      <pre>curl https://sandbox.example/api/v1/sandbox/info
+curl -X POST https://sandbox.example/api/v1/sandbox/reset -H 'x-sandbox-reset-token: &lt;local-token&gt;'</pre>
+    </div>
+    <div class="card">
       <h3>Usage Statistics</h3>
       <p class="muted">Per-key request counts and last-used timestamps, pulled live from the key registry.</p>
       <button class="action" onclick="loadUsage()">Refresh</button>
@@ -97,15 +122,16 @@
     </div>
     <div class="card">
       <h3>Billing</h3>
-      <p class="muted">Tier determines your plan and request allowance. Contact sales to upgrade.</p>
+      <p class="muted">The fee schedule is tied to the API key tier, with monthly usage reconciled against the key registry before invoicing.</p>
       <table>
-        <thead><tr><th>Tier</th><th>Rate limit (req/min)</th></tr></thead>
+        <thead><tr><th>Tier</th><th>Access</th><th>Billing</th></tr></thead>
         <tbody>
-          <tr><td>free</td><td>60</td></tr>
-          <tr><td>pro</td><td>600</td></tr>
-          <tr><td>enterprise</td><td>6000</td></tr>
+          <tr><td>free</td><td>Sandbox / test traffic</td><td>No direct charge</td></tr>
+          <tr><td>pro</td><td>Production usage</td><td>Metered monthly invoice</td></tr>
+          <tr><td>enterprise</td><td>Dedicated capacity</td><td>Contract-based pricing</td></tr>
         </tbody>
       </table>
+      <p class="muted"><a href="/portal/service-sla.html">SLA</a> and <a href="/portal/terms-of-service.html">terms</a> apply to all paid plans.</p>
     </div>
   </section>
 </main>

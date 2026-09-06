@@ -25,6 +25,25 @@ export class AnomalyDetector {
     this.configs.set(asset, { ...DEFAULT_CONFIG, ...config });
   }
 
+  applyRuntimeConfig(asset: string): void {
+    const config = {
+      windowSize: Number(process.env[`ANOMALY_WINDOW_SIZE_${asset.toUpperCase()}`] ?? process.env.ANOMALY_WINDOW_SIZE ?? DEFAULT_CONFIG.windowSize),
+      zScoreThreshold: Number(process.env[`ANOMALY_ZSCORE_THRESHOLD_${asset.toUpperCase()}`] ?? process.env.ANOMALY_ZSCORE_THRESHOLD ?? DEFAULT_CONFIG.zScoreThreshold),
+      movingAverageDeviationPercent: Number(process.env[`ANOMALY_MOVING_AVERAGE_DEVIATION_${asset.toUpperCase()}`] ?? process.env.ANOMALY_MOVING_AVERAGE_DEVIATION ?? DEFAULT_CONFIG.movingAverageDeviationPercent),
+      volatilityMultiplier: Number(process.env[`ANOMALY_VOLATILITY_MULTIPLIER_${asset.toUpperCase()}`] ?? process.env.ANOMALY_VOLATILITY_MULTIPLIER ?? DEFAULT_CONFIG.volatilityMultiplier),
+    };
+
+    this.setConfig(asset, config);
+  }
+
+  getConfigSummary(asset: string): { asset: string; config: AnomalyConfig; falsePositiveRate: number } {
+    return {
+      asset,
+      config: this.getConfig(asset),
+      falsePositiveRate: this.getFalsePositiveRate(asset),
+    };
+  }
+
   private getConfig(asset: string): AnomalyConfig {
     return this.configs.get(asset) ?? DEFAULT_CONFIG;
   }
@@ -73,7 +92,10 @@ export class AnomalyDetector {
     if (anomalyDetections.length === 0) return null;
 
     const highest = anomalyDetections.reduce((a, b) => (a.score > b.score ? a : b));
-    logger.warn(`[AnomalyDetector] ${asset}: anomaly detected via ${highest.method} (score=${highest.score.toFixed(3)}) — ${highest.details}`);
+    const falsePositiveRate = this.getFalsePositiveRate(asset);
+    logger.warn(
+      `[AnomalyDetector] ${asset}: anomaly detected via ${highest.method} (score=${highest.score.toFixed(3)}, false_positive_rate=${falsePositiveRate.toFixed(3)}) — ${highest.details}`,
+    );
     return highest;
   }
 

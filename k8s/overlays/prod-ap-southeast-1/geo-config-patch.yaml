@@ -1,0 +1,6 @@
+- op: replace
+  path: /data/REGION_LATENCY_ZONE
+  value: apac
+- op: replace
+  path: /data/FAILOVER_GRACE_PERIOD_MS
+  value: "150"

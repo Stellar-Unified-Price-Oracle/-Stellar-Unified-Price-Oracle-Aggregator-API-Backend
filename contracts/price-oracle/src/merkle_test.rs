@@ -3,13 +3,15 @@ mod merkle_tests {
     use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, String, Vec};
 
     use crate::contract::{PriceOracleContract, PriceOracleContractClient};
-    use crate::merkle::{compute_root, hash_leaf, verify_proof};
+    use crate::merkle::{compute_root, hash_leaf, verify_proof, MAX_PROOF_SIBLINGS};
+    use crate::storage;
     use crate::types::{BatchPriceEntry, MerkleProof};
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
         let env = Env::default();
+        env.mock_all_auths();
         let id = env.register_contract(None, PriceOracleContract);
         let client = PriceOracleContractClient::new(&env, &id);
         let admin = Address::generate(&env);
@@ -290,7 +292,7 @@ mod merkle_tests {
         for (i, e) in entries.iter().enumerate() {
             let proof = MerkleProof {
                 leaf_index: i as u32,
-                siblings: proofs[i as u32].clone(),
+                siblings: proofs.get(i as u32).unwrap().clone(),
             };
             let dp = client.apply_batch_entry(&nonce, e, &proof);
             assert_eq!(dp.asset, e.asset);
@@ -399,6 +401,105 @@ mod merkle_tests {
         assert_eq!(dp.price, 100);
     }
 
+    // ── Issue #385 — replay / DoS resistance ──────────────────────────────────
+
+    #[test]
+    fn test_replayed_batch_nonce_rejected() {
+        let (env, client, _admin, oracle) = setup();
+
+        let entry = make_entry(&env, "XLM", 100_000_000, &oracle);
+        let root = hash_leaf(&env, &entry);
+
+        // First commit succeeds at nonce 0 and moves the nonce to 1.
+        let nonce = client.get_batch_nonce();
+        assert_eq!(nonce, 0u64);
+        assert!(client.try_submit_batch(&oracle, &nonce, &root).is_ok());
+        assert_eq!(client.get_batch_nonce(), 1u64);
+
+        // Replaying the exact same transaction (same nonce + same root) fails
+        // with BatchNonceMismatch — the nonce only moves forward.
+        let replay = client.try_submit_batch(&oracle, &nonce, &root);
+        assert!(replay.is_err());
+    }
+
+    #[test]
+    fn test_stale_root_pruned_after_retention_window() {
+        let (env, client, _admin, oracle) = setup();
+
+        // Commit more batches than storage::RETAINED_BATCH_ROOTS so the oldest
+        // roots are pruned by the watermark-based retention.
+        let total = storage::RETAINED_BATCH_ROOTS + 2;
+        for i in 0..total {
+            let entry = make_entry(&env, "XLM", i as i128, &oracle);
+            let root = hash_leaf(&env, &entry);
+            let nonce = client.get_batch_nonce();
+            client.submit_batch(&oracle, &nonce, &root);
+        }
+        assert_eq!(client.get_batch_nonce(), total);
+
+        // The first batch's root has been pruned — applying its entry fails.
+        let first = make_entry(&env, "XLM", 0, &oracle);
+        let proof = MerkleProof {
+            leaf_index: 0,
+            siblings: Vec::new(&env),
+        };
+        let stale = client.try_apply_batch_entry(&0u64, &first, &proof);
+        assert!(stale.is_err());
+
+        // A recent batch inside the retention window still applies.
+        let last = make_entry(&env, "XLM", (total - 1) as i128, &oracle);
+        let fresh = client.try_apply_batch_entry(&(total - 1), &last, &proof);
+        assert!(fresh.is_ok());
+    }
+
+    #[test]
+    fn test_oversized_batch_proof_rejected() {
+        let (env, client, _admin, oracle) = setup();
+
+        let entry = make_entry(&env, "XLM", 100_000_000, &oracle);
+        let root = hash_leaf(&env, &entry);
+        let nonce = client.get_batch_nonce();
+        client.submit_batch(&oracle, &nonce, &root);
+
+        // A proof with more siblings than merkle::MAX_PROOF_SIBLINGS is
+        // rejected outright, bounding the per-call hashing cost of this
+        // permissionless entry point (Issue #385 gas-griefing bound).
+        let mut oversized: Vec<Bytes> = Vec::new(&env);
+        for i in 0..MAX_PROOF_SIBLINGS + 1 {
+            oversized.push_back(Bytes::from_array(&env, &[i as u8; 32]));
+        }
+        let bad_proof = MerkleProof {
+            leaf_index: 0,
+            siblings: oversized,
+        };
+
+        assert!(client.try_apply_batch_entry(&nonce, &entry, &bad_proof).is_err());
+        assert!(!client.verify_batch_proof(&nonce, &entry, &bad_proof));
+    }
+
+    #[test]
+    fn test_same_leaf_applied_twice_rejected() {
+        let (env, client, _admin, oracle) = setup();
+
+        let entry = make_entry(&env, "XLM", 100_000_000, &oracle);
+        let root = hash_leaf(&env, &entry);
+        let nonce = client.get_batch_nonce();
+        client.submit_batch(&oracle, &nonce, &root);
+
+        let proof = MerkleProof {
+            leaf_index: 0,
+            siblings: Vec::new(&env),
+        };
+
+        // First apply is valid and stores the price.
+        let dp = client.apply_batch_entry(&nonce, &entry, &proof);
+        assert_eq!(dp.price, 100_000_000);
+
+        // Re-applying the same (batch, leaf) pair is rejected so history
+        // cannot be polluted with duplicate entries by anyone with the proof.
+        assert!(client.try_apply_batch_entry(&nonce, &entry, &proof).is_err());
+    }
+
     // ── Unauthorized rejection ────────────────────────────────────────────────
 
     #[test]
@@ -463,6 +564,7 @@ mod merkle_tests {
     #[test]
     fn bench_individual_vs_batch_5_assets() {
         let env = Env::default();
+        env.mock_all_auths();
         let id = env.register_contract(None, PriceOracleContract);
         let client = PriceOracleContractClient::new(&env, &id);
         let admin = Address::generate(&env);
@@ -473,7 +575,7 @@ mod merkle_tests {
         let assets = ["XLM", "BTC", "ETH", "USDC", "USDT"];
 
         // Measure individual submissions
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         for asset in &assets {
             let _ = client.try_submit_price(
                 &oracle,
@@ -483,11 +585,12 @@ mod merkle_tests {
                 &0u64,
             );
         }
-        let individual_cpu = env.budget().cpu_instruction_count();
-        let individual_mem = env.budget().memory_bytes_count();
+        let individual_cpu = env.cost_estimate().budget().cpu_instruction_cost();
+        let individual_mem = env.cost_estimate().budget().memory_bytes_cost();
 
         // Reset and measure batch submission
         let env2 = Env::default();
+        env2.mock_all_auths();
         let id2 = env2.register_contract(None, PriceOracleContract);
         let client2 = PriceOracleContractClient::new(&env2, &id2);
         let admin2 = Address::generate(&env2);
@@ -510,7 +613,7 @@ mod merkle_tests {
         let (root, proofs) = build_tree(&env2, leaves);
         let nonce = client2.get_batch_nonce();
 
-        env2.budget().reset_default();
+        env2.cost_estimate().budget().reset_default();
         client2.submit_batch(&oracle2, &nonce, &root);
         for i in 0..entries.len() {
             let proof = MerkleProof {
@@ -519,8 +622,8 @@ mod merkle_tests {
             };
             let _ = client2.try_apply_batch_entry(&nonce, &entries.get(i).unwrap(), &proof);
         }
-        let batch_cpu = env2.budget().cpu_instruction_count();
-        let batch_mem = env2.budget().memory_bytes_count();
+        let batch_cpu = env2.cost_estimate().budget().cpu_instruction_cost();
+        let batch_mem = env2.cost_estimate().budget().memory_bytes_cost();
 
         println!(
             "\n[BENCH] 5-asset individual: cpu={individual_cpu}, mem={individual_mem}"
@@ -529,7 +632,7 @@ mod merkle_tests {
         println!(
             "[BENCH] CPU saving: {}%",
             if individual_cpu > 0 {
-                (100u64.saturating_sub(batch_cpu * 100 / individual_cpu))
+                100u64.saturating_sub(batch_cpu * 100 / individual_cpu)
             } else {
                 0
             }

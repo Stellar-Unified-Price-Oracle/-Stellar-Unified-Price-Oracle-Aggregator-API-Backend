@@ -1,14 +1,25 @@
 import { Request, Response, NextFunction } from 'express';
 
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/g;
+
+// Strip C0 control chars (\u0000-\u001F) and DEL (\u007F). Implemented as a
+// char-code filter (not a regex) so the `no-control-regex` lint rule is satisfied.
+function stripControlChars(value: string): string {
+  let out = '';
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code >= 0x20 && code !== 0x7f) out += value[i];
+  }
+  return out;
+}
 
 function sanitizeString(value: string): string {
-  return value
-    .replace(/<[^>]*>/g, '')
-    .replace(/[<>"'`;\\]/g, '')
-    .replace(CONTROL_CHARS_RE, '')
-    .trim();
+  // Remove control chars BEFORE trimming so trailing whitespace is still
+  // collapsed when the last remaining segment is a control character.
+  const decontrolled = stripControlChars(
+    value.replace(/<[^>]*>/g, '').replace(/[<>"'`;\\]/g, ''),
+  );
+  return decontrolled.trim();
 }
 
 function sanitizeValue(value: unknown): unknown {

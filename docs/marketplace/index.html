@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stellar Oracle Marketplace</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #09111b;
+        --panel: #111b27;
+        --panel-alt: #0d1723;
+        --line: #1e2c3b;
+        --text: #edf4ff;
+        --muted: #9db0c6;
+        --accent: #6ea8fe;
+        --accent-strong: #8dd3ff;
+        --success: #76d7a2;
+        --warning: #ffbf69;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.6;
+      }
+      a { color: var(--accent-strong); }
+      header {
+        background: linear-gradient(180deg, #0f1b2a, #0d1724);
+        border-bottom: 1px solid var(--line);
+      }
+      .container {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 32px 24px 64px;
+      }
+      .topbar {
+        display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+      }
+      .brand {
+        font-size: clamp(1.25rem, 2vw, 2rem);
+        font-weight: 700;
+        margin: 0;
+      }
+      .nav {
+        display: flex; gap: 16px; flex-wrap: wrap; align-items: center; font-size: 0.95rem; color: var(--muted);
+      }
+      .hero {
+        display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 22px; margin-top: 32px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 20px 22px;
+      }
+      .kicker { color: var(--accent-strong); font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; }
+      h1, h2, h3 { margin-top: 0; }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 18px;
+        margin-top: 24px;
+      }
+      .cta-row {
+        display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px;
+      }
+      .button {
+        display: inline-block;
+        padding: 10px 14px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #122033;
+        color: var(--text);
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .button.primary {
+        background: linear-gradient(135deg, #1d4ed8, #3b82f6);
+        border-color: transparent;
+      }
+      code, pre {
+        font-family: "SFMono-Regular", Consolas, monospace;
+      }
+      pre {
+        overflow-x: auto;
+        background: var(--panel-alt);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px;
+        color: var(--text);
+      }
+      ul { padding-left: 20px; }
+      .meta {
+        color: var(--muted);
+        font-size: 0.83rem;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(110,168,254,0.1);
+        color: var(--accent-strong);
+        font-size: 0.72rem;
+      }
+      @media (max-width: 760px) {
+        .hero { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="container topbar">
+        <div>
+          <div class="kicker">Stellar Unified Price Oracle</div>
+          <p class="brand">Developer marketplace</p>
+        </div>
+        <nav class="nav" aria-label="Marketplace navigation">
+          <a href="#overview">Overview</a>
+          <a href="#sdk">SDKs</a>
+          <a href="#sandbox">Sandbox</a>
+          <a href="#examples">Examples</a>
+          <a href="/api/v1/docs" target="_blank" rel="noreferrer">API docs</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="hero" id="overview">
+        <article class="panel">
+          <div class="kicker">Launch-ready</div>
+          <h1>Build against the sandbox first, then ship to production.</h1>
+          <p class="meta">
+            The developer portal gives integrators a single place to explore the real API, review examples,
+            request keys, and validate against the isolated sandbox environment before touching production feeds.
+          </p>
+          <div class="cta-row">
+            <a class="button primary" href="/api/v1/docs" target="_blank" rel="noreferrer">Open API explorer</a>
+            <a class="button" href="/portal" target="_blank" rel="noreferrer">Portal dashboard</a>
+          </div>
+        </article>
+
+        <aside class="panel">
+          <h3>What is included</h3>
+          <ul>
+            <li>Interactive OpenAPI explorer</li>
+            <li>SDK and code snippets</li>
+            <li>Sandbox and reset endpoints</li>
+            <li>Key management and usage tracking</li>
+          </ul>
+          <div class="pill">Time-to-first-call: optimized</div>
+        </aside>
+      </section>
+
+      <section class="grid" id="sdk">
+        <article class="panel">
+          <h3>SDKs</h3>
+          <ul>
+            <li><a href="https://github.com/Stellar-Unified-Price-Oracle" target="_blank" rel="noreferrer">TypeScript SDK</a></li>
+            <li><a href="https://github.com/Stellar-Unified-Price-Oracle" target="_blank" rel="noreferrer">Python SDK</a></li>
+            <li><a href="https://github.com/Stellar-Unified-Price-Oracle" target="_blank" rel="noreferrer">Go SDK</a></li>
+          </ul>
+        </article>
+
+        <article class="panel">
+          <h3>Key management</h3>
+          <p class="meta">Create, rotate, and revoke API keys from the admin portal while keeping the credentials separate from production secrets.</p>
+          <a href="/portal" class="button" target="_blank" rel="noreferrer">Manage keys</a>
+        </article>
+
+        <article class="panel">
+          <h3>Production readiness</h3>
+          <p class="meta">The portal surfaces the same API schema used by the live system so integrators can move from prototype to production without a rework.</p>
+        </article>
+      </section>
+
+      <section class="panel" id="sandbox" style="margin-top: 24px;">
+        <h2>Sandbox environment</h2>
+        <p class="meta">The sandbox is read-only by default and is intentionally isolated from production resources, keys, and billing data.</p>
+        <pre><code>curl https://sandbox.example/api/v1/sandbox/info
+curl -X POST https://sandbox.example/api/v1/sandbox/reset \
+  -H 'x-sandbox-reset-token: &lt;local-token&gt;'</code></pre>
+        <p>Resetting the sandbox invalidates the in-memory cache and repopulates the deterministic fixtures used by the read-only endpoints.</p>
+      </section>
+
+      <section class="panel" id="examples" style="margin-top: 24px;">
+        <h2>API examples</h2>
+        <pre><code>curl -H 'x-api-key: &lt;api_key&gt;' \
+  'https://api.example.com/api/v1/prices?asset=XLM'
+
+curl -H 'x-api-key: &lt;api_key&gt;' \
+  'https://api.example.com/api/v1/history/XLM?limit=10'
+
+const client = new OracleClient({ apiKey: process.env.API_KEY });
+const price = await client.getPrice('XLM');</code></pre>
+      </section>
+    </main>
+  </body>
+</html>

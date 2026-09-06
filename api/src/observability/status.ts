@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { uptimeTracker } from './uptime-tracker';
+import type { Component, Incident } from './uptime-tracker';
 
 const router = Router();
 
@@ -19,10 +20,11 @@ router.get('/', (req: Request, res: Response) => {
   const components = uptimeTracker.getComponents();
   const incidents = uptimeTracker.getIncidents(20);
   const overall = uptimeTracker.overallStatus();
+  const disclosure = getIncidentDisclosurePolicy();
 
   if (req.accepts('html')) {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(renderHtml(overall, components, incidents));
+    res.send(renderHtml(overall, components, incidents, disclosure));
     return;
   }
 
@@ -31,6 +33,7 @@ router.get('/', (req: Request, res: Response) => {
     statusLabel: STATUS_LABEL[overall],
     components,
     incidents,
+    disclosure,
     generatedAt: Math.floor(Date.now() / 1000),
   });
 });
@@ -39,11 +42,12 @@ function renderHtml(
   overall: string,
   components: ReturnType<typeof uptimeTracker.getComponents>,
   incidents: ReturnType<typeof uptimeTracker.getIncidents>,
+  disclosure: ReturnType<typeof getIncidentDisclosurePolicy>,
 ): string {
   const color = STATUS_COLOR[overall] ?? '#95a5a6';
   const label = STATUS_LABEL[overall] ?? overall;
 
-  const componentRows = components.map((c: any) => {
+  const componentRows = components.map((c: Component) => {
     const dot = STATUS_COLOR[c.status] ?? '#95a5a6';
     const updated = c.lastCheckedAt
       ? new Date(c.lastCheckedAt * 1000).toISOString()
@@ -59,7 +63,7 @@ function renderHtml(
 
   const incidentItems = incidents.length === 0
     ? '<p style="color:#666;font-style:italic">No incidents in the last 30 days.</p>'
-    : incidents.map((inc: any) => {
+    : incidents.map((inc: Incident) => {
       const started = new Date(inc.startedAt * 1000).toISOString();
       const resolved = inc.resolvedAt ? new Date(inc.resolvedAt * 1000).toISOString() : null;
       const badge = inc.resolvedAt
@@ -74,7 +78,7 @@ function renderHtml(
           <div style="font-size:0.85em;color:#666">
             Component: ${esc(inc.component)} &bull; Started: ${started}${resolved ? ` &bull; Resolved: ${resolved}` : ''}
           </div>
-          ${inc.updates.map((u: any) => `<div style="margin-top:8px;font-size:0.9em;color:#444;padding-left:8px;border-left:3px solid #ddd">${new Date(u.timestamp * 1000).toISOString()} — ${esc(u.message)}</div>`).join('')}
+          ${inc.updates.map((u) => `<div style="margin-top:8px;font-size:0.9em;color:#444;padding-left:8px;border-left:3px solid #ddd">${new Date(u.timestamp * 1000).toISOString()} — ${esc(u.message)}</div>`).join('')}
         </div>`;
     }).join('');
 
@@ -99,6 +103,7 @@ function renderHtml(
     td{padding:10px 0;border-bottom:1px solid #f0f0f0;vertical-align:middle}
     tr:last-child td{border:none}
     footer{text-align:center;font-size:0.8em;color:#aaa;margin:32px 0;padding-bottom:32px}
+    .policy{font-size:0.95em;line-height:1.6;color:#444}
   </style>
 </head>
 <body>
@@ -114,6 +119,14 @@ function renderHtml(
         <thead><tr><th>Component</th><th>Status</th><th>Uptime (24 h)</th><th>Last checked</th></tr></thead>
         <tbody>${componentRows}</tbody>
       </table>`}
+    </div>
+    <div class="card">
+      <h2>Incident Disclosure Policy</h2>
+      <div class="policy">
+        <p>${esc(disclosure.summary)}</p>
+        <p><strong>Notification path:</strong> ${esc(disclosure.consumerNotificationPath)}</p>
+        <p><strong>Timelines:</strong> ${Object.entries(disclosure.timeliness).map(([level, value]) => `${esc(level)}: ${esc(String(value))}`).join(' · ')}</p>
+      </div>
     </div>
     <div class="card">
       <h2>Incident History</h2>

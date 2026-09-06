@@ -1,0 +1,244 @@
+services:
+  redis-master:
+    image: redis:7.2-alpine
+    container_name: redis-master
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-redis-secret}
+      --masterauth ${REDIS_PASSWORD:-redis-secret}
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory-policy allkeys-lru
+      --loglevel notice
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-master-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - "CMD"
+        - "redis-cli"
+        - "-a"
+        - "${REDIS_PASSWORD:-redis-secret}"
+        - "ping"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - redis-ha-net
+
+  redis-replica-1:
+    image: redis:7.2-alpine
+    container_name: redis-replica-1
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-redis-secret}
+      --masterauth ${REDIS_PASSWORD:-redis-secret}
+      --replicaof redis-master 6379
+      --replica-read-only yes
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory-policy allkeys-lru
+      --loglevel notice
+    volumes:
+      - redis-replica-1-data:/data
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD"
+        - "redis-cli"
+        - "-a"
+        - "${REDIS_PASSWORD:-redis-secret}"
+        - "ping"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - redis-ha-net
+
+  redis-replica-2:
+    image: redis:7.2-alpine
+    container_name: redis-replica-2
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-redis-secret}
+      --masterauth ${REDIS_PASSWORD:-redis-secret}
+      --replicaof redis-master 6379
+      --replica-read-only yes
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory-policy allkeys-lru
+      --loglevel notice
+    volumes:
+      - redis-replica-2-data:/data
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD"
+        - "redis-cli"
+        - "-a"
+        - "${REDIS_PASSWORD:-redis-secret}"
+        - "ping"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - redis-ha-net
+
+  redis-sentinel-1:
+    image: redis:7.2-alpine
+    container_name: redis-sentinel-1
+    command: >
+      redis-sentinel /etc/redis/sentinel.conf
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis-secret}
+    volumes:
+      - redis-sentinel-1-data:/data
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_healthy
+      redis-replica-2:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD"
+        - "redis-cli"
+        - "-p"
+        - "26379"
+        - "ping"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    networks:
+      - redis-ha-net
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /etc/redis
+        cat > /etc/redis/sentinel.conf << EOF
+        port 26379
+        sentinel monitor mymaster redis-master 6379 2
+        sentinel auth-pass mymaster ${REDIS_PASSWORD:-redis-secret}
+        sentinel down-after-milliseconds mymaster 5000
+        sentinel failover-timeout mymaster 60000
+        sentinel parallel-syncs mymaster 1
+        sentinel resolve-hostnames yes
+        sentinel announce-hostnames yes
+        loglevel notice
+        EOF
+        redis-sentinel /etc/redis/sentinel.conf
+
+  redis-sentinel-2:
+    image: redis:7.2-alpine
+    container_name: redis-sentinel-2
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_healthy
+      redis-replica-2:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD"
+        - "redis-cli"
+        - "-p"
+        - "26379"
+        - "ping"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    networks:
+      - redis-ha-net
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /etc/redis
+        cat > /etc/redis/sentinel.conf << EOF
+        port 26379
+        sentinel monitor mymaster redis-master 6379 2
+        sentinel auth-pass mymaster ${REDIS_PASSWORD:-redis-secret}
+        sentinel down-after-milliseconds mymaster 5000
+        sentinel failover-timeout mymaster 60000
+        sentinel parallel-syncs mymaster 1
+        sentinel resolve-hostnames yes
+        sentinel announce-hostnames yes
+        loglevel notice
+        EOF
+        redis-sentinel /etc/redis/sentinel.conf
+    volumes:
+      - redis-sentinel-2-data:/data
+
+  redis-sentinel-3:
+    image: redis:7.2-alpine
+    container_name: redis-sentinel-3
+    restart: unless-stopped
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica-1:
+        condition: service_healthy
+      redis-replica-2:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD"
+        - "redis-cli"
+        - "-p"
+        - "26379"
+        - "ping"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    networks:
+      - redis-ha-net
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /etc/redis
+        cat > /etc/redis/sentinel.conf << EOF
+        port 26379
+        sentinel monitor mymaster redis-master 6379 2
+        sentinel auth-pass mymaster ${REDIS_PASSWORD:-redis-secret}
+        sentinel down-after-milliseconds mymaster 5000
+        sentinel failover-timeout mymaster 60000
+        sentinel parallel-syncs mymaster 1
+        sentinel resolve-hostnames yes
+        sentinel announce-hostnames yes
+        loglevel notice
+        EOF
+        redis-sentinel /etc/redis/sentinel.conf
+    volumes:
+      - redis-sentinel-3-data:/data
+
+volumes:
+  redis-master-data:
+  redis-replica-1-data:
+  redis-replica-2-data:
+  redis-sentinel-1-data:
+  redis-sentinel-2-data:
+  redis-sentinel-3-data:
+
+networks:
+  redis-ha-net:
+    name: stellar-oracle-redis-ha

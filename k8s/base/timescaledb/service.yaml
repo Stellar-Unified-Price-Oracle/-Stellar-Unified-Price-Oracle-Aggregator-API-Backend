@@ -4,10 +4,32 @@ metadata:
   name: timescaledb
   labels:
     app: timescaledb
+    role: primary
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
 spec:
   selector:
     app: timescaledb
+    role: primary
   ports:
     - name: postgres
       port: 5432
       targetPort: postgres
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: timescaledb-replica
+  labels:
+    app: timescaledb
+    role: replica
+spec:
+  selector:
+    app: timescaledb
+    role: replica
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+  type: ClusterIP

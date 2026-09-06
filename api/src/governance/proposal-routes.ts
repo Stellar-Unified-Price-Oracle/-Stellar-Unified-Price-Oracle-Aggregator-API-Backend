@@ -25,10 +25,10 @@
 import { Router, Request, Response } from 'express';
 import { adminAuthMiddleware } from './auth';
 import { auditLog } from './audit-logger';
-import { logger } from '../observability/logger';
 import * as proposalService from './proposal-service';
-import type { ProposalAction } from './proposal-types';
+import type { ProposalAction, ProposalStatus } from './proposal-types';
 import { formatAction } from './proposal-types';
+import { sendError, sendErrorResponse } from '../infrastructure/error';
 
 const ADMIN_KEY_PREFIX = process.env.ADMIN_KEY_PREFIX || 'admin_';
 const router = Router();
@@ -68,8 +68,30 @@ function validateAction(action: unknown): action is ProposalAction {
   }
 }
 
-function errorResponse(res: Response, status: number, code: string, message: string): void {
-  res.status(status).json({ success: false, error: { code, message } });
+const VALID_STATUSES = new Set<ProposalStatus>([
+  'Active', 'Queued', 'Ready', 'Executed', 'Defeated', 'Cancelled',
+]);
+
+function parseProposalStatus(value: unknown): ProposalStatus | undefined {
+  return typeof value === 'string' && VALID_STATUSES.has(value as ProposalStatus)
+    ? (value as ProposalStatus)
+    : undefined;
+}
+
+function messageOf(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  return 'Internal error';
+}
+
+const VALID_STATUSES = new Set<ProposalStatus>([
+  'Active', 'Queued', 'Ready', 'Executed', 'Defeated', 'Cancelled',
+]);
+
+function parseProposalStatus(value: unknown): ProposalStatus | undefined {
+  return typeof value === 'string' && VALID_STATUSES.has(value as ProposalStatus)
+    ? (value as ProposalStatus)
+    : undefined;
 }
 
 function callerAddress(req: Request): string {
@@ -84,12 +106,12 @@ router.get('/multisig/config', async (_req: Request, res: Response) => {
   try {
     const config = await proposalService.getMultiSigConfig();
     if (!config) {
-      return errorResponse(res, 404, 'NOT_INITIALIZED', 'Multi-sig has not been initialized');
+      return sendErrorResponse(res, 404, 'NOT_INITIALIZED', 'Multi-sig has not been initialized', { path: '/governance/multisig/config' });
     }
     res.json({ success: true, data: config });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to fetch multi-sig config', err);
-    errorResponse(res, 500, 'INTERNAL', err.message || 'Internal error');
+    errorResponse(res, 500, 'INTERNAL', messageOf(err) || 'Internal error');
   }
 });
 
@@ -99,10 +121,10 @@ router.post('/multisig/proposals', async (req: Request, res: Response) => {
   try {
     const { action, caller } = req.body;
     if (!action) {
-      return errorResponse(res, 400, 'INVALID_REQUEST', '"action" is required');
+      return sendErrorResponse(res, 400, 'INVALID_REQUEST', '"action" is required', { path: '/governance/multisig/proposals', method: 'POST' });
     }
     if (!validateAction(action)) {
-      return errorResponse(res, 400, 'INVALID_ACTION', 'Invalid or unsupported proposal action');
+      return sendErrorResponse(res, 400, 'INVALID_ACTION', 'Invalid or unsupported proposal action', { path: '/governance/multisig/proposals', method: 'POST' });
     }
 
     const proposal = await proposalService.createMultiSigProposal(
@@ -116,9 +138,9 @@ router.post('/multisig/proposals', async (req: Request, res: Response) => {
     });
 
     res.status(201).json({ success: true, data: proposal });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to create multi-sig proposal', err);
-    errorResponse(res, 400, err.message, err.message || 'Failed to create proposal');
+    errorResponse(res, 400, messageOf(err), messageOf(err) || 'Failed to create proposal');
   }
 });
 
@@ -130,32 +152,32 @@ router.get('/multisig/proposals', async (req: Request, res: Response) => {
       limit: parseInt(req.query.limit as string, 10) || 20,
     });
     res.json({ success: true, data: result });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to list multi-sig proposals', err);
-    errorResponse(res, 500, 'INTERNAL', err.message || 'Internal error');
+    errorResponse(res, 500, 'INTERNAL', messageOf(err) || 'Internal error');
   }
 });
 
 router.get('/multisig/proposals/:id', async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) return errorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id');
+    if (isNaN(id)) return sendErrorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id', { path: '/governance/multisig/proposals/:id', method: 'GET' });
 
     const proposal = await proposalService.getMultiSigProposal(id);
     if (!proposal) {
-      return errorResponse(res, 404, 'NOT_FOUND', `Proposal ${id} not found`);
+      return sendErrorResponse(res, 404, 'NOT_FOUND', `Proposal ${id} not found`, { path: '/governance/multisig/proposals/:id', method: 'GET' });
     }
     res.json({ success: true, data: proposal });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to fetch multi-sig proposal', err);
-    errorResponse(res, 500, 'INTERNAL', err.message || 'Internal error');
+    errorResponse(res, 500, 'INTERNAL', messageOf(err) || 'Internal error');
   }
 });
 
 router.post('/multisig/proposals/:id/approve', async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) return errorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id');
+    if (isNaN(id)) return sendErrorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id', { path: '/governance/multisig/proposals/:id/approve', method: 'POST' });
 
     const proposal = await proposalService.approveProposal(
       req.body.caller || callerAddress(req),
@@ -168,16 +190,16 @@ router.post('/multisig/proposals/:id/approve', async (req: Request, res: Respons
     });
 
     res.json({ success: true, data: proposal });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to approve multi-sig proposal', err);
-    errorResponse(res, 400, err.message, err.message || 'Failed to approve');
+    errorResponse(res, 400, messageOf(err), messageOf(err) || 'Failed to approve');
   }
 });
 
 router.post('/multisig/proposals/:id/execute', async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) return errorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id');
+    if (isNaN(id)) return sendErrorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id', { path: '/governance/multisig/proposals/:id/execute', method: 'POST' });
 
     const proposal = await proposalService.executeMultiSigProposal(
       req.body.caller || callerAddress(req),
@@ -188,9 +210,9 @@ router.post('/multisig/proposals/:id/execute', async (req: Request, res: Respons
     });
 
     res.json({ success: true, data: proposal });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to execute multi-sig proposal', err);
-    errorResponse(res, 400, err.message, err.message || 'Failed to execute');
+    errorResponse(res, 400, messageOf(err), messageOf(err) || 'Failed to execute');
   }
 });
 
@@ -200,12 +222,12 @@ router.get('/config', async (_req: Request, res: Response) => {
   try {
     const config = await proposalService.getGovernanceConfig();
     if (!config) {
-      return errorResponse(res, 404, 'NOT_INITIALIZED', 'Governance has not been initialized');
+      return sendErrorResponse(res, 404, 'NOT_INITIALIZED', 'Governance has not been initialized', { path: '/governance/config', method: 'GET' });
     }
     res.json({ success: true, data: config });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to fetch governance config', err);
-    errorResponse(res, 500, 'INTERNAL', err.message || 'Internal error');
+    errorResponse(res, 500, 'INTERNAL', messageOf(err) || 'Internal error');
   }
 });
 
@@ -215,13 +237,13 @@ router.post('/proposals', async (req: Request, res: Response) => {
   try {
     const { action, description } = req.body;
     if (!action) {
-      return errorResponse(res, 400, 'INVALID_REQUEST', '"action" is required');
+      return sendErrorResponse(res, 400, 'INVALID_REQUEST', '"action" is required', { path: '/governance/proposals', method: 'POST' });
     }
     if (!validateAction(action)) {
-      return errorResponse(res, 400, 'INVALID_ACTION', 'Invalid or unsupported proposal action');
+      return sendErrorResponse(res, 400, 'INVALID_ACTION', 'Invalid or unsupported proposal action', { path: '/governance/proposals', method: 'POST' });
     }
     if (!description || typeof description !== 'string') {
-      return errorResponse(res, 400, 'INVALID_REQUEST', '"description" string is required');
+      return sendErrorResponse(res, 400, 'INVALID_REQUEST', '"description" string is required', { path: '/governance/proposals', method: 'POST' });
     }
 
     const proposal = await proposalService.createGovernanceProposal(
@@ -235,51 +257,51 @@ router.post('/proposals', async (req: Request, res: Response) => {
     });
 
     res.status(201).json({ success: true, data: proposal });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to create governance proposal', err);
-    errorResponse(res, 400, err.message, err.message || 'Failed to create proposal');
+    errorResponse(res, 400, messageOf(err), messageOf(err) || 'Failed to create proposal');
   }
 });
 
 router.get('/proposals', async (req: Request, res: Response) => {
   try {
     const result = await proposalService.listGovernanceProposals({
-      status: req.query.status as any,
+      status: parseProposalStatus(req.query.status),
       proposer: req.query.proposer as string | undefined,
       page: parseInt(req.query.page as string, 10) || 1,
       limit: parseInt(req.query.limit as string, 10) || 20,
     });
     res.json({ success: true, data: result });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to list governance proposals', err);
-    errorResponse(res, 500, 'INTERNAL', err.message || 'Internal error');
+    errorResponse(res, 500, 'INTERNAL', messageOf(err) || 'Internal error');
   }
 });
 
 router.get('/proposals/:id', async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) return errorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id');
+    if (isNaN(id)) return sendErrorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id', { path: '/governance/proposals/:id', method: 'GET' });
 
     const proposal = await proposalService.getGovernanceProposal(id);
     if (!proposal) {
-      return errorResponse(res, 404, 'NOT_FOUND', `Proposal ${id} not found`);
+      return sendErrorResponse(res, 404, 'NOT_FOUND', `Proposal ${id} not found`, { path: '/governance/proposals/:id', method: 'GET' });
     }
     res.json({ success: true, data: proposal });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to fetch governance proposal', err);
-    errorResponse(res, 500, 'INTERNAL', err.message || 'Internal error');
+    errorResponse(res, 500, 'INTERNAL', messageOf(err) || 'Internal error');
   }
 });
 
 router.post('/proposals/:id/vote', async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) return errorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id');
+    if (isNaN(id)) return sendErrorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id', { path: '/governance/proposals/:id/vote', method: 'POST' });
 
     const { support } = req.body;
     if (typeof support !== 'boolean') {
-      return errorResponse(res, 400, 'INVALID_REQUEST', '"support" (boolean) is required');
+      return sendErrorResponse(res, 400, 'INVALID_REQUEST', '"support" (boolean) is required', { path: '/governance/proposals/:id/vote', method: 'POST' });
     }
 
     const proposal = await proposalService.castVote(
@@ -294,30 +316,30 @@ router.post('/proposals/:id/vote', async (req: Request, res: Response) => {
     });
 
     res.json({ success: true, data: proposal });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to cast vote', err);
-    errorResponse(res, 400, err.message, err.message || 'Failed to vote');
+    errorResponse(res, 400, messageOf(err), messageOf(err) || 'Failed to vote');
   }
 });
 
 router.post('/proposals/:id/queue', async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) return errorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id');
+    if (isNaN(id)) return sendErrorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id', { path: '/governance/proposals/:id/queue', method: 'POST' });
 
     const proposal = await proposalService.queueProposal(id);
 
     res.json({ success: true, data: proposal });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to queue proposal', err);
-    errorResponse(res, 400, err.message, err.message || 'Failed to queue');
+    errorResponse(res, 400, messageOf(err), messageOf(err) || 'Failed to queue');
   }
 });
 
 router.post('/proposals/:id/execute', async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) return errorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id');
+    if (isNaN(id)) return sendErrorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id', { path: '/governance/proposals/:id/execute', method: 'POST' });
 
     const proposal = await proposalService.executeGovernanceProposal(id);
 
@@ -327,16 +349,16 @@ router.post('/proposals/:id/execute', async (req: Request, res: Response) => {
     });
 
     res.json({ success: true, data: proposal });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to execute governance proposal', err);
-    errorResponse(res, 400, err.message, err.message || 'Failed to execute');
+    errorResponse(res, 400, messageOf(err), messageOf(err) || 'Failed to execute');
   }
 });
 
 router.post('/proposals/:id/cancel', async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) return errorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id');
+    if (isNaN(id)) return sendErrorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id', { path: '/governance/proposals/:id/cancel', method: 'POST' });
 
     const proposal = await proposalService.cancelProposal(
       req.body.caller || callerAddress(req),
@@ -349,16 +371,16 @@ router.post('/proposals/:id/cancel', async (req: Request, res: Response) => {
     });
 
     res.json({ success: true, data: proposal });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to cancel proposal', err);
-    errorResponse(res, 400, err.message, err.message || 'Failed to cancel');
+    errorResponse(res, 400, messageOf(err), messageOf(err) || 'Failed to cancel');
   }
 });
 
 router.post('/proposals/:id/emergency-execute', async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) return errorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id');
+    if (isNaN(id)) return sendErrorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id', { path: '/governance/proposals/:id/emergency-execute', method: 'POST' });
 
     const proposal = await proposalService.emergencyExecute(
       req.body.caller || callerAddress(req),
@@ -371,24 +393,24 @@ router.post('/proposals/:id/emergency-execute', async (req: Request, res: Respon
     });
 
     res.json({ success: true, data: proposal });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to emergency-execute proposal', err);
-    errorResponse(res, 400, err.message, err.message || 'Failed to emergency-execute');
+    errorResponse(res, 400, messageOf(err), messageOf(err) || 'Failed to emergency-execute');
   }
 });
 
 router.get('/proposals/:id/has-voted', async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) return errorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id');
+    if (isNaN(id)) return sendErrorResponse(res, 400, 'INVALID_ID', 'Invalid proposal id', { path: '/governance/proposals/:id/has-voted', method: 'GET' });
 
     const voter = (req.query.voter as string) || callerAddress(req);
     const voted = await proposalService.hasVoted(id, voter);
 
     res.json({ success: true, data: { proposalId: id, voter: voter.substring(0, 8), hasVoted: voted } });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to check vote', err);
-    errorResponse(res, 500, 'INTERNAL', err.message || 'Internal error');
+    errorResponse(res, 500, 'INTERNAL', messageOf(err) || 'Internal error');
   }
 });
 
@@ -424,9 +446,9 @@ router.get('/summary', async (_req: Request, res: Response) => {
         timestamp: new Date().toISOString(),
       },
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error('Failed to generate governance summary', err);
-    errorResponse(res, 500, 'INTERNAL', err.message || 'Internal error');
+    errorResponse(res, 500, 'INTERNAL', messageOf(err) || 'Internal error');
   }
 });
 

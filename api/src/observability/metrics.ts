@@ -5,6 +5,13 @@ const register = new client.Registry();
 
 client.collectDefaultMetrics({ register });
 
+export const serviceStartupDurationMs = new client.Gauge({
+  name: 'service_startup_duration_ms',
+  help: 'Time from process startup until the service accepts ready traffic',
+  labelNames: ['service'],
+});
+register.registerMetric(serviceStartupDurationMs);
+
 export const httpRequestDuration = new client.Histogram({
   name: 'http_request_duration_seconds',
   help: 'Duration of HTTP requests in seconds',
@@ -213,6 +220,14 @@ export const rateLimitRedisLatency = new client.Histogram({
   buckets: [0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05],
 });
 register.registerMetric(rateLimitRedisLatency);
+
+export const pipelineStageLatencyMs = new client.Histogram({
+  name: 'pipeline_stage_latency_ms',
+  help: 'Latency budget for each stage of the price pipeline in milliseconds',
+  labelNames: ['stage', 'status'],
+  buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000],
+});
+register.registerMetric(pipelineStageLatencyMs);
 
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();

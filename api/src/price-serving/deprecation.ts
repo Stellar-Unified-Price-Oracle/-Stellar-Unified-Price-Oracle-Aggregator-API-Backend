@@ -22,14 +22,14 @@ export function deprecate(options: DeprecationOptions) {
       path: req.path,
       method: req.method,
       sunsetOn: options.sunsetOn,
-      apiKeyId: (req as any).apiKey?.id,
+      apiKeyId: req.apiKey ? req.apiKey.substring(0, 8) : undefined,
       timestamp: Date.now(),
     });
 
     const originalJson = res.json.bind(res);
-    res.json = (body: any) => {
+    res.json = (body: unknown) => {
       if (body && typeof body === 'object') {
-        body.deprecation = {
+        (body as Record<string, unknown>).deprecation = {
           deprecated: true,
           message: options.message || `This endpoint is deprecated and will be removed on ${options.sunsetOn}.`,
           sunset: options.sunsetOn,

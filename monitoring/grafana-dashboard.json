@@ -157,7 +157,11 @@
       "id": 3,
       "options": {
         "legend": {
-          "calcs": ["mean", "max", "min"],
+          "calcs": [
+            "mean",
+            "max",
+            "min"
+          ],
           "displayMode": "table",
           "placement": "right"
         },
@@ -482,7 +486,9 @@
       "id": 8,
       "options": {
         "legend": {
-          "calcs": ["sum"],
+          "calcs": [
+            "sum"
+          ],
           "displayMode": "table",
           "placement": "right"
         },
@@ -503,13 +509,103 @@
       ],
       "title": "Soroban Contract Interactions",
       "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Gas/instruction cost and mainnet resource fee per contract entry point (Issue #378). Requires an exporter that does not exist yet -- see docs/GAS_COST_MODEL.md.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Instructions",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "pluginVersion": "9.2.0",
+      "targets": [
+        {
+          "expr": "sum by (entry_point) (rate(oracle_gas_instructions_total{job=\"aggregator\"}[5m]))",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (entry_point) (rate(oracle_gas_fee_stroops_total{job=\"aggregator\"}[5m]))",
+          "refId": "B"
+        }
+      ],
+      "title": "Mainnet Gas Cost by Entry Point",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",
   "revision": 1,
   "schemaVersion": 37,
   "style": "dark",
-  "tags": ["oracle", "monitoring", "soroban"],
+  "tags": [
+    "oracle",
+    "monitoring",
+    "soroban"
+  ],
   "templating": {
     "list": []
   },

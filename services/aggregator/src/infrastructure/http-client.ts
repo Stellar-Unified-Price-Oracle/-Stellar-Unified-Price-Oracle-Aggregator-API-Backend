@@ -66,10 +66,7 @@ function getClient(): AxiosInstance {
 }
 
 export const httpClient = {
-  // Mirrors axios's default `AxiosResponse<any>` so existing source call-sites
-  // keep their loose `response.data?.x` access patterns.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  get<T = any>(url: string, requestConfig?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+  get<T>(url: string, requestConfig?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
     return getClient().get<T>(url, requestConfig);
   },
 };
