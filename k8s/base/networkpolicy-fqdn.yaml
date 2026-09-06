@@ -1,0 +1,110 @@
+# k8s/base/networkpolicy-fqdn.yaml
+#
+# Cilium CiliumNetworkPolicy for FQDN-based egress allowlisting.
+# Applied in addition to the standard NetworkPolicy; Cilium enforces DNS
+# resolution and blocks any IP that the DNS answer does not include in the
+# policy.  Non-Cilium clusters rely solely on the IP-block rules in
+# networkpolicy.yaml and the prod overlay patch.
+#
+# Requires: Cilium >= 1.14 with DNS proxy enabled.
+
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: aggregator-egress-fqdn
+spec:
+  endpointSelector:
+    matchLabels:
+      app: aggregator
+  egress:
+    # Chainlink data proxy
+    - toFQDNs:
+        - matchName: min-api.cryptocompare.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # Redstone
+    - toFQDNs:
+        - matchName: api.redstone.finance
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # Band Protocol
+    - toFQDNs:
+        - matchName: laozi1.bandchain.org
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # Reflector
+    - toFQDNs:
+        - matchName: api.reflector.xyz
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # Stellar Soroban RPC — testnet
+    - toFQDNs:
+        - matchName: soroban-testnet.stellar.org
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # Stellar Soroban RPC — mainnet
+    - toFQDNs:
+        - matchName: soroban-mainnet.stellar.org
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # Stellar Horizon
+    - toFQDNs:
+        - matchName: horizon.stellar.org
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS (required for FQDN resolution)
+    - toEndpoints:
+        - matchLabels:
+            k8s:k8s-app: kube-dns
+            k8s:io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: api-egress-fqdn
+spec:
+  endpointSelector:
+    matchLabels:
+      app: api
+  egress:
+    # Stellar Soroban RPC — mainnet (webhook delivery, contract reads)
+    - toFQDNs:
+        - matchName: soroban-mainnet.stellar.org
+        - matchName: horizon.stellar.org
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS
+    - toEndpoints:
+        - matchLabels:
+            k8s:k8s-app: kube-dns
+            k8s:io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

@@ -1,0 +1,189 @@
+# k8s/overlays/prod/networkpolicy-egress-patch.yaml
+#
+# Production-only: replace the aggregator and API "allow all external HTTPS"
+# egress rule with explicit IP blocks for each allowlisted oracle FQDN.
+#
+# FQDN → IP block mapping (last resolved 2026-09-03):
+#   min-api.cryptocompare.com  → 185.199.108.0/22  (Cloudflare-proxied)
+#   api.redstone.finance        → 76.76.21.0/24     (Vercel)
+#   laozi1.bandchain.org        → 34.87.0.0/16      (GCP asia-southeast1)
+#   api.reflector.xyz           → 104.21.0.0/16     (Cloudflare)
+#   soroban-testnet.stellar.org → 54.80.0.0/16      (AWS us-east-1 SDF)
+#   soroban-mainnet.stellar.org → 54.80.0.0/16      (AWS us-east-1 SDF)
+#   horizon.stellar.org         → 54.80.0.0/16      (AWS us-east-1 SDF)
+#
+# Run scripts/resolve-oracle-ips.sh to refresh these blocks before each
+# mainnet release.  Add the output as a PR comment and update the blocks here.
+#
+# This manifest is applied as a strategic-merge patch on top of the base
+# aggregator-network-policy and api-network-policy.
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aggregator-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: aggregator
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 4000
+        - protocol: TCP
+          port: 4001
+        - protocol: TCP
+          port: 4002
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 4000
+  egress:
+    # Internal: TimescaleDB
+    - to:
+        - podSelector:
+            matchLabels:
+              app: timescaledb
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Internal: Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
+    # DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
+    # Chainlink proxy — min-api.cryptocompare.com (Cloudflare)
+    - to:
+        - ipBlock:
+            cidr: 185.199.108.0/22
+      ports:
+        - protocol: TCP
+          port: 443
+    # Redstone — api.redstone.finance (Vercel)
+    - to:
+        - ipBlock:
+            cidr: 76.76.21.0/24
+      ports:
+        - protocol: TCP
+          port: 443
+    # Band Protocol — laozi1.bandchain.org (GCP)
+    - to:
+        - ipBlock:
+            cidr: 34.87.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+    # Reflector — api.reflector.xyz (Cloudflare)
+    - to:
+        - ipBlock:
+            cidr: 104.21.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+    # Stellar Foundation — Soroban RPC + Horizon (AWS us-east-1)
+    - to:
+        - ipBlock:
+            cidr: 54.80.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 3001
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    # Internal services
+    - to:
+        - podSelector:
+            matchLabels:
+              app: aggregator
+      ports:
+        - protocol: TCP
+          port: 4000
+        - protocol: TCP
+          port: 4001
+        - protocol: TCP
+          port: 4002
+    - to:
+        - podSelector:
+            matchLabels:
+              app: timescaledb
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 26379
+    # DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
+    # Stellar Foundation (webhook delivery, Soroban contract calls)
+    - to:
+        - ipBlock:
+            cidr: 54.80.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
