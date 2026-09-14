@@ -6,6 +6,7 @@
 use soroban_sdk::{Address, Env, Vec};
 
 use crate::errors::OracleError;
+use crate::events::GovernanceExecuted;
 use crate::storage;
 use crate::types::{MultiSigConfig, MultiSigProposal, ProposalAction};
 
@@ -122,8 +123,11 @@ pub(crate) fn execute_proposal(
     proposal.executed = 1;
     storage::set_multisig_proposal(env, &proposal);
 
-    env.events()
-        .publish(("governance_executed", signer.clone()), proposal_id);
+    GovernanceExecuted {
+        signer: signer.clone(),
+        proposal_id,
+    }
+    .publish(env);
 
     Ok(())
 }

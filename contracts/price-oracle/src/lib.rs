@@ -7,6 +7,7 @@ extern crate std;
 
 pub mod contract;
 mod errors;
+mod events;
 mod governance;
 mod merkle;
 mod multisig;
@@ -17,6 +18,8 @@ mod utils;
 
 #[cfg(test)]
 mod compat_test;
+#[cfg(test)]
+mod events_test;
 #[cfg(test)]
 mod fuzz;
 #[cfg(test)]

@@ -3,6 +3,7 @@
 use soroban_sdk::{token, Address, Bytes, Env, String};
 
 use crate::errors::OracleError;
+use crate::events::{BatchEntryApplied, BatchSubmitted, PriceSubmitted, SourceSlashed, SourceStaked};
 use crate::merkle;
 use crate::storage;
 use crate::types::{BatchPriceEntry, MerkleProof, PriceDataPoint};
@@ -58,8 +59,13 @@ pub(crate) fn submit_price(
     storage::set_latest_price(env, asset, &data_point);
     utils::append_history(env, asset, data_point.clone());
 
-    env.events()
-        .publish(("price_submitted", asset.clone(), source.clone()), (price, timestamp));
+    PriceSubmitted {
+        asset: asset.clone(),
+        source: source.clone(),
+        price,
+        timestamp,
+    }
+    .publish(env);
 
     Ok(data_point)
 }
@@ -102,8 +108,12 @@ pub(crate) fn submit_batch(
     storage::set_batch_root(env, nonce, root);
     let new_nonce = storage::increment_batch_nonce(env);
 
-    env.events()
-        .publish(("batch_submitted", source.clone()), (nonce, root.clone()));
+    BatchSubmitted {
+        source: source.clone(),
+        nonce,
+        root: root.clone(),
+    }
+    .publish(env);
 
     Ok(new_nonce)
 }
@@ -146,10 +156,12 @@ pub(crate) fn apply_batch_entry(
     storage::set_latest_price(env, &entry.asset, &data_point);
     utils::append_history(env, &entry.asset, data_point.clone());
 
-    env.events().publish(
-        ("batch_entry_applied", entry.asset.clone()),
-        (batch_nonce, entry.price),
-    );
+    BatchEntryApplied {
+        asset: entry.asset.clone(),
+        batch_nonce,
+        price: entry.price,
+    }
+    .publish(env);
 
     Ok(data_point)
 }
@@ -179,7 +191,11 @@ pub(crate) fn stake(env: &Env, source: &Address, amount: i128, token: &Address) 
     token_client.transfer(source, &env.current_contract_address(), &amount);
     let current = storage::get_stake(env, source);
     storage::set_stake(env, source, &(current + amount));
-    env.events().publish(("source_staked", source.clone()), amount);
+    SourceStaked {
+        source: source.clone(),
+        amount,
+    }
+    .publish(env);
 }
 
 pub(crate) fn slash(env: &Env, source: &Address, amount: i128, reason: &String) {
@@ -190,8 +206,12 @@ pub(crate) fn slash(env: &Env, source: &Address, amount: i128, reason: &String) 
     storage::set_stake(env, source, &(current - slashed));
     let count = storage::get_slash_count(env, source);
     storage::set_slash_count(env, source, &(count + 1));
-    env.events()
-        .publish(("source_slashed", source.clone(), reason.clone()), slashed);
+    SourceSlashed {
+        source: source.clone(),
+        reason: reason.clone(),
+        slashed,
+    }
+    .publish(env);
 }
 
 pub(crate) fn get_stake_balance(env: &Env, source: &Address) -> i128 {

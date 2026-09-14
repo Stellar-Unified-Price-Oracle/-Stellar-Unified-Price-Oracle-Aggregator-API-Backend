@@ -2,6 +2,10 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 
 use crate::contract::API_VERSION;
 use crate::errors::OracleError;
+use crate::events::{
+    CanaryPromoted, CanarySet, ImplementationUpdated, PriceSubmitted, UpgradeApproved,
+    UpgradeExecuted, UpgradeProposed,
+};
 use crate::storage;
 use crate::types::{AssetPrice, MultiSigConfig, PriceDataPoint, SourceReputation};
 use crate::utils::{append_history, apply_reputation_decay, calculate_usd_price, deviation_exceeds, update_reputation, vec_contains_address};
@@ -74,8 +78,12 @@ impl ProxyContract {
         let eta = env.ledger().timestamp() + UPGRADE_TIMELOCK_SECS;
         storage::set_pending_upgrade(&env, &new_wasm_hash, eta);
 
-        env.events()
-            .publish(("upgrade_proposed", admin), (new_wasm_hash, eta));
+        UpgradeProposed {
+            admin,
+            new_wasm_hash,
+            eta,
+        }
+        .publish(&env);
         Ok(eta)
     }
 
@@ -97,7 +105,7 @@ impl ProxyContract {
         storage::record_upgrade_approval(&env, &signer);
         let count = storage::get_upgrade_approvals(&env).len();
 
-        env.events().publish(("upgrade_approved", signer), count);
+        UpgradeApproved { signer, count }.publish(&env);
         Ok(count)
     }
 
@@ -122,8 +130,11 @@ impl ProxyContract {
         storage::set_contract_version(&env, current_version + 1);
         storage::clear_pending_upgrade(&env);
 
-        env.events()
-            .publish(("upgrade_executed", new_wasm_hash.clone()), current_version + 1);
+        UpgradeExecuted {
+            new_wasm_hash: new_wasm_hash.clone(),
+            version: current_version + 1,
+        }
+        .publish(&env);
 
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
@@ -170,8 +181,11 @@ impl ProxyContract {
             return Err(OracleError::InvalidThreshold);
         }
         storage::set_canary(&env, &canary, traffic_share_bps);
-        env.events()
-            .publish(("canary_set", canary), traffic_share_bps);
+        CanarySet {
+            canary,
+            traffic_share_bps,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -194,8 +208,11 @@ impl ProxyContract {
         storage::set_contract_version(&env, current_version + 1);
         storage::clear_canary(&env);
 
-        env.events()
-            .publish(("canary_promoted", canary), current_version + 1);
+        CanaryPromoted {
+            canary,
+            version: current_version + 1,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -221,10 +238,12 @@ impl ProxyContract {
         let current_version = storage::get_contract_version(&env);
         storage::set_contract_version(&env, current_version + 1);
 
-        env.events().publish(
-            ("implementation_updated", admin),
-            (new_implementation, current_version + 1),
-        );
+        ImplementationUpdated {
+            admin,
+            new_implementation,
+            version: current_version + 1,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -355,8 +374,13 @@ impl ProxyContract {
 
         append_history(&env, &asset, data_point.clone());
 
-        env.events()
-            .publish(("price_submitted", asset, source), (price, timestamp));
+        PriceSubmitted {
+            asset,
+            source,
+            price,
+            timestamp,
+        }
+        .publish(&env);
 
         Ok(data_point)
     }

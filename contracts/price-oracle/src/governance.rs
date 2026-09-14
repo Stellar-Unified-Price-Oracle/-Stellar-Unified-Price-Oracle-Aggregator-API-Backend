@@ -1,6 +1,10 @@
 use soroban_sdk::{contract, contractimpl, Address, Env, String};
 
 use crate::errors::OracleError;
+use crate::events::{
+    GovCancelled, GovQueued, GovVoted, GovernanceEmergencyExecuted, GovernanceProposalExecuted,
+    GovernanceProposed,
+};
 use crate::storage;
 use crate::types::{GovernanceConfig, GovernanceProposal, ProposalAction, ProposalStatus};
 
@@ -122,7 +126,11 @@ impl GovernanceContract {
 
         storage::set_gov_proposal(&env, &proposal);
 
-        env.events().publish(("governance_proposed", proposer), id);
+        GovernanceProposed {
+            proposer,
+            proposal_id: id,
+        }
+        .publish(&env);
 
         Ok(id)
     }
@@ -162,7 +170,12 @@ impl GovernanceContract {
 
         storage::record_vote(&env, proposal_id, &voter, support);
         storage::set_gov_proposal(&env, &proposal);
-        env.events().publish(("gov_voted", proposal_id, voter), support);
+        GovVoted {
+            proposal_id,
+            voter,
+            support,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -179,7 +192,11 @@ impl GovernanceContract {
         match proposal.status {
             ProposalStatus::Queued | ProposalStatus::Ready => {
                 storage::set_gov_proposal(&env, &proposal);
-                env.events().publish(("gov_queued", proposal_id), proposal.execution_time);
+                GovQueued {
+                    proposal_id,
+                    execution_time: proposal.execution_time,
+                }
+                .publish(&env);
                 Ok(())
             }
             // Soroban rolls back all storage writes when a call returns an
@@ -220,10 +237,11 @@ impl GovernanceContract {
 
         apply_action(&env, &proposal.action);
 
-        env.events().publish(
-            ("governance_proposal_executed", proposal_id),
-            env.ledger().timestamp(),
-        );
+        GovernanceProposalExecuted {
+            proposal_id,
+            executed_at: env.ledger().timestamp(),
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -250,7 +268,11 @@ impl GovernanceContract {
 
         proposal.status = ProposalStatus::Cancelled;
         storage::set_gov_proposal(&env, &proposal);
-        env.events().publish(("gov_cancelled", proposal_id, caller), ());
+        GovCancelled {
+            proposal_id,
+            caller,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -282,8 +304,11 @@ impl GovernanceContract {
 
         apply_action(&env, &proposal.action);
 
-        env.events()
-            .publish(("governance_emergency_executed", guardian), proposal_id);
+        GovernanceEmergencyExecuted {
+            guardian,
+            proposal_id,
+        }
+        .publish(&env);
 
         Ok(())
     }
