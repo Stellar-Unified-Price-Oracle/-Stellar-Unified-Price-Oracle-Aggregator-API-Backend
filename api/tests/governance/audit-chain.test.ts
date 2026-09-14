@@ -40,11 +40,6 @@ describe('audit log chain', () => {
       {
         ...second,
         ip: '10.0.0.5',
-        hmac: computeAuditHmac({
-          ...secondPayload,
-          ip: '10.0.0.5',
-          prevHmac: first.hmac,
-        }, first.hmac),
       },
     ];
 

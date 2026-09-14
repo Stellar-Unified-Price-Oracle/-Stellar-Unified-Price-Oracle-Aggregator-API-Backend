@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 
 use crate::contract::API_VERSION;
 use crate::errors::OracleError;
@@ -118,78 +118,14 @@ impl ProxyContract {
             return Err(OracleError::ThresholdNotMet);
         }
 
-        if timelock_secs < MIN_UPGRADE_TIMELOCK_SECS {
-            return Err(OracleError::InvalidThreshold);
-        }
-
-        let mut approvals: Vec<Address> = Vec::new(&env);
-        approvals.push_back(admin);
-
-        storage::set_pending_upgrade(
-            &env,
-            &PendingProxyUpgrade {
-                new_wasm_hash,
-                unlock_time: env.ledger().timestamp() + timelock_secs,
-                approvals,
-            },
-        );
-        Ok(())
-    }
-
-    pub fn approve_upgrade(env: Env, signer: Address) -> Result<(), OracleError> {
-        signer.require_auth();
-
-        let config = storage::get_multisig_config(&env).ok_or(OracleError::MultiSigNotInitialized)?;
-        if !vec_contains_address(&config.signers, &signer) {
-            return Err(OracleError::NotASigner);
-        }
-
-        let mut pending = storage::get_pending_upgrade(&env).ok_or(OracleError::NoPendingUpgrade)?;
-        if vec_contains_address(&pending.approvals, &signer) {
-            return Err(OracleError::AlreadyApproved);
-        }
-        pending.approvals.push_back(signer);
-        storage::set_pending_upgrade(&env, &pending);
-        Ok(())
-    }
-
-    pub fn cancel_upgrade(env: Env, admin: Address) -> Result<(), OracleError> {
-        admin.require_auth();
-        storage::verify_admin(&env, &admin)?;
-        storage::clear_pending_upgrade(&env);
-        Ok(())
-    }
-
-    pub fn get_pending_upgrade(env: Env) -> Option<PendingProxyUpgrade> {
-        storage::get_pending_upgrade(&env)
-    }
-
-    pub fn upgrade_wasm(env: Env, admin: Address) -> Result<(), OracleError> {
-        admin.require_auth();
-        storage::verify_admin(&env, &admin)?;
-
-        let pending = storage::get_pending_upgrade(&env).ok_or(OracleError::NoPendingUpgrade)?;
-
-        if env.ledger().timestamp() < pending.unlock_time {
-            return Err(OracleError::TimeLockNotElapsed);
-        }
-
-        if let Some(config) = storage::get_multisig_config(&env) {
-            if (pending.approvals.len()) < config.threshold {
-                return Err(OracleError::ThresholdNotMet);
-            }
-        }
-
         let current_version = storage::get_contract_version(&env);
         storage::set_contract_version(&env, current_version + 1);
         storage::clear_pending_upgrade(&env);
 
-        env.events().publish(
-            ("upgrade_executed", new_wasm_hash.clone()),
-            current_version + 1,
-        );
+        env.events()
+            .publish(("upgrade_executed", new_wasm_hash.clone()), current_version + 1);
 
-        env.deployer().update_current_contract_wasm(pending.new_wasm_hash);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
     }
 
@@ -197,8 +133,6 @@ impl ProxyContract {
         admin.require_auth();
         storage::verify_admin(&env, &admin)?;
         storage::clear_pending_upgrade(&env);
-        env.events()
-            .publish(("upgrade_cancelled", admin), env.ledger().timestamp());
         Ok(())
     }
 
@@ -263,64 +197,6 @@ impl ProxyContract {
         env.events()
             .publish(("canary_promoted", canary), current_version + 1);
         Ok(())
-    }
-
-    // -------------------------------------------------------------------------
-    // Issue #375 — canary rollout. The canary candidate is a separately
-    // deployed contract address; `resolve_target` lets an off-chain router or
-    // client SDK decide which address to invoke for a given caller so a
-    // configurable share of traffic reaches the candidate before the
-    // canonical WASM upgrade goes out to everyone.
-    // -------------------------------------------------------------------------
-
-    pub fn propose_canary(
-        env: Env,
-        admin: Address,
-        candidate: Address,
-        share_bps: u32,
-    ) -> Result<(), OracleError> {
-        admin.require_auth();
-        storage::verify_admin(&env, &admin)?;
-
-        if share_bps > 10_000 {
-            return Err(OracleError::InvalidThreshold);
-        }
-
-        storage::set_canary_config(&env, &CanaryConfig { candidate, share_bps });
-        env.events().publish(("canary_set", admin), share_bps);
-        Ok(())
-    }
-
-    pub fn clear_canary(env: Env, admin: Address) -> Result<(), OracleError> {
-        admin.require_auth();
-        storage::verify_admin(&env, &admin)?;
-        storage::clear_canary_config(&env);
-        Ok(())
-    }
-
-    pub fn get_canary(env: Env) -> Option<CanaryConfig> {
-        storage::get_canary_config(&env)
-    }
-
-    /// Deterministically route a share of traffic to the canary candidate.
-    /// The same caller always resolves the same way for a given canary
-    /// configuration, avoiding per-call flapping.
-    pub fn resolve_target(env: Env, caller: Address) -> Address {
-        let canonical = storage::get_implementation(&env).unwrap_or_else(|| env.current_contract_address());
-
-        let canary = match storage::get_canary_config(&env) {
-            Some(c) => c,
-            None => return canonical,
-        };
-        if canary.share_bps == 0 {
-            return canonical;
-        }
-
-        if address_bucket(&env, &caller) < canary.share_bps {
-            canary.candidate
-        } else {
-            canonical
-        }
     }
 
     // -------------------------------------------------------------------------

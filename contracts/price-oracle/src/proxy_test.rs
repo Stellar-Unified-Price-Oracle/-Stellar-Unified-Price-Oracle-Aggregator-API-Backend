@@ -8,7 +8,7 @@ mod proxy_tests {
     fn setup() -> (Env, ProxyContractClient<'static>, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, ProxyContract);
+        let contract_id = env.register(ProxyContract, ());
         let client = ProxyContractClient::new(&env, &contract_id);
 
         let admin = <Address as TestAddress>::generate(&env);
@@ -56,6 +56,25 @@ mod proxy_tests {
         env.ledger().with_mut(|l| l.timestamp += 172_800);
 
         assert!(client.try_execute_upgrade(&admin).is_err());
+    }
+
+    // Issue #375 — only addresses in the multi-sig signer set may approve a
+    // queued upgrade, and no signer can approve the same upgrade twice.
+    #[test]
+    fn approve_upgrade_rejects_non_signers_and_double_approval() {
+        let (env, client, admin, _impl) = setup();
+        let signer = <Address as TestAddress>::generate(&env);
+        let stranger = <Address as TestAddress>::generate(&env);
+        let mut signers: Vec<Address> = Vec::new(&env);
+        signers.push_back(signer.clone());
+        client.init_multisig(&admin, &signers, &1u32);
+
+        client.propose_upgrade(&admin, &hash(&env, 4));
+
+        assert!(client.try_approve_upgrade(&stranger).is_err());
+
+        client.approve_upgrade(&signer);
+        assert!(client.try_approve_upgrade(&signer).is_err());
     }
 
     // Issue #375 — quorum + timelock bookkeeping is satisfied once enough

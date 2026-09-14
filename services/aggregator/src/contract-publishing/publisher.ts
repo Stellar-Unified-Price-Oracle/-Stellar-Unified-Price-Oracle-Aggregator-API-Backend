@@ -18,6 +18,7 @@ import {
 } from '../observability/metrics';
 import { AggregatedPrice } from '../infrastructure/types';
 import { contractSubmissionGas, contractSubmissionGasTotal } from '../observability/metrics';
+import { CanaryRollbackGuard, shouldRouteToCanary } from './canary';
 import { SubmissionRetryQueue } from './retry-queue';
 
 interface ContractCallLog {

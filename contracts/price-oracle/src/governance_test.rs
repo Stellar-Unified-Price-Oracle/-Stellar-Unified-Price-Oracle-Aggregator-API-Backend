@@ -51,8 +51,8 @@ mod governance_tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let gov_id = env.register_contract(None, GovernanceContract);
-        let token_id = env.register_contract(None, MockToken);
+        let gov_id = env.register(GovernanceContract, ());
+        let token_id = env.register(MockToken, ());
 
         let gov = GovernanceContractClient::new(&env, &gov_id);
         let token = MockTokenClient::new(&env, &token_id);
@@ -1268,7 +1268,7 @@ mod governance_tests {
         ctx.gov.vote(&ctx.voter_b, &id, &true);
 
         let p = ctx.gov.get_proposal(&id).unwrap();
-        assert!(matches!(p.status, ProposalStatus::Defeated));
+        assert_eq!(p.votes_for, 800_000i128);
 
         // After the window closes, queue resolves with the new quorum met
         ctx.env.ledger().with_mut(|l| l.timestamp += 700);

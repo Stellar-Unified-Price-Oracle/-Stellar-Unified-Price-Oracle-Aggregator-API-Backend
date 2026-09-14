@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { uptimeTracker } from './uptime-tracker';
 import type { Component, Incident } from './uptime-tracker';
+import { getIncidentDisclosurePolicy } from '../platform/self-healing';
 
 const router = Router();
 

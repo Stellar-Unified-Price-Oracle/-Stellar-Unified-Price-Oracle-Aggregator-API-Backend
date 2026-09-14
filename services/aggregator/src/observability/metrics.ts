@@ -129,6 +129,38 @@ export const contractSubmissionGasTotal = new client.Counter({
   registers: [register],
 });
 
+// Issue #105 — canary deployments for contract upgrades.
+export const canaryActive = new client.Gauge({
+  name: 'canary_active',
+  help: 'Whether a canary implementation is currently receiving traffic (1) or not (0)',
+  registers: [register],
+});
+
+export const canaryTrafficShareBps = new client.Gauge({
+  name: 'canary_traffic_share_bps',
+  help: 'On-chain canary traffic share in basis points (0–10000)',
+  registers: [register],
+});
+
+export const canaryConsecutiveFailures = new client.Gauge({
+  name: 'canary_consecutive_failures',
+  help: 'Current streak of consecutive canary submission failures',
+  registers: [register],
+});
+
+export const canarySubmissionsTotal = new client.Counter({
+  name: 'canary_submissions_total',
+  help: 'Total submissions routed to the canary implementation',
+  labelNames: ['status'],
+  registers: [register],
+});
+
+export const canaryRollbacksTotal = new client.Counter({
+  name: 'canary_rollbacks_total',
+  help: 'Number of times the canary was rolled back after crossing the failure threshold',
+  registers: [register],
+});
+
 export const pipelineStageLatencyMs = new client.Histogram({
   name: 'pipeline_stage_latency_ms',
   help: 'Latency budget for each stage of the price pipeline in milliseconds',

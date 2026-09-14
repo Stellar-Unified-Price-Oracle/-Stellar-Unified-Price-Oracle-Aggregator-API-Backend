@@ -3,7 +3,7 @@
 // Proves that swapping the running contract implementation at a fixed
 // contract id (the same mechanism `ProxyContract::upgrade_wasm` performs on
 // testnet by replacing the deployed WASM) never loses instance storage.
-// `env.register_contract(Some(&contract_id), ..)` re-binds a second Rust
+// `env.register_at(&contract_id, ..)` re-binds a second Rust
 // contract type to an *existing* address the same way a WASM hash swap
 // re-binds new code to an existing address on-chain — the ledger entries for
 // that contract id, and therefore all of its storage, are untouched either
@@ -27,7 +27,7 @@ mod upgrade_migration_tests {
         env.mock_all_auths();
 
         // ── Deploy v1 and write state ───────────────────────────────────────
-        let contract_id = env.register_contract(None, PriceOracleContract);
+        let contract_id = env.register(PriceOracleContract, ());
         let v1 = PriceOracleContractClient::new(&env, &contract_id);
 
         let admin = <Address as TestAddress>::generate(&env);
@@ -86,7 +86,7 @@ mod upgrade_migration_tests {
             .expect("multisig config should exist");
 
         // ── Upgrade to v2 (same contract id, new implementation) ────────────
-        env.register_contract(Some(&contract_id), ProxyContract);
+        env.register_at(&contract_id, ProxyContract, ());
         let v2 = ProxyContractClient::new(&env, &contract_id);
 
         // Admin / prices / sources / trusted flag survive untouched.

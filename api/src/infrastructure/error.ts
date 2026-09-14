@@ -57,15 +57,15 @@ export function sendError(
   const appError = toAppError(error, context.path);
   const path = context.path ?? res.req?.path;
   const method = context.method ?? res.req?.method;
-  const requestId = context.requestId ?? (res.req as Request).requestId;
+  const requestId = context.requestId ?? (res.req as Request | undefined)?.requestId;
 
   logger.error('Request error', {
     code: appError.code,
     status: appError.status,
     message: appError.message,
-    path: req.path,
-    method: req.method,
-    requestId: req.requestId,
+    path,
+    method,
+    requestId,
   });
 
   res.status(appError.status).json(appError.toResponseObject());
@@ -86,7 +86,7 @@ export function sendErrorResponse(
 ): void {
   const path = context.path ?? res.req?.path;
   const method = context.method ?? res.req?.method;
-  const requestId = context.requestId ?? (res.req as Request).requestId;
+  const requestId = context.requestId ?? (res.req as Request | undefined)?.requestId;
 
   logger.error('Request error', {
     code,

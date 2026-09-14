@@ -111,11 +111,11 @@ pub(crate) fn withdraw_fees(env: &Env, to: &Address) {
 /// runs. Callable by anyone — it only pays rent and cannot mutate oracle
 /// state, so no admin auth is required.
 pub(crate) fn extend_storage_ttl(env: &Env) {
-    storage::extend_instance_ttl(env);
+    storage::extend_instance_ttl_default(env);
     let assets = storage::get_all_assets(env);
     for i in 0..assets.len() {
         if let Some(asset) = assets.get(i) {
-            storage::extend_price_history_ttl(env, &asset);
+            storage::extend_price_history_ttl_default(env, &asset);
         }
     }
 }

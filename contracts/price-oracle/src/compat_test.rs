@@ -29,7 +29,7 @@ mod compat_tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let contract_id = env.register_contract(None, PriceOracleContract);
+        let contract_id = env.register(PriceOracleContract, ());
         let client = PriceOracleContractClient::new(&env, &contract_id);
 
         assert_eq!(API_VERSION, 1, "first release exports ABI v1");
@@ -37,7 +37,7 @@ mod compat_tests {
 
         // The proxy (the production contract id consumers point at) must
         // expose the same version.
-        let proxy_id = env.register_contract(None, ProxyContract);
+        let proxy_id = env.register(ProxyContract, ());
         let proxy = ProxyContractClient::new(&env, &proxy_id);
         assert_eq!(proxy.get_api_version(), API_VERSION);
     }
@@ -52,7 +52,7 @@ mod compat_tests {
         env.mock_all_auths();
 
         // ── Deploy v1 and write representative state ─────────────────────────
-        let contract_id = env.register_contract(None, PriceOracleContract);
+        let contract_id = env.register(PriceOracleContract, ());
         let v1 = PriceOracleContractClient::new(&env, &contract_id);
 
         let admin = <Address as TestAddress>::generate(&env);
@@ -101,7 +101,7 @@ mod compat_tests {
         let reputation_before = v1.get_source_reputation(&oracle);
 
         // ── Upgrade: swap the implementation at the same contract id ─────────
-        env.register_contract(Some(&contract_id), ProxyContract);
+        env.register_at(&contract_id, ProxyContract, ());
         let v2 = ProxyContractClient::new(&env, &contract_id);
 
         // Old clients keep working: identical results for every v1 read.
@@ -136,7 +136,7 @@ mod compat_tests {
         let env = Env::default();
         env.mock_all_auths();
 
-        let contract_id = env.register_contract(None, PriceOracleContract);
+        let contract_id = env.register(PriceOracleContract, ());
         let v1 = PriceOracleContractClient::new(&env, &contract_id);
 
         let admin = <Address as TestAddress>::generate(&env);
@@ -158,7 +158,7 @@ mod compat_tests {
         let api_before = v1.get_api_version();
 
         // Same contract id, same ABI, implementation re-registered.
-        env.register_contract(Some(&contract_id), PriceOracleContract);
+        env.register_at(&contract_id, PriceOracleContract, ());
         let v1_redeployed = PriceOracleContractClient::new(&env, &contract_id);
 
         let price_after: AssetPrice = v1_redeployed

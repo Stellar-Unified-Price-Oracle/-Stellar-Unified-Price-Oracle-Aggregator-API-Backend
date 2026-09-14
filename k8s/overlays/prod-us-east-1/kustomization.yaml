@@ -9,7 +9,7 @@ resources:
   - ../../base/multi-region
 
 patches:
-  - path: ../../overlays/prod/configmap-patch.yaml
+  - path: configmap-patch.yaml
   - target:
       kind: ConfigMap
       name: stellar-oracle-config

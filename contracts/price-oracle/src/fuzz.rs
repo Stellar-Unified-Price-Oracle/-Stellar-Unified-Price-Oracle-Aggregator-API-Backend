@@ -7,7 +7,7 @@ use crate::contract::PriceOracleContractClient;
 fn setup_fuzz() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register_contract(None, PriceOracleContract);
+    let contract_id = env.register(PriceOracleContract, ());
     let client = PriceOracleContractClient::new(&env, &contract_id);
 
     let admin = <Address as TestAddress>::generate(&env);
@@ -235,7 +235,7 @@ fn fuzz_sequential_price_submissions_consistency() {
 fn fuzz_multiple_sources_concurrent_submissions() {
     let env = Env::default();
     env.mock_all_auths();
-    let contract_id = env.register_contract(None, PriceOracleContract);
+    let contract_id = env.register(PriceOracleContract, ());
     let client = PriceOracleContractClient::new(&env, &contract_id);
 
     let admin = <Address as TestAddress>::generate(&env);

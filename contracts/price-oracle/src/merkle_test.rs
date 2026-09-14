@@ -12,7 +12,7 @@ mod merkle_tests {
     fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register_contract(None, PriceOracleContract);
+        let id = env.register(PriceOracleContract, ());
         let client = PriceOracleContractClient::new(&env, &id);
         let admin = Address::generate(&env);
         let oracle = Address::generate(&env);
@@ -565,7 +565,7 @@ mod merkle_tests {
     fn bench_individual_vs_batch_5_assets() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register_contract(None, PriceOracleContract);
+        let id = env.register(PriceOracleContract, ());
         let client = PriceOracleContractClient::new(&env, &id);
         let admin = Address::generate(&env);
         let oracle = Address::generate(&env);
@@ -591,7 +591,7 @@ mod merkle_tests {
         // Reset and measure batch submission
         let env2 = Env::default();
         env2.mock_all_auths();
-        let id2 = env2.register_contract(None, PriceOracleContract);
+        let id2 = env2.register(PriceOracleContract, ());
         let client2 = PriceOracleContractClient::new(&env2, &id2);
         let admin2 = Address::generate(&env2);
         let oracle2 = Address::generate(&env2);

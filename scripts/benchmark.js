@@ -35,7 +35,7 @@ const UPDATE_BASELINE = process.argv.includes('--update-baseline');
 
 /** Endpoints to benchmark — add more as the API grows. */
 const ENDPOINTS = [
-  { method: 'GET', path: '/health' },
+  { method: 'GET', path: '/api/v1/health' },
   { method: 'GET', path: '/api/v1/prices' },
   { method: 'GET', path: '/api/v2/prices' },
   { method: 'GET', path: '/api/v1/prices/XLM' },

@@ -20,6 +20,7 @@ spec:
             summary: "TimescaleDB replication lag is high"
             description: "Replication lag on {{ $labels.instance }} exceeds 30s (current: {{ $value }}s)"
             message: "replication lag exceeds 30s"
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/database-issues.md
 
         - alert: TimescaleDBReplicationLagCritical
           expr: pg_replication_lag_seconds > 120
@@ -30,6 +31,7 @@ spec:
             summary: "TimescaleDB replication lag is critical"
             description: "Replication lag on {{ $labels.instance }} exceeds 120s (current: {{ $value }}s)"
             message: "replication lag exceeds 120s — replica severely behind primary"
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/database-issues.md
 
         - alert: TimescaleDBPatroniNoLeader
           expr: patroni_master_mode == 0
@@ -40,6 +42,7 @@ spec:
             summary: "No Patroni leader elected for TimescaleDB cluster"
             description: "Patroni cluster {{ $labels.scope }} has no elected leader for more than 1 minute"
             message: "no Patroni leader elected"
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/database-issues.md
 
         - alert: TimescaleDBFailoverDetected
           expr: changes(patroni_master_mode[5m]) > 0
@@ -50,6 +53,7 @@ spec:
             summary: "TimescaleDB Patroni failover detected"
             description: "Patroni leader changed in cluster {{ $labels.scope }} within the last 5 minutes"
             message: "Patroni leader changed (failover occurred)"
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/database-issues.md
 
         - alert: TimescaleDBDown
           expr: pg_up == 0
@@ -60,6 +64,7 @@ spec:
             summary: "TimescaleDB instance is down"
             description: "PostgreSQL/TimescaleDB instance {{ $labels.instance }} is not responding"
             message: "TimescaleDB instance is down"
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/database-issues.md
 
         - alert: TimescaleDBDiskUsageHigh
           expr: pg_database_size_bytes / (50 * 1024 * 1024 * 1024) > 0.85
@@ -70,3 +75,4 @@ spec:
             summary: "TimescaleDB disk usage is above 85%"
             description: "Database {{ $labels.datname }} on {{ $labels.instance }} is using {{ $value | humanizePercentage }} of its 50Gi volume"
             message: "TimescaleDB disk usage exceeds 85% of 50Gi allocation"
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/database-issues.md

@@ -225,10 +225,9 @@ pub enum DataKey {
     SlashCount(Address),
     // Issue #67 — multi-sig
     MultiSigConfig,
+    ProposalCount,
     MultiSigProposalCount,
     MultiSigProposal(u32),
-    // Issue #379 — multi-region aware emergency pause
-    Paused,
     // Governance
     GovernanceConfig,
     GovernanceProposalCount,

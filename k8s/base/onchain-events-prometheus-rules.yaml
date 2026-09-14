@@ -68,7 +68,7 @@ spec:
               A {{ $labels.kind }} governance event was emitted by the oracle
               contract. If this was not a planned change, treat as a possible key
               compromise and open a security incident.
-            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/GOVERNANCE.md
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/onchain-governance-change.md
 
         - alert: OnChainContractUpgraded
           expr: increase(onchain_upgrade_events_total[10m]) > 0
@@ -83,7 +83,7 @@ spec:
               An `upgraded` event was emitted (to hash {{ $labels.to_hash }}).
               Confirm this matches an approved release in the contract upgrade
               governance process; if not, this is a security incident.
-            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/CONTRACT_UPGRADE_GOVERNANCE.md
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/onchain-contract-upgrade.md
 
         - alert: OnChainVsAggregatorDivergence
           expr: |

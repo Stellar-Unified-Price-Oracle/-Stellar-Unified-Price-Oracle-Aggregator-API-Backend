@@ -92,7 +92,7 @@ describe('AppError', () => {
     expect(body.success).toBe(false);
     expect(body.data).toBeUndefined();
     expect(body.error).toBeDefined();
-    expect(body.error.code).toBeUndefined(); // AppError uses RFC7807 fields, not `code`
+    expect(body.error.code).toBe('VALIDATION_ERROR'); // legacy `code` retained alongside RFC7807 fields
     expect(body.error.type).toContain('/errors/validation-error');
     expect(body.error.status).toBe(422);
     expect(typeof body.timestamp).toBe('string');

@@ -35,7 +35,7 @@ describe('Grafana Dashboard', () => {
     const raw = fs.readFileSync(dashboardPath, 'utf-8');
     const dashboard = JSON.parse(raw);
 
-    expect(dashboard.panels).toHaveLength(7);
+    expect(dashboard.panels).toHaveLength(8);
 
     const panelTitles = dashboard.panels.map((p: any) => p.title);
     expect(panelTitles).toContain('Source Health Status');
@@ -45,6 +45,7 @@ describe('Grafana Dashboard', () => {
     expect(panelTitles).toContain('Error Rates');
     expect(panelTitles).toContain('Cache Hit Ratio');
     expect(panelTitles).toContain('Soroban Contract Interactions');
+    expect(panelTitles).toContain('Mainnet Gas Cost by Entry Point');
   });
 
   it('should have source health panel with correct metrics', () => {

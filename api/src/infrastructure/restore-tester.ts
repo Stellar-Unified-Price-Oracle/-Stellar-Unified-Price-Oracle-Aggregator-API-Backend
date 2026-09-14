@@ -375,7 +375,7 @@ export class RestoreTester {
       }
     }
 
-    if (label === '.env.example') {
+    if (label.endsWith('.env.example')) {
       const raw = await fsp.readFile(fullPath, 'utf-8');
       const requiredKeys = ['DATABASE_URL', 'API_PORT', 'WATCHED_ASSETS', 'SOROBAN_RPC_URL'];
       for (const key of requiredKeys) {

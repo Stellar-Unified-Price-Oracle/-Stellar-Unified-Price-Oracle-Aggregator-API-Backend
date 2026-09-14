@@ -22,6 +22,12 @@ use crate::types::BatchPriceEntry;
 // well under this cap in practice.
 const MAX_STRING_LEN: usize = 64;
 
+/// Maximum co-path length accepted by `verify_proof` (Issue #385).
+///
+/// Bounds the SHA-256 work a permissionless caller can force in a single
+/// `apply_batch_entry` call; 64 levels covers any realistic batch size.
+pub const MAX_PROOF_SIBLINGS: usize = 64;
+
 fn string_to_bytes(env: &Env, s: &String) -> Bytes {
     let len = s.len() as usize;
     let mut buf = [0u8; MAX_STRING_LEN];
@@ -91,7 +97,7 @@ pub fn verify_proof(
     siblings: &soroban_sdk::Vec<Bytes>,
     root: &Bytes,
 ) -> bool {
-    if siblings.len() > MAX_PROOF_SIBLINGS {
+    if siblings.len() as usize > MAX_PROOF_SIBLINGS {
         return false;
     }
 
@@ -119,6 +125,7 @@ pub fn verify_proof(
 /// Compute the Merkle root for a slice of pre-hashed leaves.
 /// Used on-chain when the full leaf set fits in the transaction budget
 /// (typically for small batches ≤ 8 entries).
+#[allow(dead_code)] // exercised by merkle_test; kept non-test so batch builders can reuse it
 pub fn compute_root(env: &Env, leaves: soroban_sdk::Vec<Bytes>) -> Bytes {
     if leaves.is_empty() {
         return Bytes::new(env);

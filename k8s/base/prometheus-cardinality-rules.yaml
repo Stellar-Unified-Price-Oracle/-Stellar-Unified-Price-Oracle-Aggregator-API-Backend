@@ -39,6 +39,7 @@ spec:
               (per-asset, per-key, per-URL). Audit it against
               docs/observability/METRICS_CARDINALITY.md and drop or
               pre-aggregate the offending label.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/prometheus-cardinality.md
 
         - alert: PrometheusHighSeriesChurn
           expr: |
@@ -54,6 +55,7 @@ spec:
               Active series are growing at {{ $value | humanizePercentage }}/hour.
               Sustained churn drives memory use and remote-write cost. Check for a
               newly deployed target emitting high-cardinality labels.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/prometheus-cardinality.md
 
         - alert: PrometheusTSDBHeadSeriesHigh
           expr: prometheus:tsdb_head_series:ratio > 0.80
@@ -66,6 +68,7 @@ spec:
             description: >
               The TSDB head is approaching the configured series limit. Reduce
               cardinality or scale Prometheus before ingestion starts failing.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/prometheus-cardinality.md
 
         - alert: PrometheusScrapeSampleLimitHit
           expr: increase(prometheus_target_scrapes_exceeded_sample_limit_total[10m]) > 0
@@ -79,6 +82,7 @@ spec:
               At least one target returned more samples than the configured
               sample_limit and was dropped entirely. Metrics from that target are
               now missing. Identify the target and cut its series count.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/prometheus-cardinality.md
 
         - alert: PrometheusRemoteWriteCostBudget
           expr: |
@@ -93,3 +97,4 @@ spec:
               Ingesting {{ $value | humanize }} samples/s to remote storage,
               above the {{ "750000" }} samples/s budget that maps to the monthly
               vendor bill. Reduce cardinality or raise the budget deliberately.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/prometheus-cardinality.md

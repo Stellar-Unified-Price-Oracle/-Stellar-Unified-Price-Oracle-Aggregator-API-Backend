@@ -9,6 +9,7 @@ mod token {
     use soroban_sdk::{contractclient, Address, Env};
 
     #[contractclient(name = "TokenClient")]
+    #[allow(dead_code)] // consumed by the contractclient macro; only TokenClient is called
     pub trait Token {
         fn balance(env: Env, id: Address) -> i128;
     }

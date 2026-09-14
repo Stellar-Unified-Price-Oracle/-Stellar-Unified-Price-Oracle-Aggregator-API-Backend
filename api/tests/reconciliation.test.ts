@@ -12,10 +12,19 @@ vi.mock('../src/observability/metrics', () => {
 });
 
 vi.mock('prom-client', () => {
-  const Counter = vi.fn(() => ({ inc: vi.fn() }));
-  const Gauge = vi.fn(() => ({ set: vi.fn() }));
-  const Histogram = vi.fn(() => ({ observe: vi.fn(), startTimer: vi.fn(() => vi.fn()) }));
-  const Registry = vi.fn(() => ({ registerMetric: vi.fn() }));
+  class Counter {
+    inc = vi.fn();
+  }
+  class Gauge {
+    set = vi.fn();
+  }
+  class Histogram {
+    observe = vi.fn();
+    startTimer = vi.fn(() => vi.fn());
+  }
+  class Registry {
+    registerMetric = vi.fn();
+  }
   return { default: { Counter, Gauge, Histogram, Registry, collectDefaultMetrics: vi.fn() } };
 });
 

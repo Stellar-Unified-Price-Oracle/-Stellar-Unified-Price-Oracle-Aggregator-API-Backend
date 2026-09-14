@@ -2,8 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { Logger } from 'winston';
 import client from 'prom-client';
-import { register } from '../middleware/metrics';
-import { BackupService, BackupEntry } from './backup';
+import { register } from '../observability/metrics';
+import { BackupService, BackupEntry } from '../infrastructure/backup';
 
 export const drRpoSeconds = new client.Gauge({
   name: 'dr_rpo_seconds',

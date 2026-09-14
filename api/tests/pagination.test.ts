@@ -45,8 +45,8 @@ describe('encodeCursor / decodeCursor', () => {
 });
 
 describe('buildCursorMeta (cursor pagination)', () => {
-  it('marks hasNextPage true and returns a nextCursor when the page is exactly full', () => {
-    const items = Array.from({ length: 5 }, (_, i) => ({ timestamp: 100 + i }));
+  it('marks hasNextPage true and returns a nextCursor when more than a page is available', () => {
+    const items = Array.from({ length: 6 }, (_, i) => ({ timestamp: 100 + i }));
     const meta = buildCursorMeta(items, 5, 'timestamp');
     expect(meta).toEqual({
       type: 'cursor',
@@ -57,7 +57,7 @@ describe('buildCursorMeta (cursor pagination)', () => {
     });
     expect(meta.hasNextPage).toBe(true);
     expect(meta.nextCursor).not.toBeNull();
-    // The encoded cursor encodes the last item's timestamp.
+    // The encoded cursor encodes the last item of the returned page.
     expect(decodeCursor(meta.nextCursor as string)?.ts).toBe(104);
   });
 
@@ -76,9 +76,9 @@ describe('buildCursorMeta (cursor pagination)', () => {
   });
 
   it('honours a custom timestamp field name', () => {
-    const items = [{ seq: 42 }];
+    const items = [{ seq: 42 }, { seq: 43 }];
     const meta = buildCursorMeta(items, 1, 'seq');
-    expect(meta.hasNextPage).toBe(true); // page full
+    expect(meta.hasNextPage).toBe(true); // more items than the page size
     expect(decodeCursor(meta.nextCursor as string)?.ts).toBe(42);
   });
 });

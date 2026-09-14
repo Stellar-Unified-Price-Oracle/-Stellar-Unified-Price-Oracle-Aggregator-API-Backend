@@ -17,28 +17,29 @@ import { httpsRedirect, hstsHeaders } from './infrastructure/https';
 import { compressionMiddleware } from './infrastructure/compression';
 import { usageTrackingMiddleware } from './governance/usage-tracking';
 import { complianceAuditMiddleware } from './governance/compliance';
-import { PriceWebSocketServer } from './websocket/server';
-import { swaggerSpec } from './services/openapi';
-import v1Routes, { initializeCache } from './routes/v1';
-import v2Routes, { initializeCacheV2 } from './routes/v2';
-import { v1DeprecationHeaders, v2Headers } from './middleware/versioning';
-import { HybridCache } from './services/cache';
-import { DatabaseClient, setDb } from './services/database';
-import { ArchivalService } from './services/archival';
-import { DbHealthMonitor } from './services/db-health-monitor';
-import { DataConsistencyChecker } from './services/data-consistency';
-import { BackupService } from './services/backup';
-import { DrStatusService } from './services/dr-status';
-import { setDatabase } from './services/price-store';
-import { initializeTracing } from './services/tracing';
-import adminRoutes from './routes/admin';
-import statusRoutes from './routes/status';
+import { PriceWebSocketServer } from './infrastructure/server';
+import { swaggerSpec } from './infrastructure/openapi';
+import v1Routes, { initializeCache } from './price-serving/v1';
+import v2Routes, { initializeCacheV2 } from './price-serving/v2';
+import { v1DeprecationHeaders, v2Headers } from './price-serving/versioning';
+import { HybridCache } from './price-serving/cache';
+import { DatabaseClient, setDb } from './infrastructure/database';
+import { ArchivalService } from './infrastructure/archival';
+import { DbHealthMonitor } from './infrastructure/db-health-monitor';
+import { DataConsistencyChecker } from './infrastructure/data-consistency';
+import { BackupService } from './infrastructure/backup';
+import { setDatabase } from './price-serving/price-store';
+import { initializeTracing } from './observability/tracing';
+import { AppError } from './infrastructure/app-error';
+import { ErrorCode } from './infrastructure/catalog';
 import platformRoutes from './platform/routes';
+import adminRoutes from './governance/admin';
+import selfServiceRoutes from './governance/self-service';
+import statusRoutes from './observability/status';
 import sandboxRoutes, { initializeSandboxCache } from './routes/sandbox';
 import featureFlagRoutes from './routes/featureFlags';
 import eventRoutes from './routes/events';
 import governanceRoutes from './governance/proposal-routes';
-import { RegulatoryReportScheduler } from './governance/regulatory-reporting';
 import { uptimeTracker } from './observability/uptime-tracker';
 import { getVaultClient } from '@stellar-oracle/vault-client';
 import { apiKeyManager } from './governance/api-key-manager';
@@ -57,7 +58,6 @@ let archival: ArchivalService | null = null;
 let dbHealthMonitor: DbHealthMonitor | null = null;
 let consistencyChecker: DataConsistencyChecker | null = null;
 let backupService: BackupService | null = null;
-let regulatoryReportScheduler: RegulatoryReportScheduler | null = null;
 
 async function initializeApp(): Promise<void> {
   // Initialize Vault for API key and webhook secret management
@@ -118,11 +118,6 @@ async function initializeApp(): Promise<void> {
           dailyIntervalMs: config.backup.intervalMs,
         });
         backupService.start();
-      }
-
-      if (config.reporting?.enabled) {
-        regulatoryReportScheduler = new RegulatoryReportScheduler(db, logger, config.reporting);
-        regulatoryReportScheduler.start();
       }
 
       logger.info('PostgreSQL database connected');
@@ -204,6 +199,8 @@ app.use('/api/v1', v1DeprecationHeaders, platformRoutes);
 app.use('/api/v1/sandbox', sandboxRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/governance', governanceRoutes);
+// Public status page — no authentication required (#66)
+app.use('/api/v1/status', statusRoutes);
 app.use('/api/v2', v2Headers, v2Routes);
 app.use('/graphql', graphqlRoutes);
 app.use('/api/graphql', graphqlRoutes);
@@ -260,9 +257,8 @@ async function startServer(): Promise<void> {
     if (dbHealthMonitor) dbHealthMonitor.stop();
     if (consistencyChecker) consistencyChecker.stop();
     if (backupService) backupService.stop();
-    if (regulatoryReportScheduler) regulatoryReportScheduler.stop();
     if (db) {
-      db.disconnect().catch((err) => logger.error('Error disconnecting from database', err));
+      db.disconnect().catch((err: unknown) => logger.error('Error disconnecting from database', err));
     }
     server.close(() => process.exit(0));
   };

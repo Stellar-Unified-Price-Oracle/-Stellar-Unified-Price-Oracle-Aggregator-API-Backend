@@ -1,8 +1,7 @@
 #[cfg(test)]
 mod tests_impl {
-    use soroban_sdk::{Address, Env, String};
     use soroban_sdk::testutils::Address as TestAddress;
-    use soroban_sdk::{Address, Env, String, Vec};
+    use soroban_sdk::{Address, Env, String};
 
     use crate::contract::PriceOracleContract;
     use crate::contract::PriceOracleContractClient;
@@ -11,7 +10,7 @@ mod tests_impl {
     pub fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PriceOracleContract);
+        let contract_id = env.register(PriceOracleContract, ());
         let client = PriceOracleContractClient::new(&env, &contract_id);
 
         let admin = <Address as TestAddress>::generate(&env);
@@ -46,7 +45,7 @@ mod tests_impl {
     fn test_initialize_is_write_once() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PriceOracleContract);
+        let contract_id = env.register(PriceOracleContract, ());
         let client = PriceOracleContractClient::new(&env, &contract_id);
 
         let admin = <Address as TestAddress>::generate(&env);
@@ -187,7 +186,7 @@ mod tests_impl {
     fn test_admin_cannot_be_replaced_by_non_admin() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PriceOracleContract);
+        let contract_id = env.register(PriceOracleContract, ());
         let client = PriceOracleContractClient::new(&env, &contract_id);
 
         let admin = <Address as TestAddress>::generate(&env);
@@ -246,7 +245,7 @@ mod tests_impl {
     fn test_source_cannot_self_authorize() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, PriceOracleContract);
+        let contract_id = env.register(PriceOracleContract, ());
         let client = PriceOracleContractClient::new(&env, &contract_id);
 
         let admin = <Address as TestAddress>::generate(&env);

@@ -17,11 +17,11 @@
 #[cfg(test)]
 mod bench {
     extern crate std;
-    use std::{println, vec, vec::Vec};
+    use std::println;
 
     use soroban_sdk::{
-        testutils::{budget::Budget, Address as _},
-        Address, Bytes, Env, String,
+        testutils::Address as _,
+        Address, Bytes, Env, String, Vec,
     };
 
     use crate::contract::{PriceOracleContract, PriceOracleContractClient};
@@ -31,7 +31,7 @@ mod bench {
     fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register_contract(None, PriceOracleContract);
+        let id = env.register(PriceOracleContract, ());
         let client = PriceOracleContractClient::new(&env, &id);
 
         let admin = Address::generate(&env);
@@ -58,7 +58,7 @@ mod bench {
     fn bench_initialize() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register_contract(None, PriceOracleContract);
+        let id = env.register(PriceOracleContract, ());
         let client = PriceOracleContractClient::new(&env, &id);
         let admin = Address::generate(&env);
 
@@ -227,7 +227,7 @@ mod bench {
         let (env, client, _admin, oracle) = setup();
         let root = Bytes::from_array(&env, &[7u8; 32]);
 
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.submit_batch(&oracle, &0u64, &root);
         print_budget("submit_batch (commit root)", &env);
     }
@@ -238,7 +238,7 @@ mod bench {
     fn bench_multi_source_submit() {
         let env = Env::default();
         env.mock_all_auths();
-        let id = env.register_contract(None, PriceOracleContract);
+        let id = env.register(PriceOracleContract, ());
         let client = PriceOracleContractClient::new(&env, &id);
 
         let admin = Address::generate(&env);
