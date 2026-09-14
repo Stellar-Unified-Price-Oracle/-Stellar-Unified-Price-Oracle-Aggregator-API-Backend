@@ -6,6 +6,6 @@ data/
 *.log
 logs/
 target/
+.terraform/
 .kiro/
 .claude/
-package-lock.json

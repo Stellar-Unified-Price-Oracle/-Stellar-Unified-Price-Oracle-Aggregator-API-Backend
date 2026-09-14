@@ -21,6 +21,10 @@ jobs:
   detect-gaps:
     name: Detect price_history gaps
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The threshold-breach step opens a tracking issue.
+      issues: write
     defaults:
       run:
         working-directory: api
@@ -31,7 +35,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: api/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci

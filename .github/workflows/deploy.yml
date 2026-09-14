@@ -28,6 +28,8 @@ jobs:
     outputs:
       api-tag: ${{ steps.tags.outputs.api-sha }}
       aggregator-tag: ${{ steps.tags.outputs.aggregator-sha }}
+      api-image: ${{ steps.tags.outputs.api-base }}
+      aggregator-image: ${{ steps.tags.outputs.aggregator-base }}
       api-digest: ${{ steps.build-api.outputs.digest }}
       aggregator-digest: ${{ steps.build-aggregator.outputs.digest }}
     steps:
@@ -42,8 +44,14 @@ jobs:
         env:
           SHA: ${{ steps.sha.outputs.value }}
         run: |
-          API_BASE="$REGISTRY/$GITHUB_REPOSITORY/api"
-          AGG_BASE="$REGISTRY/$GITHUB_REPOSITORY/aggregator"
+          # GHCR requires lowercase path segments and rejects a leading dash;
+          # this repository's name starts with one, so derive the image path
+          # from a lowercased owner instead of $GITHUB_REPOSITORY.
+          NAMESPACE=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          API_BASE="${REGISTRY}/${NAMESPACE}/stellar-oracle-api"
+          AGG_BASE="${REGISTRY}/${NAMESPACE}/stellar-oracle-aggregator"
+          echo "api-base=${API_BASE}" >> "$GITHUB_OUTPUT"
+          echo "aggregator-base=${AGG_BASE}" >> "$GITHUB_OUTPUT"
           echo "api-sha=${API_BASE}:sha-${SHA}" >> "$GITHUB_OUTPUT"
           echo "aggregator-sha=${AGG_BASE}:sha-${SHA}" >> "$GITHUB_OUTPUT"
 
@@ -71,7 +79,8 @@ jobs:
         id: build-api
         uses: docker/build-push-action@v6
         with:
-          context: api
+          context: .
+          file: api/Dockerfile
           push: true
           tags: |
             ${{ steps.tags.outputs.api-sha }}
@@ -85,7 +94,8 @@ jobs:
         id: build-aggregator
         uses: docker/build-push-action@v6
         with:
-          context: services/aggregator
+          context: .
+          file: services/aggregator/Dockerfile
           push: true
           tags: |
             ${{ steps.tags.outputs.aggregator-sha }}
@@ -99,22 +109,22 @@ jobs:
         uses: sigstore/cosign-installer@v3
 
       - name: Sign API image (keyless)
-        run: cosign sign --yes "${REGISTRY}/${GITHUB_REPOSITORY}/api@${{ steps.build-api.outputs.digest }}"
+        run: cosign sign --yes "${{ steps.tags.outputs.api-base }}@${{ steps.build-api.outputs.digest }}"
 
       - name: Sign Aggregator image (keyless)
-        run: cosign sign --yes "${REGISTRY}/${GITHUB_REPOSITORY}/aggregator@${{ steps.build-aggregator.outputs.digest }}"
+        run: cosign sign --yes "${{ steps.tags.outputs.aggregator-base }}@${{ steps.build-aggregator.outputs.digest }}"
 
       - name: Generate SLSA provenance — API image
         uses: actions/attest-build-provenance@v1
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/api
+          subject-name: ${{ steps.tags.outputs.api-base }}
           subject-digest: ${{ steps.build-api.outputs.digest }}
           push-to-registry: true
 
       - name: Generate SLSA provenance — Aggregator image
         uses: actions/attest-build-provenance@v1
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/aggregator
+          subject-name: ${{ steps.tags.outputs.aggregator-base }}
           subject-digest: ${{ steps.build-aggregator.outputs.digest }}
           push-to-registry: true
 
@@ -134,14 +144,14 @@ jobs:
           cosign verify \
             --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "${REGISTRY}/${GITHUB_REPOSITORY}/api@${{ needs.build-images.outputs.api-digest }}"
+            "${{ needs.build-images.outputs.api-image }}@${{ needs.build-images.outputs.api-digest }}"
 
       - name: Reject unsigned Aggregator image
         run: |
           cosign verify \
             --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "${REGISTRY}/${GITHUB_REPOSITORY}/aggregator@${{ needs.build-images.outputs.aggregator-digest }}"
+            "${{ needs.build-images.outputs.aggregator-image }}@${{ needs.build-images.outputs.aggregator-digest }}"
 
   deploy-dev:
     name: Deploy to Dev

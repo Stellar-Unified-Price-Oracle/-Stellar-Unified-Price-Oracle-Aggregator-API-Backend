@@ -5,16 +5,53 @@ variable "cluster_name"       { type = string }
 variable "vpc_id"             { type = string }
 variable "private_subnet_ids" { type = list(string) }
 variable "aggregator_image"   { type = string }
-variable "cpu"                { type = number; default = 256 }
-variable "memory"             { type = number; default = 512 }
-variable "desired_count"      { type = number; default = 2 }
-variable "min_capacity"       { type = number; default = 1 }
-variable "max_capacity"       { type = number; default = 6 }
-variable "db_host"            { type = string }
-variable "db_name"            { type = string }
-variable "db_username"        { type = string; sensitive = true }
-variable "db_password"        { type = string; sensitive = true }
-variable "redis_url"          { type = string; default = "" }
+variable "cpu" {
+  type    = number
+  default = 256
+}
+
+variable "memory" {
+  type    = number
+  default = 512
+}
+
+variable "desired_count" {
+  type    = number
+  default = 2
+}
+
+variable "min_capacity" {
+  type    = number
+  default = 1
+}
+
+variable "max_capacity" {
+  type    = number
+  default = 6
+}
+
+variable "db_host" {
+  type = string
+}
+
+variable "db_name" {
+  type = string
+}
+
+variable "db_username" {
+  type      = string
+  sensitive = true
+}
+
+variable "db_password" {
+  type      = string
+  sensitive = true
+}
+
+variable "redis_url" {
+  type    = string
+  default = ""
+}
 
 # ── IAM ───────────────────────────────────────────────────────────────────────
 

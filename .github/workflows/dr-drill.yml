@@ -52,12 +52,21 @@ jobs:
       - name: Run 50% regional traffic-loss load test
         id: load_test
         env:
-          REGION_URLS: >-
-            ${{ vars.REGION_US_HEALTH && format('{0},{1}',
-              replace(vars.REGION_US_HEALTH, '/api/v1/health', ''),
-              replace(vars.REGION_EU_HEALTH, '/api/v1/health', ''))
-            || 'http://localhost:3000,http://localhost:3000' }}
+          REGION_US_HEALTH: ${{ vars.REGION_US_HEALTH }}
+          REGION_EU_HEALTH: ${{ vars.REGION_EU_HEALTH }}
+          REGION_AP_HEALTH: ${{ vars.REGION_AP_HEALTH }}
         run: |
+          # GitHub expressions have no string-replace function, so derive the
+          # service base URLs from the health endpoints in the shell.
+          base_url() {
+            if [ -z "${1:-}" ]; then
+              echo "http://localhost:3000"
+            else
+              echo "${1%/api/v1/health}"
+            fi
+          }
+          REGION_URLS="$(base_url "$REGION_US_HEALTH"),$(base_url "$REGION_EU_HEALTH"),$(base_url "$REGION_AP_HEALTH")"
+          echo "REGION_URLS=${REGION_URLS}"
           k6 run \
             --env REGION_URLS="${REGION_URLS}" \
             --out json=load-tests/results/dr-drill-traffic-loss.json \

@@ -11,7 +11,7 @@ jobs:
       contents: read
     steps:
       - name: Create action issues from checklist
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             const comment = context.payload.comment && context.payload.comment.body && context.payload.comment.body.trim();

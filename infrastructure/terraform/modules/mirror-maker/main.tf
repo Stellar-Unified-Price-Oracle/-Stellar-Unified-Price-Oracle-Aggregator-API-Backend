@@ -20,7 +20,8 @@ resource "aws_iam_role" "mirror_maker_instance_role" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Principal" = {
+        Effect = "Allow"
+        Principal = {
           Service = "ec2.amazonaws.com"
         }
         Action = "sts:AssumeRole"

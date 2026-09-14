@@ -103,10 +103,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build aggregator image
-        run: docker build -t stellar-oracle-aggregator:scan services/aggregator
+        run: docker build -t stellar-oracle-aggregator:scan -f services/aggregator/Dockerfile .
 
       - name: Scan aggregator image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: stellar-oracle-aggregator:scan
           format: sarif
@@ -129,10 +129,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build API image
-        run: docker build -t stellar-oracle-api:scan api
+        run: docker build -t stellar-oracle-api:scan -f api/Dockerfile .
 
       - name: Scan API image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: stellar-oracle-api:scan
           format: sarif
