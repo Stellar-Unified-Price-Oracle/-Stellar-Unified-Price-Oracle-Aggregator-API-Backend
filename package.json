@@ -29,9 +29,13 @@
     "validate:prices": "node scripts/validate-price-correctness.mjs",
     "rent:extend": "tsx scripts/extend-ttl-job.ts",
     "install:all": "npm install",
-    "prepare": "husky || true"
+    "prepare": "(husky || true) && npm run build:packages"
   },
   "devDependencies": {
     "husky": "^9.1.0"
+  },
+  "overrides": {
+    "toml": "^4.2.0",
+    "undici": "^6.28.0"
   }
 }

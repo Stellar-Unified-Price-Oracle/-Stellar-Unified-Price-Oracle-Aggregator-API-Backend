@@ -40,7 +40,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check HISTORY_DATABASE_URL is configured
+        id: guard
+        env:
+          HISTORY_DATABASE_URL: ${{ secrets.HISTORY_DATABASE_URL }}
+        run: |
+          if [ -z "$HISTORY_DATABASE_URL" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::HISTORY_DATABASE_URL is not set — skipping gap detection."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Detect gaps
+        if: steps.guard.outputs.configured == 'true'
         env:
           DATABASE_URL: ${{ secrets.HISTORY_DATABASE_URL }}
         run: npm run history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }}

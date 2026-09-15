@@ -88,12 +88,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check deployment prerequisites
+        id: guard
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG }}
+        run: |
+          if [ -z "$KUBECONFIG_B64" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::KUBECONFIG is not set — skipping the blue-green deploy."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up kubectl
+        if: steps.guard.outputs.configured == 'true'
         uses: azure/setup-kubectl@v3
         with:
           version: "v1.29.0"
 
       - name: Configure kubeconfig
+        if: steps.guard.outputs.configured == 'true'
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
@@ -106,6 +120,7 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Run blue-green deploy
+        if: steps.guard.outputs.configured == 'true'
         env:
           NAMESPACE: stellar-oracle
           IMAGE_TAG: ${{ steps.image.outputs.tag }}
@@ -114,6 +129,7 @@ jobs:
           ./scripts/deploy-blue-green.sh "$IMAGE_TAG"
 
       - name: Verify deployment
+        if: steps.guard.outputs.configured == 'true'
         run: |
           kubectl rollout status deployment -l app=stellar-oracle-api \
             -n stellar-oracle --timeout=120s
