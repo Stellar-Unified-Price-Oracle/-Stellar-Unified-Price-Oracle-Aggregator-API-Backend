@@ -171,17 +171,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check KUBECONFIG_DEV is configured
+        id: guard
+        env:
+          KUBECONFIG_VALUE: ${{ secrets.KUBECONFIG_DEV }}
+        run: |
+          if [ -z "$KUBECONFIG_VALUE" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::KUBECONFIG_DEV is not set — skipping the dev deploy."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install kustomize
+        if: steps.guard.outputs.configured == 'true'
         run: |
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
           sudo mv kustomize /usr/local/bin/
 
       - name: Configure kubectl
+        if: steps.guard.outputs.configured == 'true'
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG_DEV }}" > ~/.kube/config
 
       - name: Deploy to dev
+        if: steps.guard.outputs.configured == 'true'
         run: |
           bash scripts/deploy-k8s.sh dev \
             "${{ needs.build-images.outputs.api-tag }}" \
@@ -198,17 +213,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check KUBECONFIG_STAGING is configured
+        id: guard
+        env:
+          KUBECONFIG_VALUE: ${{ secrets.KUBECONFIG_STAGING }}
+        run: |
+          if [ -z "$KUBECONFIG_VALUE" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::KUBECONFIG_STAGING is not set — skipping the staging deploy."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install kustomize
+        if: steps.guard.outputs.configured == 'true'
         run: |
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
           sudo mv kustomize /usr/local/bin/
 
       - name: Configure kubectl
+        if: steps.guard.outputs.configured == 'true'
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG_STAGING }}" > ~/.kube/config
 
       - name: Deploy to staging
+        if: steps.guard.outputs.configured == 'true'
         run: |
           bash scripts/deploy-k8s.sh staging \
             "${{ needs.build-images.outputs.api-tag }}" \
@@ -223,17 +253,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check KUBECONFIG_PROD is configured
+        id: guard
+        env:
+          KUBECONFIG_VALUE: ${{ secrets.KUBECONFIG_PROD }}
+        run: |
+          if [ -z "$KUBECONFIG_VALUE" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::KUBECONFIG_PROD is not set — skipping the production deploy."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install kustomize
+        if: steps.guard.outputs.configured == 'true'
         run: |
           curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
           sudo mv kustomize /usr/local/bin/
 
       - name: Configure kubectl
+        if: steps.guard.outputs.configured == 'true'
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG_PROD }}" > ~/.kube/config
 
       - name: Deploy to production
+        if: steps.guard.outputs.configured == 'true'
         run: |
           bash scripts/deploy-k8s.sh prod \
             "${{ needs.build-images.outputs.api-tag }}" \
