@@ -499,6 +499,35 @@ pub fn set_stake(env: &Env, addr: &Address, amount: &i128) {
         .set(&DataKey::StakeInfo(addr.clone()), amount);
 }
 
+/// The token a source used to stake.
+///
+/// Slashing has to move real tokens, and a `StakeInfo` counter alone does not
+/// say *which* token it is denominated in.  Recording it here is what lets
+/// `slash` transfer from the correct asset and lets `stake` reject a top-up in
+/// a different token instead of silently mixing denominations.
+pub fn get_stake_token(env: &Env, addr: &Address) -> Option<Address> {
+    env.storage().instance().get(&DataKey::StakeToken(addr.clone()))
+}
+
+pub fn set_stake_token(env: &Env, addr: &Address, token: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::StakeToken(addr.clone()), token);
+}
+
+/// Destination for slashed stake.  Required before `slash` can move anything,
+/// so an admin has to state explicitly where confiscated funds go rather than
+/// having them default into an unreviewed account.
+pub fn get_stake_treasury(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::StakeTreasury)
+}
+
+pub fn set_stake_treasury(env: &Env, treasury: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::StakeTreasury, treasury);
+}
+
 pub fn get_slash_count(env: &Env, addr: &Address) -> u32 {
     env.storage()
         .instance()

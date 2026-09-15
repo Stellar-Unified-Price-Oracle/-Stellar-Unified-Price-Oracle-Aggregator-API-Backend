@@ -220,6 +220,7 @@ pub enum DataKey {
     Whitelist(Address),
     FeeBalance,
     StakeInfo(Address),
+    StakeToken(Address),
     StakeTreasury,
     SlashHistory(Address, u32),
     SlashCount(Address),

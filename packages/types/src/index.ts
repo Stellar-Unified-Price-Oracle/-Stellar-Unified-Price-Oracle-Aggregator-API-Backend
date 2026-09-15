@@ -16,7 +16,25 @@ export interface NormalizedPrice {
   price: bigint;
   decimals: number;
   source: OracleSourceName;
+  /**
+   * Best-known observation time, in Unix seconds.
+   *
+   * This equals `observedAt` when the provider reported one, and is otherwise
+   * the local fetch time. Anything that reasons about *age* — staleness checks,
+   * retention, gap detection — should read `observedAt` rather than this field,
+   * because a locally stamped price can never be shown to be stale.
+   */
   timestamp: number;
+  /**
+   * The provider's own observation time, in Unix seconds.
+   *
+   * `null` (or absent) means the provider does not report one, so `timestamp`
+   * is only local fetch time and the freshness of this price is not
+   * independently verifiable.
+   */
+  observedAt?: number | null;
+  /** Local time this response was received, in Unix seconds. */
+  fetchedAt?: number;
 }
 
 // ── Aggregated (median) price ─────────────────────────────────────────────────
@@ -39,6 +57,13 @@ export interface AggregatedPrice {
   confidence: number;
   degradationLevel: DegradationLevel;
   stale: boolean;
+  /**
+   * True only when every contributing source reported its own observation
+   * time, so this price's age was independently verifiable. False means
+   * freshness rests on local fetch times — a provider quietly serving cached
+   * data would not be detected.
+   */
+  ageVerified?: boolean;
   anomaly?: AnomalyScore;
 }
 

@@ -31,6 +31,8 @@ mod merkle_test;
 #[cfg(test)]
 mod proxy_test;
 #[cfg(test)]
+mod staking_test;
+#[cfg(test)]
 mod test;
 #[cfg(test)]
 mod upgrade_migration_test;

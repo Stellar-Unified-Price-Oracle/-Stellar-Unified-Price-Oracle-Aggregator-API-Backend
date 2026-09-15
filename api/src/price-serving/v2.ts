@@ -141,38 +141,9 @@ router.get('/prices', async (req: Request, res: Response) => {
   res.json(v2Ok(aggregated));
 });
 
-router.get('/prices/:asset', async (req: Request, res: Response) => {
-  const asset = req.params.asset.toUpperCase();
-  const cacheKey = `v2:price:${asset}`;
-  const cached = await pricesCache.get(cacheKey);
-  if (cached) {
-    cacheHitTotal.inc();
-    return res.json(v2Ok(cached, true));
-  }
-  cacheMissTotal.inc();
-
-  const prices = await readAssetPrices();
-  const price = prices.find((p) => p.asset === asset);
-
-  if (!price) {
-    return res.status(404).json(
-      v2Fail({ code: 'NOT_FOUND', message: `No price data found for asset: ${asset}` }),
-    );
-  }
-
-  priceQueriesTotal.inc({ asset });
-  lastPriceTimestamp.set({ asset }, price.timestamp);
-
-  const enriched = {
-    ...price,
-    sourceCount: Array.isArray(price.sources) ? price.sources.length : 1,
-    confidence: Array.isArray(price.sources) ? (price.sources.length >= 3 ? 'high' : price.sources.length >= 2 ? 'medium' : 'low') : 'low',
-  };
-
-  await pricesCache.set(cacheKey, enriched, 'price');
-  res.json(v2Ok(enriched));
-});
-
+// Registered before '/prices/:asset' on purpose: Express matches routes in
+// declaration order, so a ':asset' route declared first swallows the literal
+// "batch" segment and this endpoint is unreachable over GET.
 router.get('/prices/batch', async (req: Request, res: Response) => {
   const assetsParam = req.query.assets as string;
   if (!assetsParam) {
@@ -232,6 +203,38 @@ router.get('/prices/batch', async (req: Request, res: Response) => {
 
   await pricesCache.set(cacheKey, response, 'prices');
   res.json(v2Ok(response));
+});
+
+router.get('/prices/:asset', async (req: Request, res: Response) => {
+  const asset = req.params.asset.toUpperCase();
+  const cacheKey = `v2:price:${asset}`;
+  const cached = await pricesCache.get(cacheKey);
+  if (cached) {
+    cacheHitTotal.inc();
+    return res.json(v2Ok(cached, true));
+  }
+  cacheMissTotal.inc();
+
+  const prices = await readAssetPrices();
+  const price = prices.find((p) => p.asset === asset);
+
+  if (!price) {
+    return res.status(404).json(
+      v2Fail({ code: 'NOT_FOUND', message: `No price data found for asset: ${asset}` }),
+    );
+  }
+
+  priceQueriesTotal.inc({ asset });
+  lastPriceTimestamp.set({ asset }, price.timestamp);
+
+  const enriched = {
+    ...price,
+    sourceCount: Array.isArray(price.sources) ? price.sources.length : 1,
+    confidence: priceConfidence(price),
+  };
+
+  await pricesCache.set(cacheKey, enriched, 'price');
+  res.json(v2Ok(enriched));
 });
 
 router.post('/prices/batch', async (req: Request, res: Response) => {

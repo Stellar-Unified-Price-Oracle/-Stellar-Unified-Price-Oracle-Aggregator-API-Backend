@@ -36,7 +36,7 @@ export class ReflectorSource extends BaseSource {
       asset,
       data.price,
       data.decimals || 8,
-      data.timestamp || Math.floor(Date.now() / 1000),
+      data.timestamp ?? null,
     );
   }
 }

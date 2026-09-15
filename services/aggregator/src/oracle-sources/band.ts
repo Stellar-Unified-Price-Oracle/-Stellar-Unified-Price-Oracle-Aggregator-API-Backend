@@ -27,11 +27,13 @@ export class BandSource extends BaseSource {
 
     if (!response.data?.data?.price) return null;
 
+    // Band reports the provider's own update time; keep it as `observedAt`
+    // rather than falling back to local fetch time when it is missing.
     return this.normalize(
       asset,
       response.data.data.price,
       response.data.data.decimals || 9,
-      response.data.data.updated_at || Math.floor(Date.now() / 1000),
+      response.data.data.updated_at ?? null,
     );
   }
 

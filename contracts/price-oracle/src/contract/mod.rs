@@ -97,16 +97,40 @@ impl PriceOracleContract {
 
     // ── Staking / slashing ─────────────────────────────────────────────────
 
-    pub fn stake(env: Env, source: Address, amount: i128, token: Address) {
-        submission::stake(&env, &source, amount, &token);
+    pub fn stake(
+        env: Env,
+        source: Address,
+        amount: i128,
+        token: Address,
+    ) -> Result<(), OracleError> {
+        submission::stake(&env, &source, amount, &token)
     }
 
-    pub fn slash(env: Env, source: Address, amount: i128, reason: String) {
-        submission::slash(&env, &source, amount, &reason);
+    pub fn slash(
+        env: Env,
+        source: Address,
+        amount: i128,
+        reason: String,
+    ) -> Result<(), OracleError> {
+        submission::slash(&env, &source, amount, &reason)
     }
 
     pub fn get_stake_balance(env: Env, source: Address) -> i128 {
         submission::get_stake_balance(&env, &source)
+    }
+
+    /// Set where slashed stake is sent.  `slash` refuses to run until this is
+    /// configured.
+    pub fn set_stake_treasury(
+        env: Env,
+        admin: Address,
+        treasury: Address,
+    ) -> Result<(), OracleError> {
+        admin::set_stake_treasury(&env, &admin, &treasury)
+    }
+
+    pub fn get_stake_treasury(env: Env) -> Option<Address> {
+        queries::get_stake_treasury(&env)
     }
 
     // ── Issue #69 — deviation threshold ────────────────────────────────────

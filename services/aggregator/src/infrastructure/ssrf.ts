@@ -128,8 +128,10 @@ export function validateOutboundUrl(rawUrl: string): URL {
  * hands a safe address to the socket. This closes the DNS-rebinding window where
  * a hostname passes allowlist checks but later resolves to an internal IP.
  *
- * The HTTP/HTTPS agents call this in single-address mode, so it always returns
- * one validated address.
+ * net.js calls this in two different modes. With `all: true` — which is what it
+ * uses when `autoSelectFamily` (Happy Eyeballs) is on, the default since Node
+ * 20 — it expects the full array back. Otherwise it expects a single address.
+ * The result must match the mode that was requested.
  */
 function secureLookup(
   hostname: string,
@@ -158,6 +160,14 @@ function secureLookup(
         'dns-rebinding',
       ) as NodeJS.ErrnoException;
       callback(blocked, '', 0);
+      return;
+    }
+
+    // Returning a single address while `all: true` was requested makes net.js
+    // index `[0]` off a string, and every outbound request then fails with
+    // ERR_INVALID_IP_ADDRESS before it ever reaches the socket.
+    if (options?.all) {
+      callback(null, safe, 0);
       return;
     }
 

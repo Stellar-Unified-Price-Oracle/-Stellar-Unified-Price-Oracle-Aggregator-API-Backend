@@ -44,4 +44,12 @@ pub enum OracleError {
     ContractPaused = 33,
     // Issue #385 — Merkle batch replay resistance
     BatchEntryAlreadyApplied = 34,
+    // Slashing moves real tokens, so the stake/token bookkeeping has to be
+    // resolved before any transfer happens.
+    StakeTokenMismatch = 35,
+    StakeTokenNotRecorded = 36,
+    TreasuryNotConfigured = 37,
+    InvalidSlashAmount = 38,
+    NoStakeToSlash = 39,
+    InvalidStakeAmount = 40,
 }

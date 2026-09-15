@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import fetch from 'node-fetch';
 
-const API_BASE = process.env.API_URL || 'http://localhost:3000/api/v2';
+const API_ORIGIN = process.env.API_ORIGIN || 'http://localhost:3000';
+const API_BASE = process.env.API_V2_URL || `${API_ORIGIN}/api/v2`;
 
 describe.skipIf(!process.env.RUN_INTEGRATION_TESTS)('Batch Price Query Endpoint (Issue #230)', () => {
   async function waitForService(url: string, maxAttempts = 30): Promise<void> {
@@ -21,7 +22,7 @@ describe.skipIf(!process.env.RUN_INTEGRATION_TESTS)('Batch Price Query Endpoint 
 
   beforeAll(async () => {
     await waitForService(API_BASE, 5);
-  }, { timeout: 30000 });
+  }, 30_000);
 
   const authHeaders = {
     'Authorization': `Bearer ${process.env.TEST_API_KEY || 'test-key'}`,

@@ -130,6 +130,15 @@ pub(crate) fn apply_batch_entry(
     entry: &BatchPriceEntry,
     proof: &MerkleProof,
 ) -> Result<PriceDataPoint, OracleError> {
+    // Issue #379 — this is a submission path, not a read.  The emergency pause
+    // is what stops prices being written during an incident, and this entrypoint
+    // is permissionless (the Merkle proof is the authorization), so without the
+    // check here the pause could be stepped around entirely by anyone holding a
+    // proof for a batch that was committed before the freeze.
+    if storage::is_paused(env) {
+        return Err(OracleError::ContractPaused);
+    }
+
     let root = storage::get_batch_root(env, batch_nonce).ok_or(OracleError::BatchRootNotFound)?;
 
     if entry.price < 0 {
@@ -185,33 +194,89 @@ pub(crate) fn verify_batch_proof(
 
 // ── Staking / slashing ───────────────────────────────────────────────────────
 
-pub(crate) fn stake(env: &Env, source: &Address, amount: i128, token: &Address) {
+pub(crate) fn stake(
+    env: &Env,
+    source: &Address,
+    amount: i128,
+    token: &Address,
+) -> Result<(), OracleError> {
     source.require_auth();
+
+    if amount <= 0 {
+        return Err(OracleError::InvalidStakeAmount);
+    }
+
+    // A source's stake is denominated in exactly one token.  Letting a second
+    // token top up the same `StakeInfo` counter would make the counter
+    // meaningless — and later `slash` would transfer from whichever token
+    // happened to be recorded first.
+    if let Some(recorded) = storage::get_stake_token(env, source) {
+        if recorded != *token {
+            return Err(OracleError::StakeTokenMismatch);
+        }
+    }
+
     let token_client = token::Client::new(env, token);
     token_client.transfer(source, &env.current_contract_address(), &amount);
+
+    storage::set_stake_token(env, source, token);
     let current = storage::get_stake(env, source);
     storage::set_stake(env, source, &(current + amount));
+
     SourceStaked {
         source: source.clone(),
         amount,
     }
     .publish(env);
+
+    Ok(())
 }
 
-pub(crate) fn slash(env: &Env, source: &Address, amount: i128, reason: &String) {
+/// Confiscate part of a source's stake and move the tokens to the treasury.
+///
+/// The accounting and the ledger have to move together: the counter is only
+/// decremented once the transfer has succeeded, so a failed transfer leaves
+/// the recorded stake untouched rather than reporting a slash that never
+/// happened.
+pub(crate) fn slash(
+    env: &Env,
+    source: &Address,
+    amount: i128,
+    reason: &String,
+) -> Result<(), OracleError> {
     let admin = storage::get_admin(env);
     admin.require_auth();
+
+    if amount <= 0 {
+        return Err(OracleError::InvalidSlashAmount);
+    }
+
     let current = storage::get_stake(env, source);
+    if current <= 0 {
+        return Err(OracleError::NoStakeToSlash);
+    }
+
+    // Without the recorded token there is no way to know which asset to move.
+    let token = storage::get_stake_token(env, source).ok_or(OracleError::StakeTokenNotRecorded)?;
+    let treasury = storage::get_stake_treasury(env).ok_or(OracleError::TreasuryNotConfigured)?;
+
     let slashed = if amount > current { current } else { amount };
+
+    let token_client = token::Client::new(env, &token);
+    token_client.transfer(&env.current_contract_address(), &treasury, &slashed);
+
     storage::set_stake(env, source, &(current - slashed));
     let count = storage::get_slash_count(env, source);
     storage::set_slash_count(env, source, &(count + 1));
+
     SourceSlashed {
         source: source.clone(),
         reason: reason.clone(),
         slashed,
     }
     .publish(env);
+
+    Ok(())
 }
 
 pub(crate) fn get_stake_balance(env: &Env, source: &Address) -> i128 {

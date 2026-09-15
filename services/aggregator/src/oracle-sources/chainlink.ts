@@ -27,12 +27,11 @@ export class ChainlinkSource extends BaseSource {
 
     if (!response.data?.USD?.PRICE) return null;
 
-    return this.normalize(
-      asset,
-      response.data.USD.PRICE,
-      8,
-      Math.floor(Date.now() / 1000),
-    );
+    // This endpoint returns a price but no observation time, so the provider's
+    // own timestamp is unavailable. Passing `null` rather than `Date.now()`
+    // keeps that gap visible: the resulting price is never counted as
+    // age-verified, instead of looking permanently fresh.
+    return this.normalize(asset, response.data.USD.PRICE, 8, null);
   }
 
   private toSymbol(asset: string): string {

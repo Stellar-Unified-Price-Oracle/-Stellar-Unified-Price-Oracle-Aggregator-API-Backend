@@ -239,3 +239,102 @@ jobs:
           name: benchmark-results
           path: scripts/benchmark-baseline.json
           retention-days: 30
+
+  # The REST and WebSocket surface is otherwise only exercised by unit tests, so
+  # this job runs the real pipeline offline: a stub stands in for the four
+  # upstream oracle APIs, the aggregator polls it and broadcasts, and the API
+  # serves the history files the aggregator writes. No database is needed — both
+  # services fall back to file-backed storage — and nothing here touches the
+  # network.
+  api-integration:
+    name: API integration tests (live stack)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build services
+        run: npm run build:backend
+
+      - name: Run integration tests against a live stack
+        env:
+          # The stub is reached over loopback, which the SSRF guard blocks by
+          # default, and the test clients connect without an Origin header.
+          SSRF_ALLOW_PRIVATE_IPS: 'true'
+          WS_REQUIRE_ORIGIN: 'false'
+        run: |
+          set -euo pipefail
+
+          nohup node scripts/stub-oracle-server.mjs > /tmp/stub-oracle.log 2>&1 &
+
+          # Each service resolves its history directory relative to its own dist
+          # folder, so they only agree when api/data points at the aggregator's.
+          rm -rf api/data
+          ln -s "$PWD/services/aggregator/data" api/data
+
+          (
+            cd services/aggregator
+            nohup env \
+              PORT=4000 \
+              POLLING_INTERVAL_MS=5000 \
+              WATCHED_ASSETS=XLM,USDC,BTC,ETH,USDT \
+              CHAINLINK_BASE_URL=http://localhost:4010 \
+              REDSTONE_BASE_URL=http://localhost:4010 \
+              BAND_BASE_URL=http://localhost:4010 \
+              REFLECTOR_BASE_URL=http://localhost:4010 \
+              node dist/index.js > /tmp/aggregator.log 2>&1 &
+          )
+
+          (
+            cd api
+            nohup env \
+              API_PORT=3000 \
+              WS_PORT=3001 \
+              API_KEYS='test-key:10000:ci-integration:pro:viewer' \
+              node dist/index.js > /tmp/api.log 2>&1 &
+          )
+
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:4002/health > /dev/null \
+              && curl -sf http://localhost:3000/api/v1/health > /dev/null; then
+              echo "Stack ready after ${i}s"
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::Stack did not become ready"
+            echo '--- stub oracle ---'; tail -20 /tmp/stub-oracle.log || true
+            echo '--- aggregator ---'; tail -60 /tmp/aggregator.log || true
+            echo '--- api ---'; tail -60 /tmp/api.log || true
+            exit 1
+          fi
+
+          # Let the aggregator finish a poll cycle so prices exist and the
+          # socket has broadcast at least once before the WS test subscribes.
+          sleep 8
+
+          cd api
+          RUN_INTEGRATION_TESTS=1 TEST_API_KEY=test-key \
+            npx vitest run \
+              tests/integration.test.ts \
+              tests/v2-assets.test.ts \
+              tests/v2-batch-prices.test.ts
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: |
+          echo '--- stub oracle ---'; tail -40 /tmp/stub-oracle.log 2>/dev/null || true
+          echo '--- aggregator ---'; tail -80 /tmp/aggregator.log 2>/dev/null || true
+          echo '--- api ---'; tail -80 /tmp/api.log 2>/dev/null || true

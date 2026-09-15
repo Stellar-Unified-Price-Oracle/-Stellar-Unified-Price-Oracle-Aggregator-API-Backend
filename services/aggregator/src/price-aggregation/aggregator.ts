@@ -1,9 +1,9 @@
-import BigNumber from 'bignumber.js';
 import { NormalizedPrice, AggregatedPrice, DegradationLevel } from '../infrastructure/types';
 import { config } from '../infrastructure/config';
 import { logger } from '../observability/logger';
 import { CircuitBreaker, CircuitBreakerConfig } from './circuit-breaker';
 import { anomalyDetector } from './anomaly-detector';
+import { medianOnCommonScale, isAgeVerified } from './median';
 
 export class PriceAggregator {
   private sources: Map<string, NormalizedPrice> = new Map();
@@ -57,24 +57,28 @@ export class PriceAggregator {
 
     const pricesToUse = trustedPrices.length > 0 ? trustedPrices : activePrices;
 
-    const median = this.medianPrice(pricesToUse);
+    const { value: median, decimals } = medianOnCommonScale(pricesToUse);
     const sources = Array.from(new Set(pricesToUse.map((p) => p.source)));
     const confidence = pricesToUse.length / Math.max(totalSources, 1);
 
     const degradationLevel = this.computeDegradationLevel(pricesToUse.length, totalSources, stale);
 
-    const medianFloat = parseFloat(median.toString()) / Math.pow(10, pricesToUse[0].decimals);
+    const medianFloat = parseFloat(median.toString()) / Math.pow(10, decimals);
     const anomaly = anomalyDetector.detect(normalized, medianFloat) ?? undefined;
 
     return {
       asset: normalized,
       price: median.toString(),
-      decimals: pricesToUse[0].decimals,
+      // The median is computed on a common scale, so it must be reported with
+      // the scale it was computed on — not with the first source's decimals,
+      // which only matched by coincidence when every source agreed.
+      decimals,
       sources,
       timestamp: Math.floor(Date.now() / 1000),
       confidence,
       degradationLevel,
       stale,
+      ageVerified: isAgeVerified(pricesToUse),
       anomaly,
     };
   }
@@ -116,17 +120,5 @@ export class PriceAggregator {
     } else {
       this.circuitBreaker.resetAll();
     }
-  }
-
-  private medianPrice(prices: NormalizedPrice[]): BigNumber {
-    const sorted = prices
-      .map((p) => new BigNumber(p.price.toString()))
-      .sort((a, b) => a.comparedTo(b) ?? 0);
-
-    const mid = Math.floor(sorted.length / 2);
-    if (sorted.length % 2 === 0) {
-      return sorted[mid - 1].plus(sorted[mid]).dividedBy(2);
-    }
-    return sorted[mid];
   }
 }

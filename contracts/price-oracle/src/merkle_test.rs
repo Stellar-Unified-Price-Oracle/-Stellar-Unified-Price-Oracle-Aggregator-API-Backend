@@ -268,6 +268,54 @@ mod merkle_tests {
         assert_eq!(stored.price, 100_000_000);
     }
 
+    /// Regression: the emergency pause has to cover `apply_batch_entry` too.
+    ///
+    /// The batch was committed before the freeze, so a proof for it stays valid
+    /// on its own — and this entrypoint is permissionless.  Without the pause
+    /// check anyone holding that proof could keep writing prices while the
+    /// contract was supposedly frozen.
+    #[test]
+    fn test_apply_batch_entry_is_blocked_while_paused() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(PriceOracleContract, ());
+        let client = PriceOracleContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        client.initialize(&admin);
+        client.add_oracle_source(&admin, &oracle, &String::from_str(&env, "Chainlink"));
+
+        let entry = make_entry(&env, "XLM", 100_000_000, &oracle);
+        let root = hash_leaf(&env, &entry);
+        let nonce = client.get_batch_nonce();
+        client.submit_batch(&oracle, &nonce, &root);
+
+        // Freeze after the batch is committed but before any leaf is applied.
+        env.as_contract(&id, || storage::set_paused(&env, true));
+
+        let proof = MerkleProof {
+            leaf_index: 0,
+            siblings: Vec::new(&env),
+        };
+        assert!(
+            client.try_apply_batch_entry(&nonce, &entry, &proof).is_err(),
+            "paused contract must not accept batch entries"
+        );
+        assert!(client.get_price(&String::from_str(&env, "XLM")).is_none());
+
+        // Lifting the freeze restores the path, so the check is a gate and not
+        // a permanent rejection.
+        env.as_contract(&id, || storage::set_paused(&env, false));
+        client.apply_batch_entry(&nonce, &entry, &proof);
+        assert_eq!(
+            client
+                .get_price(&String::from_str(&env, "XLM"))
+                .unwrap()
+                .price,
+            100_000_000
+        );
+    }
+
     #[test]
     fn test_submit_and_apply_multi_entry_batch() {
         let (env, client, _admin, oracle) = setup();

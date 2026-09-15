@@ -78,6 +78,21 @@ pub(crate) fn set_trusted_asset(
     Ok(())
 }
 
+// ── Slashed-stake treasury ───────────────────────────────────────────────────
+
+/// Set the destination for slashed stake.  `slash` requires this to be
+/// configured: confiscated tokens have to go somewhere an admin chose.
+pub(crate) fn set_stake_treasury(
+    env: &Env,
+    admin: &Address,
+    treasury: &Address,
+) -> Result<(), OracleError> {
+    admin.require_auth();
+    storage::verify_admin(env, admin)?;
+    storage::set_stake_treasury(env, treasury);
+    Ok(())
+}
+
 // ── Fees and whitelist ───────────────────────────────────────────────────────
 
 pub(crate) fn set_query_fee(env: &Env, fee: i128) {

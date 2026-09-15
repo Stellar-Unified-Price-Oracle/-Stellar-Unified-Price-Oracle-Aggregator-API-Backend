@@ -59,3 +59,9 @@ pub(crate) fn get_deviation_threshold(env: &Env) -> Option<u32> {
 pub(crate) fn get_query_fee(env: &Env) -> i128 {
     storage::get_query_fee(env)
 }
+
+/// Destination for slashed stake, if an admin has configured one.  `slash`
+/// fails while this is unset.
+pub(crate) fn get_stake_treasury(env: &Env) -> Option<Address> {
+    storage::get_stake_treasury(env)
+}

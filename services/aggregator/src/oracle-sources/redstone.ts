@@ -29,11 +29,8 @@ export class RedstoneSource extends BaseSource {
     const data = response.data?.[symbol];
     if (!data?.value) return null;
 
-    return this.normalize(
-      asset,
-      data.value,
-      data.decimals || 8,
-      Math.floor(Date.now() / 1000),
-    );
+    // The response carries no observation time, so the age of this price
+    // cannot be established from the provider (`null`, not `Date.now()`).
+    return this.normalize(asset, data.value, data.decimals || 8, null);
   }
 }

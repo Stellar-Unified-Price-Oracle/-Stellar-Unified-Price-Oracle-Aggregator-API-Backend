@@ -35,16 +35,22 @@ export abstract class BaseSource {
     asset: string,
     rawPrice: string | number | BigNumber,
     decimals: number,
-    timestamp: number,
+    observedAt: number | null,
   ): NormalizedPrice {
     const bn = new BigNumber(rawPrice);
     const scaled = bn.multipliedBy(new BigNumber(10).pow(decimals));
+    const fetchedAt = Math.floor(Date.now() / 1000);
     return {
       asset: asset.toUpperCase(),
       price: BigInt(scaled.toFixed(0)),
       decimals,
       source: this.name,
-      timestamp,
+      // Pass `null` when the provider reports no observation time. Stamping the
+      // local fetch time into `timestamp` made every staleness check vacuous for
+      // such a source, so the distinction is kept explicit instead.
+      timestamp: observedAt ?? fetchedAt,
+      observedAt,
+      fetchedAt,
     };
   }
 

@@ -1,6 +1,7 @@
 import BigNumber from 'bignumber.js';
 import { NormalizedPrice } from '../infrastructure/types';
 import { logger } from '../observability/logger';
+import { medianOnCommonScale, toScale } from './median';
 
 export interface CircuitBreakerConfig {
   deviationThreshold: number; // percentage (e.g., 20 for 20%)
@@ -39,8 +40,12 @@ export class CircuitBreaker {
       return { isSuspicious: state.suspicious, deviation: 0 };
     }
 
-    const median = this.calculateMedian(assetPrices);
-    const deviation = this.calculateDeviation(new BigNumber(price.price.toString()), median);
+    // Deviation has to be measured on one scale. Comparing this source's raw
+    // integer against a median of raw integers from sources with different
+    // decimals reported a large deviation for a perfectly consistent source,
+    // flagging it as suspicious and dropping it from aggregation.
+    const { value: median, decimals } = medianOnCommonScale(assetPrices);
+    const deviation = this.calculateDeviation(toScale(price, decimals), median);
 
     // Update trailing median history
     const medianKey = price.asset;
@@ -144,18 +149,6 @@ export class CircuitBreaker {
       });
     }
     return this.sourceStates.get(key)!;
-  }
-
-  private calculateMedian(prices: NormalizedPrice[]): BigNumber {
-    const sorted = prices
-      .map((p) => new BigNumber(p.price.toString()))
-      .sort((a, b) => a.comparedTo(b) ?? 0);
-
-    const mid = Math.floor(sorted.length / 2);
-    if (sorted.length % 2 === 0) {
-      return sorted[mid - 1].plus(sorted[mid]).dividedBy(2);
-    }
-    return sorted[mid];
   }
 
   private calculateDeviation(price: BigNumber, median: BigNumber): number {
