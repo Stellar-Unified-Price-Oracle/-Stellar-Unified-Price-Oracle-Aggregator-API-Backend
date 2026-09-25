@@ -41,6 +41,14 @@ export function toAppError(error: unknown, fallbackPath?: string): AppError {
   }
 
   const message = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+  if (message.includes('InvalidDecimals') || message.includes('Error(Contract, #5)')) {
+    return new AppError(
+      ErrorCode.INVALID_DECIMALS,
+      'Contract rejected price submission due to invalid decimals scale (must be 0..=18 and immutable mid-history)',
+      { rawError: message },
+      fallbackPath,
+    );
+  }
   return new AppError(ErrorCode.INTERNAL_ERROR, message, undefined, fallbackPath);
 }
 

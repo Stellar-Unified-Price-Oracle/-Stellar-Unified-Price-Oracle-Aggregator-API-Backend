@@ -205,17 +205,29 @@ export class ContractPublisher {
       });
 
       if (simulateResponse.error) {
+        const errorStr = String(simulateResponse.error);
+        const isInvalidDecimals = errorStr.includes('InvalidDecimals') || errorStr.includes('Error(Contract, #5)');
+        const status = isInvalidDecimals ? 'source_quality_rejected' : 'simulation_failed';
+
         emitContractLog({
           txHash,
           function: fnName,
           asset,
           params,
           simulationFee: String(simulationFee),
-          status: 'simulation_failed',
-          error: String(simulateResponse.error),
+          status,
+          error: errorStr,
           durationMs: Date.now() - startMs,
           timestamp: Math.floor(Date.now() / 1000),
         });
+
+        if (isInvalidDecimals) {
+          logger.warn(`[Contract] Price submission rejected for ${asset} due to source quality issue (InvalidDecimals scale): ${errorStr}`, {
+            asset,
+            decimals,
+            price: price.toString(),
+          });
+        }
         return null;
       }
 
@@ -249,24 +261,39 @@ export class ContractPublisher {
       return txHash;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
+      const isInvalidDecimals = errMsg.includes('InvalidDecimals') || errMsg.includes('Error(Contract, #5)');
+      const isNonRetryable = isInvalidDecimals || errMsg.includes('ContractPaused') || errMsg.includes('Error(Contract, #33)');
+
       emitContractLog({
         txHash: txHash || 'unknown',
         function: fnName,
         asset,
         params,
-        status: 'failed',
+        status: isInvalidDecimals ? 'source_quality_rejected' : 'failed',
         error: errMsg,
         durationMs: Date.now() - startMs,
         timestamp: Math.floor(Date.now() / 1000),
       });
-      logger.error(`[Contract] Failed to submit ${asset}: ${errMsg}`, { txHash });
 
-      this.retryQueue.enqueue({
-        asset,
-        price,
-        decimals,
-        timestamp,
-      });
+      if (isInvalidDecimals) {
+        logger.warn(`[Contract] Non-retryable source quality failure for ${asset}: InvalidDecimals rejected by contract: ${errMsg}`, {
+          asset,
+          decimals,
+          price: price.toString(),
+          txHash,
+        });
+      } else {
+        logger.error(`[Contract] Failed to submit ${asset}: ${errMsg}`, { txHash });
+      }
+
+      if (!isNonRetryable) {
+        this.retryQueue.enqueue({
+          asset,
+          price,
+          decimals,
+          timestamp,
+        });
+      }
 
       return null;
     }

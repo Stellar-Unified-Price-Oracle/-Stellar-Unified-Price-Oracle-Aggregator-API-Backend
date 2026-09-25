@@ -8,7 +8,7 @@
 // carried only topics. Keeping the original shapes means the topic order and
 // payload encoding are unchanged for existing consumers.
 
-use soroban_sdk::{contractevent, Address, Bytes, BytesN, String};
+use soroban_sdk::{contractevent, Address, Bytes, BytesN, String, Symbol};
 
 // ── Proxy upgrade governance (Issue #375) ─────────────────────────────────────
 
@@ -151,11 +151,167 @@ pub struct GovernanceEmergencyExecuted {
     pub proposal_id: u32,
 }
 
-// ── Multi-sig admin ───────────────────────────────────────────────────────────
+// ── Multi-sig admin & proposal lifecycle (Issue #564) ─────────────────────────
 
-#[contractevent(data_format = "single-value")]
+#[contractevent(data_format = "vec")]
+pub struct ProposalCreated {
+    #[topic]
+    pub proposer: Address,
+    pub proposal_id: u32,
+    pub action: Symbol,
+}
+
+#[contractevent(data_format = "vec")]
+pub struct ProposalApproved {
+    #[topic]
+    pub signer: Address,
+    pub proposal_id: u32,
+    pub action: Symbol,
+}
+
+#[contractevent(data_format = "vec")]
+pub struct ProposalCancelled {
+    #[topic]
+    pub caller: Address,
+    pub proposal_id: u32,
+    pub action: Symbol,
+}
+
+#[contractevent(data_format = "vec")]
+pub struct ProposalExpired {
+    #[topic]
+    pub caller: Address,
+    pub proposal_id: u32,
+    pub action: Symbol,
+}
+
+#[contractevent(data_format = "vec")]
 pub struct GovernanceExecuted {
     #[topic]
     pub signer: Address,
     pub proposal_id: u32,
+    pub action: Symbol,
+}
+
+// ── Emergency pause (Issue #564) ──────────────────────────────────────────────
+
+#[contractevent(data_format = "single-value")]
+pub struct Paused {
+    #[topic]
+    pub signer: Address,
+    pub proposal_id: u32,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct Unpaused {
+    #[topic]
+    pub signer: Address,
+    pub proposal_id: u32,
+}
+
+// ── Admin-config mutations (Issue #564) ────────────────────────────────────────
+
+#[contractevent(data_format = "single-value")]
+pub struct SourceAdded {
+    #[topic]
+    pub source: Address,
+    pub name: String,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct SourceRemoved {
+    #[topic]
+    pub source: Address,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct TrustedAssetSet {
+    #[topic]
+    pub asset: String,
+    pub trusted: bool,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct ReputationReset {
+    #[topic]
+    pub source: Address,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct StakeTreasurySet {
+    #[topic]
+    pub treasury: Address,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct DeviationThresholdSet {
+    pub threshold_bps: u32,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct SignerAdded {
+    #[topic]
+    pub signer: Address,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct SignerRemoved {
+    #[topic]
+    pub signer: Address,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct ThresholdSet {
+    pub threshold: u32,
+}
+
+// ── Governed decimals update (Issue #569) ─────────────────────────────────────
+
+#[contractevent(data_format = "vec")]
+pub struct AssetDecimalsUpdated {
+    #[topic]
+    pub asset: String,
+    pub old_decimals: u32,
+    pub new_decimals: u32,
+}
+
+// ── Storage rent / TTL extension (Issue #572) ─────────────────────────────────
+
+#[contractevent(data_format = "vec")]
+pub struct TtlExtended {
+    #[topic]
+    pub asset: String,
+    #[topic]
+    pub caller: Address,
+    pub previous_ttl: u32,
+    pub new_ttl: u32,
+}
+
+// ── Two-step admin handover (Issue #565) ──────────────────────────────────────
+
+#[contractevent(data_format = "single-value")]
+pub struct AdminTransferProposed {
+    #[topic]
+    pub current_admin: Address,
+    #[topic]
+    pub pending_admin: Address,
+    pub deadline: u64,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct AdminTransferAccepted {
+    #[topic]
+    pub old_admin: Address,
+    #[topic]
+    pub new_admin: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct AdminTransferCancelled {
+    #[topic]
+    pub admin: Address,
+    #[topic]
+    pub pending_admin: Address,
+    pub timestamp: u64,
 }

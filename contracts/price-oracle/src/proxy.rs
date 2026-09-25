@@ -447,14 +447,25 @@ impl ProxyContract {
         Ok(())
     }
 
-    /// Issue #376 — extend this contract instance's TTL (Admin, Implementation,
+    /// Issue #376 & Issue #572 — extend this contract instance's TTL (Admin, Implementation,
     /// PendingProxyUpgrade, CanaryConfig, etc. all live in instance storage).
-    pub fn extend_instance_ttl(env: Env, threshold: u32, extend_to: u32) {
-        storage::extend_instance_ttl(&env, threshold, extend_to);
+    pub fn extend_instance_ttl(
+        env: Env,
+        caller: Address,
+        threshold: u32,
+        extend_to: u32,
+    ) -> Result<(), OracleError> {
+        storage::extend_instance_ttl(&env, &caller, threshold, extend_to)
     }
 
-    pub fn extend_price_history_ttl(env: Env, asset: String, threshold: u32, extend_to: u32) {
-        storage::extend_price_history_ttl(&env, &asset, threshold, extend_to);
+    pub fn extend_price_history_ttl(
+        env: Env,
+        caller: Address,
+        asset: String,
+        threshold: u32,
+        extend_to: u32,
+    ) -> Result<(), OracleError> {
+        storage::extend_price_history_ttl(&env, &caller, &asset, threshold, extend_to)
     }
 
     pub fn set_trusted_asset(

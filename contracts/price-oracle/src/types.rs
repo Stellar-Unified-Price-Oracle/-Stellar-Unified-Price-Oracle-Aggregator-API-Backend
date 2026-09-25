@@ -113,6 +113,10 @@ pub enum ProposalAction {
     // Issue #379 — multi-region aware emergency pause
     Pause,
     Unpause,
+    // Issue #564 — Proposal action for setting stake treasury
+    SetStakeTreasury(Address),
+    // Issue #569 — Governed decimals change
+    UpdateAssetDecimals(String, u32),
 }
 
 // ── Multi-sig types ──────────────────────────────────────────────────────────
@@ -243,4 +247,6 @@ pub enum DataKey {
     UpgradeApprovals,
     CanaryImplementation,
     CanaryTrafficShareBps,
+    // Issue #565 — Two-step admin handover
+    PendingAdmin,
 }
