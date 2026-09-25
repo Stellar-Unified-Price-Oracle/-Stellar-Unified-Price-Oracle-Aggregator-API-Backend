@@ -52,4 +52,14 @@ pub enum OracleError {
     InvalidSlashAmount = 38,
     NoStakeToSlash = 39,
     InvalidStakeAmount = 40,
+    // Issue #562 — multisig signer/threshold mutation invariants
+    DuplicateSigner = 41,
+    TooManySigners = 42,
+    InsufficientSigners = 43,
+    // Issue #559 — withdraw_fees fee token
+    FeeTokenNotConfigured = 44,
+    // Issue #563 — proposal expiry and unsupported actions
+    ProposalExpired = 45,
+    ProposalCancelledError = 46,
+    UnsupportedProposalAction = 47,
 }

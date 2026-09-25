@@ -159,3 +159,50 @@ pub struct GovernanceExecuted {
     pub signer: Address,
     pub proposal_id: u32,
 }
+
+#[contractevent(data_format = "single-value")]
+pub struct MultiSigProposed {
+    #[topic]
+    pub proposer: Address,
+    pub proposal_id: u32,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct MultiSigApproved {
+    #[topic]
+    pub signer: Address,
+    pub proposal_id: u32,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct MultiSigCancelled {
+    #[topic]
+    pub proposal_id: u32,
+    pub cancelled_by: Address,
+}
+
+// ── Fee treasury ──────────────────────────────────────────────────────────────
+
+#[contractevent(data_format = "vec")]
+pub struct FeesWithdrawn {
+    #[topic]
+    pub recipient: Address,
+    pub token: Address,
+    pub amount: i128,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct QueryFeeSet {
+    #[topic]
+    pub admin: Address,
+    pub fee: i128,
+}
+
+#[contractevent(data_format = "single-value")]
+pub struct WhitelistUpdated {
+    #[topic]
+    pub admin: Address,
+    #[topic]
+    pub addr: Address,
+    pub status: bool,
+}
