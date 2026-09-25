@@ -1,11 +1,13 @@
 #[cfg(test)]
 mod tests_impl {
     use soroban_sdk::testutils::Address as TestAddress;
-    use soroban_sdk::{Address, Env, String};
+    use soroban_sdk::{Address, Bytes, Env, String};
 
     use crate::contract::PriceOracleContract;
     use crate::contract::PriceOracleContractClient;
-    use crate::types::AssetPrice;
+    use crate::errors::OracleError;
+    use crate::storage;
+    use crate::types::{AssetPrice, BatchPriceEntry, MerkleProof};
 
     pub fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
         let env = Env::default();
@@ -265,5 +267,69 @@ mod tests_impl {
 
         let history = client.get_price_history(&asset, &10u32);
         assert_eq!(history.len(), 0);
+    }
+
+    // ── Issue #510: Emergency pause enforcement ────────────────────────────────
+
+    #[test]
+    fn test_submit_price_is_blocked_while_paused() {
+        let (env, client, _admin, oracle) = setup();
+        let contract_id = env.current_contract_address();
+
+        let asset = String::from_str(&env, "XLM");
+        env.as_contract(&contract_id, || storage::set_paused(&env, true));
+
+        let result = client.try_submit_price(
+            &oracle,
+            &asset,
+            &100_000_000i128,
+            &7u32,
+            &env.ledger().timestamp(),
+        );
+
+        match result {
+            Ok(_) => panic!("submit_price should fail while paused"),
+            Err(Ok(OracleError::ContractPaused)) => {}
+            Err(e) => panic!("unexpected error: {e:?}"),
+        }
+
+        assert!(client.get_price(&asset).is_none());
+
+        env.as_contract(&contract_id, || storage::set_paused(&env, false));
+        client.submit_price(
+            &oracle,
+            &asset,
+            &100_000_000i128,
+            &7u32,
+            &env.ledger().timestamp(),
+        );
+        assert_eq!(
+            client.get_price(&asset).unwrap().price,
+            100_000_000
+        );
+    }
+
+    #[test]
+    fn test_submit_batch_is_blocked_while_paused() {
+        let (env, client, _admin, oracle) = setup();
+        let contract_id = env.current_contract_address();
+
+        env.as_contract(&contract_id, || storage::set_paused(&env, true));
+
+        let root = Bytes::new(&env);
+        let nonce = client.get_batch_nonce();
+        let result = client.try_submit_batch(&oracle, &nonce, &root);
+
+        match result {
+            Ok(_) => panic!("submit_batch should fail while paused"),
+            Err(Ok(OracleError::ContractPaused)) => {}
+            Err(e) => panic!("unexpected error: {e:?}"),
+        }
+
+        env.as_contract(&contract_id, || storage::set_paused(&env, false));
+
+        let root = Bytes::new(&env);
+        let nonce = client.get_batch_nonce();
+        assert!(client.try_submit_batch(&oracle, &nonce, &root).is_ok());
     }
 }
