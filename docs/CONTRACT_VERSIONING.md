@@ -124,6 +124,17 @@ section at each tagged release.
   re-check `get_api_version()` (or poll the changelog) before upgrading
   their dApp dependencies.
 
+## Merkle root domain separation & migration policy (Issue #566)
+
+The introduction of RFC 6962 domain separation (prefix `0x00` for leaves, `0x01` for internal nodes) in `merkle::verify_proof` and `hash_leaf` represents a cryptographic format change to Merkle batch roots:
+
+- **Invalidation of Pre-Upgrade Roots**:
+  Any batch roots committed under the un-separated scheme prior to upgrading to the domain-separated contract are **explicitly invalidated**. They will not verify under the new proof rules.
+- **Rationale**:
+  Batch price submission (`submit_batch` / `apply_batch_entry`) is designed for near-real-time ingestion within adjacent ledgers (retention window bounded by `RETAINED_BATCH_ROOTS = 100`). Batches are fully consumed and settled within seconds to minutes of publication; there is no requirement for historical root verification across upgrade boundaries.
+- **Integrator Migration**:
+  All batch publishers must upgrade to the v2 `MerkleTree` builder (`services/aggregator/src/infrastructure/merkle.ts`) concurrently with contract upgrade. The proxy `API_VERSION` remains intact for external price consumers since read interfaces (`get_price`, `get_price_history`) are unaffected.
+
 ## Related documents
 
 - `contracts/price-oracle/CHANGELOG.md` — release log
