@@ -1,11 +1,13 @@
 #[cfg(test)]
 mod tests_impl {
     use soroban_sdk::testutils::Address as TestAddress;
-    use soroban_sdk::{Address, Env, String};
+    use soroban_sdk::{Address, Bytes, Env, String};
 
     use crate::contract::PriceOracleContract;
     use crate::contract::PriceOracleContractClient;
-    use crate::types::AssetPrice;
+    use crate::errors::OracleError;
+    use crate::storage;
+    use crate::types::{AssetPrice, BatchPriceEntry, MerkleProof};
 
     pub fn setup() -> (Env, PriceOracleContractClient<'static>, Address, Address) {
         let env = Env::default();
