@@ -332,4 +332,33 @@ mod tests_impl {
         let nonce = client.get_batch_nonce();
         assert!(client.try_submit_batch(&oracle, &nonce, &root).is_ok());
     }
+
+    // ── Issue #511: Slashing fund management ──────────────────────────────────
+
+    #[test]
+    fn test_reads_work_while_contract_is_paused() {
+        let (env, client, _admin, oracle) = setup();
+        let contract_id = env.current_contract_address();
+
+        let asset = String::from_str(&env, "XLM");
+        client.submit_price(
+            &oracle,
+            &asset,
+            &100_000_000i128,
+            &7u32,
+            &env.ledger().timestamp(),
+        );
+
+        env.as_contract(&contract_id, || storage::set_paused(&env, true));
+
+        let price = client.get_price(&asset);
+        assert!(price.is_some());
+        assert_eq!(price.unwrap().price, 100_000_000);
+
+        let assets = client.get_assets();
+        assert!(assets.len() > 0);
+
+        let history = client.get_price_history(&asset, &100u32);
+        assert!(history.len() > 0);
+    }
 }
