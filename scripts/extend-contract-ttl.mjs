@@ -63,6 +63,7 @@ function extendInstance(contractId, label) {
   if (!contractId) return;
   console.log(`Extending instance TTL for ${label} (${contractId})...`);
   invoke(contractId, 'extend_instance_ttl', [
+    '--caller', SOURCE_ACCOUNT,
     '--threshold', THRESHOLD_LEDGERS,
     '--extend_to', EXTEND_TO_LEDGERS,
   ]);
@@ -75,12 +76,14 @@ extendInstance(PROXY_CONTRACT_ID, 'ProxyContract');
 for (const asset of TRACKED_ASSETS) {
   console.log(`Extending PriceHistory TTL for ${asset}...`);
   invoke(ORACLE_CONTRACT_ID, 'extend_price_history_ttl', [
+    '--caller', SOURCE_ACCOUNT,
     '--asset', asset,
     '--threshold', THRESHOLD_LEDGERS,
     '--extend_to', EXTEND_TO_LEDGERS,
   ]);
   if (PROXY_CONTRACT_ID) {
     invoke(PROXY_CONTRACT_ID, 'extend_price_history_ttl', [
+      '--caller', SOURCE_ACCOUNT,
       '--asset', asset,
       '--threshold', THRESHOLD_LEDGERS,
       '--extend_to', EXTEND_TO_LEDGERS,

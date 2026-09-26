@@ -196,12 +196,50 @@ impl PriceOracleContract {
         governance::execute_proposal(&env, &signer, proposal_id)
     }
 
+    pub fn cancel_proposal(
+        env: Env,
+        caller: Address,
+        proposal_id: u32,
+    ) -> Result<(), OracleError> {
+        governance::cancel_proposal(&env, &caller, proposal_id)
+    }
+
+    pub fn expire_proposal(
+        env: Env,
+        caller: Address,
+        proposal_id: u32,
+    ) -> Result<(), OracleError> {
+        governance::expire_proposal(&env, &caller, proposal_id)
+    }
+
     pub fn get_proposal(env: Env, proposal_id: u32) -> Option<MultiSigProposal> {
         governance::get_proposal(&env, proposal_id)
     }
 
     pub fn get_multisig_config(env: Env) -> Option<MultiSigConfig> {
         governance::get_multisig_config(&env)
+    }
+
+    // ── Issue #565 — Two-step admin handover ───────────────────────────────
+
+    pub fn propose_admin(
+        env: Env,
+        admin: Address,
+        new_admin: Address,
+    ) -> Result<(), OracleError> {
+        admin::propose_admin(&env, &admin, &new_admin)
+    }
+
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), OracleError> {
+        admin::accept_admin(&env, &new_admin)
+    }
+
+    pub fn cancel_admin_transfer(env: Env, admin: Address) -> Result<(), OracleError> {
+        admin::cancel_admin_transfer(&env, &admin)
+    }
+
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        queries::get_pending_admin(&env)
     }
 
     // ── Issue #379 — multi-region aware emergency pause ────────────────────
@@ -252,33 +290,60 @@ impl PriceOracleContract {
         admin::set_trusted_asset(&env, &admin, &asset, trusted)
     }
 
-    pub fn set_query_fee(env: Env, fee: i128) {
-        admin::set_query_fee(&env, fee);
+    pub fn set_query_fee(env: Env, admin: Address, fee: i128) -> Result<(), OracleError> {
+        admin::set_query_fee(&env, &admin, fee)
     }
 
     pub fn get_query_fee(env: Env) -> i128 {
         queries::get_query_fee(&env)
     }
 
-    pub fn set_whitelist(env: Env, addr: Address, status: bool) {
-        admin::set_whitelist(&env, &addr, status);
+    pub fn set_whitelist(env: Env, admin: Address, addr: Address, status: bool) -> Result<(), OracleError> {
+        admin::set_whitelist(&env, &admin, &addr, status)
     }
 
-    pub fn withdraw_fees(env: Env, to: Address) {
-        admin::withdraw_fees(&env, &to);
+    pub fn withdraw_fees(env: Env, admin: Address, to: Address) -> Result<(), OracleError> {
+        admin::withdraw_fees(&env, &admin, &to)
     }
 
-    // ── Issue #376 — scheduled TTL / rent extension ────────────────────────
+    /// Configure the SEP-41 token held as fee balance.
+    /// Must be called before `withdraw_fees`. (#559)
+    pub fn set_fee_token(env: Env, admin: Address, token: Address) -> Result<(), OracleError> {
+        admin::set_fee_token(&env, &admin, &token)
+    }
+
+    /// Return the configured fee token, or None if not yet set. (#559)
+    pub fn get_fee_token(env: Env) -> Option<Address> {
+        admin::get_fee_token(&env)
+    }
+
+    /// Return the accumulated fee balance held by the contract. (#559)
+    pub fn get_fee_balance(env: Env) -> i128 {
+        admin::get_fee_balance(&env)
+    }
+
+    // ── Issue #376 & Issue #572 — scheduled TTL / rent extension ───────────
 
     pub fn extend_storage_ttl(env: Env) {
         admin::extend_storage_ttl(&env);
     }
 
-    pub fn extend_price_history_ttl(env: Env, asset: String, threshold: u32, extend_to: u32) {
-        admin::extend_price_history_ttl(&env, &asset, threshold, extend_to);
+    pub fn extend_price_history_ttl(
+        env: Env,
+        caller: Address,
+        asset: String,
+        threshold: u32,
+        extend_to: u32,
+    ) -> Result<(), OracleError> {
+        admin::extend_price_history_ttl(&env, &caller, &asset, threshold, extend_to)
     }
 
-    pub fn extend_instance_ttl(env: Env, threshold: u32, extend_to: u32) {
-        admin::extend_instance_ttl(&env, threshold, extend_to);
+    pub fn extend_instance_ttl(
+        env: Env,
+        caller: Address,
+        threshold: u32,
+        extend_to: u32,
+    ) -> Result<(), OracleError> {
+        admin::extend_instance_ttl(&env, &caller, threshold, extend_to)
     }
 }

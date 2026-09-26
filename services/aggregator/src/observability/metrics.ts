@@ -169,16 +169,45 @@ export const pipelineStageLatencyMs = new client.Histogram({
   registers: [register],
 });
 
-// #555 — Cost model reconciliation and runtime drift tracking
-export const oracleCostModelDriftPercent = new client.Gauge({
-  name: 'oracle_cost_model_drift_percent',
-  help: 'Percentage drift between runtime oracle cost assumptions and the reconciled capacity model',
+// Issue #578 — RPC call tracking per round and total
+export const contractRpcCallsTotal = new client.Counter({
+  name: 'contract_rpc_calls_total',
+  help: 'Total RPC calls made to Soroban RPC by type',
+  labelNames: ['call_type'],
   registers: [register],
 });
 
-export const oracleCostModelDriftAlertsTotal = new client.Counter({
-  name: 'oracle_cost_model_drift_alerts_total',
-  help: 'Number of times runtime cost model was detected drifting past allowable tolerance',
+export const contractRpcCallsPerRound = new client.Gauge({
+  name: 'contract_rpc_calls_per_round',
+  help: 'Number of RPC calls made in the most recent publish and heartbeat round',
+  labelNames: ['call_type'],
+  registers: [register],
+});
+
+// Issue #575 — Poll loop duration and overruns
+export const pollCycleDurationMs = new client.Histogram({
+  name: 'poll_cycle_duration_ms',
+  help: 'Duration of aggregator poll cycles in milliseconds',
+  buckets: [100, 250, 500, 1000, 2500, 5000, 10000, 20000, 30000, 60000],
+  registers: [register],
+});
+
+export const pollCycleOverrunsTotal = new client.Counter({
+  name: 'poll_cycle_overruns_total',
+  help: 'Total number of poll cycles that overran their configured interval or were skipped',
+  registers: [register],
+});
+
+// Issue #574 — Retry queue depth and orphaned retry tracking
+export const retryQueueDepth = new client.Gauge({
+  name: 'retry_queue_depth',
+  help: 'Current number of submissions waiting in the publisher retry queue',
+  registers: [register],
+});
+
+export const retryQueueOrphanedRetriesTotal = new client.Counter({
+  name: 'retry_queue_orphaned_retries_total',
+  help: 'Total number of retries that were orphaned or dropped on shutdown',
   registers: [register],
 });
 

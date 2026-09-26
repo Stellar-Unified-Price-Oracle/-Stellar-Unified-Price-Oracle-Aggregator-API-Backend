@@ -19,9 +19,18 @@ export interface MerkleBatch {
   proofs: MerkleProof[];
 }
 
+/** Maximum co-path length accepted by proof verification (Issue #385) */
+export const MAX_PROOF_SIBLINGS = 64;
+
+/** Domain separation tag for leaf hashes (RFC 6962 / Issue #566) */
+export const LEAF_DOMAIN_TAG = Buffer.from([0x00]);
+
+/** Domain separation tag for internal node hashes (RFC 6962 / Issue #566) */
+export const NODE_DOMAIN_TAG = Buffer.from([0x01]);
+
 // Canonical leaf encoding mirrors the on-chain hash_leaf() in merkle.rs:
-//   SHA-256(asset_bytes || 0x00 || price_be16 || decimals_be4 || timestamp_be8 || source_bytes)
-function hashLeaf(entry: BatchPriceEntry): Buffer {
+//   SHA-256(0x00 || asset_bytes || 0x00 || price_be16 || decimals_be4 || timestamp_be8 || source_bytes)
+export function hashLeaf(entry: BatchPriceEntry): Buffer {
   const assetBytes = Buffer.from(entry.asset, 'utf8');
   const sep = Buffer.from([0x00]);
 
@@ -41,12 +50,12 @@ function hashLeaf(entry: BatchPriceEntry): Buffer {
 
   const sourceBuf = Buffer.from(entry.source, 'utf8');
 
-  const combined = Buffer.concat([assetBytes, sep, priceBuf, decBuf, tsBuf, sourceBuf]);
+  const combined = Buffer.concat([LEAF_DOMAIN_TAG, assetBytes, sep, priceBuf, decBuf, tsBuf, sourceBuf]);
   return createHash('sha256').update(combined).digest();
 }
 
-function hashPair(left: Buffer, right: Buffer): Buffer {
-  return createHash('sha256').update(Buffer.concat([left, right])).digest();
+export function hashPair(left: Buffer, right: Buffer): Buffer {
+  return createHash('sha256').update(Buffer.concat([NODE_DOMAIN_TAG, left, right])).digest();
 }
 
 export class MerkleTree {
@@ -105,6 +114,10 @@ export class MerkleTree {
   }
 
   verifyProof(entry: BatchPriceEntry, proof: MerkleProof): boolean {
+    if (proof.siblings.length > MAX_PROOF_SIBLINGS) {
+      return false;
+    }
+
     let current = hashLeaf(entry);
     let index = proof.leafIndex;
 

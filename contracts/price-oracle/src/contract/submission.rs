@@ -10,6 +10,9 @@ use crate::types::{BatchPriceEntry, MerkleProof, PriceDataPoint};
 
 use crate::utils;
 
+// Issue #569 — maximum supported price decimals scale
+pub const MAX_DECIMALS: u32 = 18;
+
 pub(crate) fn submit_price(
     env: &Env,
     source: &Address,
@@ -32,6 +35,15 @@ pub(crate) fn submit_price(
     }
     if price < 0 {
         return Err(OracleError::InvalidPrice);
+    }
+    // Issue #569 — validate decimals range and prevent un-governed scale changes
+    if decimals > MAX_DECIMALS {
+        return Err(OracleError::InvalidDecimals);
+    }
+    if let Some(prev) = storage::get_latest_price(env, asset) {
+        if prev.decimals != decimals {
+            return Err(OracleError::InvalidDecimals);
+        }
     }
 
     // Deviation check: only active when a threshold has been configured and a
@@ -143,6 +155,16 @@ pub(crate) fn apply_batch_entry(
 
     if entry.price < 0 {
         return Err(OracleError::InvalidPrice);
+    }
+
+    // Issue #569 — validate decimals range and prevent un-governed scale changes
+    if entry.decimals > MAX_DECIMALS {
+        return Err(OracleError::InvalidDecimals);
+    }
+    if let Some(prev) = storage::get_latest_price(env, &entry.asset) {
+        if prev.decimals != entry.decimals {
+            return Err(OracleError::InvalidDecimals);
+        }
     }
 
     if !merkle::verify_proof(env, entry, proof.leaf_index, &proof.siblings, &root) {

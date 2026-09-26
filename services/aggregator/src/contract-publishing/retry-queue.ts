@@ -1,4 +1,5 @@
 import { logger } from '../observability/logger';
+import { retryQueueDepth, retryQueueOrphanedRetriesTotal } from '../observability/metrics';
 
 export type RetryEvent = { key: string; submission: RetryableSubmission } & (
   | { event: 'retry'; attemptCount: number }
@@ -78,6 +79,7 @@ export class SubmissionRetryQueue {
     };
     this.queue.set(key, retry);
     this.metrics.totalQueued++;
+    retryQueueDepth.set(this.queue.size);
     logger.info(`[RetryQueue] Submission queued for ${submission.asset}`, {
       key,
       price: submission.price.toString(),
@@ -103,6 +105,7 @@ export class SubmissionRetryQueue {
       if (submission.attemptCount > this.maxRetries) {
         this.queue.delete(key);
         this.metrics.totalFailed++;
+        retryQueueDepth.set(this.queue.size);
         logger.error(`[RetryQueue] Max retries exceeded for ${submission.asset}`, {
           key,
           attemptCount: submission.attemptCount,
@@ -165,7 +168,23 @@ export class SubmissionRetryQueue {
   }
 
   remove(key: string): boolean {
-    return this.queue.delete(key);
+    const deleted = this.queue.delete(key);
+    if (deleted) {
+      retryQueueDepth.set(this.queue.size);
+    }
+    return deleted;
+  }
+
+  /** Drain or clear queue on shutdown, recording any orphaned items */
+  clear(markOrphaned = false): number {
+    const size = this.queue.size;
+    if (size > 0 && markOrphaned) {
+      retryQueueOrphanedRetriesTotal.inc(size);
+      logger.warn(`[RetryQueue] ${size} retry items orphaned on shutdown`);
+    }
+    this.queue.clear();
+    retryQueueDepth.set(0);
+    return size;
   }
 
   private listeners: {
