@@ -21,6 +21,11 @@ import { sourceCircuitBreaker } from './price-aggregation/source-circuit-breaker
 import { eventBus } from './domain-events';
 import { decryptSecret } from './infrastructure/crypto';
 import { getVaultClient } from '@stellar-oracle/vault-client';
+import {
+  enforceStartupCardinalityBudget,
+  setAllowedAssets,
+  setAllowedSources,
+} from './observability/cardinality';
 
 // In-process counters surfaced as structured log lines; the API /metrics
 // endpoint (prom-client) collects the canonical Prometheus metrics.
@@ -242,6 +247,11 @@ async function main(): Promise<void> {
   logger.info('Stellar Price Oracle Aggregator starting...');
   logger.info(`Polling interval: ${config.pollingIntervalMs}ms`);
   logger.info(`Watched assets: ${config.assets.join(', ')}`);
+
+  // Enforce Prometheus cardinality budget for configured sources and assets (#553)
+  enforceStartupCardinalityBudget(['chainlink', 'redstone', 'band', 'reflector'], config.assets);
+  setAllowedAssets(config.assets);
+  setAllowedSources(['chainlink', 'redstone', 'band', 'reflector']);
 
   for (const asset of config.assets) {
     anomalyDetector.applyRuntimeConfig(asset);

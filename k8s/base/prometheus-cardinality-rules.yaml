@@ -98,3 +98,30 @@ spec:
               above the {{ "750000" }} samples/s budget that maps to the monthly
               vendor bill. Reduce cardinality or raise the budget deliberately.
             runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/prometheus-cardinality.md
+
+        - alert: MetricCardinalityBudgetApproaching
+          expr: metric_cardinality_estimated_total > 5420
+          for: 10m
+          labels:
+            severity: warning
+            component: observability
+          annotations:
+            summary: Application metrics estimated series approaching budget ceiling
+            description: >
+              Current estimated series count is {{ $value }}, exceeding 80% of the
+              enforced budget (6775 series). Adding more assets or sources will breach
+              the budget. Consult docs/observability/METRICS_CARDINALITY_BUDGET.md.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/prometheus-cardinality.md
+
+        - alert: MetricCardinalityViolationDetected
+          expr: increase(cardinality_violations_total[5m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+            component: observability
+          annotations:
+            summary: Unapproved metric label value detected and sanitized
+            description: >
+              Labels with value outside the approved allowlist are being emitted
+              and sanitized to 'other' to protect Prometheus series budget.
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/prometheus-cardinality.md

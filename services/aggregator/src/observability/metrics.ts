@@ -169,4 +169,18 @@ export const pipelineStageLatencyMs = new client.Histogram({
   registers: [register],
 });
 
+// #555 — Cost model reconciliation and runtime drift tracking
+export const oracleCostModelDriftPercent = new client.Gauge({
+  name: 'oracle_cost_model_drift_percent',
+  help: 'Percentage drift between runtime oracle cost assumptions and the reconciled capacity model',
+  registers: [register],
+});
+
+export const oracleCostModelDriftAlertsTotal = new client.Counter({
+  name: 'oracle_cost_model_drift_alerts_total',
+  help: 'Number of times runtime cost model was detected drifting past allowable tolerance',
+  registers: [register],
+});
+
 export { register };
+

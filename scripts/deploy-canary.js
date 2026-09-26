@@ -163,7 +163,49 @@ function parseCreatedContractId(resultXdrBase64) {
   return StrKey.encodeContract(contractId);
 }
 
+async function checkSloReleaseGate(actionName) {
+  const overrideReason = process.env.SLO_OVERRIDE_REASON;
+  const overrideApprover = process.env.SLO_OVERRIDE_APPROVER;
+  const prometheusUrl = process.env.PROMETHEUS_URL || 'http://localhost:9090';
+
+  try {
+    const { evaluateSloGate, fetchLiveSloMetrics } = await import('./slo-release-gate.ts');
+    const metrics = await fetchLiveSloMetrics(prometheusUrl);
+    const result = evaluateSloGate(metrics, {
+      environment: NETWORK === 'mainnet' ? 'production' : 'staging',
+      overrideReason,
+      overrideApprover,
+      allowMetricsUnavailable: NETWORK !== 'mainnet',
+    });
+
+    console.log(`[SLO Release Gate] Evaluated for ${actionName}: ${result.decision}`);
+    for (const r of result.reasons) {
+      console.log(`  - ${r}`);
+    }
+
+    if (result.decision === 'BLOCK') {
+      console.error(`\nERROR: ${actionName} is BLOCKED by SLO error-budget release gate (#552).`);
+      console.error('Fast burn rate or budget exhaustion detected. Halting release.');
+      process.exit(1);
+    }
+
+    return result;
+  } catch (err) {
+    if (err.message && err.message.includes('BLOCKED')) {
+      throw err;
+    }
+    console.warn(`[SLO Release Gate] Warning: could not query SLO gate (${err.message}). Continuing in fallback mode.`);
+    return { decision: 'PERMIT', exitCode: 0, reasons: [] };
+  }
+}
+
 async function deploy(shareBps) {
+  const gateResult = await checkSloReleaseGate('canary deploy');
+  if (gateResult && gateResult.decision === 'DEGRADED_PERMIT' && shareBps > 500) {
+    console.warn(`\n[SLO Gate Notice] Gate is in DEGRADED_PERMIT mode (elevated 24h burn rate).`);
+    console.warn(`Capping canary traffic share to 500 bps (5%) instead of ${shareBps} bps.`);
+    shareBps = 500;
+  }
   console.log(`Deploying canary implementation to ${NETWORK} (share: ${shareBps} bps)...`);
   const { wasm } = buildWasm();
 
@@ -226,6 +268,12 @@ async function deploy(shareBps) {
 }
 
 async function promote() {
+  const gateResult = await checkSloReleaseGate('canary promote');
+  if (gateResult && gateResult.decision === 'DEGRADED_PERMIT' && !process.env.SLO_OVERRIDE_REASON) {
+    console.error('\nERROR: Automatic promotion blocked while SLO gate is in DEGRADED_PERMIT mode.');
+    console.error('Provide SLO_OVERRIDE_REASON to approve manual promotion under elevated burn.');
+    process.exit(1);
+  }
   console.log('Promoting canary to canonical implementation...');
   await buildAndSend('promote_canary', [nativeToScVal(keypair.publicKey(), { type: 'address' })]);
   console.log(`Canary promoted on proxy ${PROXY_CONTRACT_ID}.`);

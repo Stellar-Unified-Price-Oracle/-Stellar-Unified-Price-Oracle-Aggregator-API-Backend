@@ -1,5 +1,8 @@
+import fs from 'fs';
+import path from 'path';
+
 // Cost estimates in USD per 1000 API calls. Adjust per actual contract terms.
-const COST_PER_1K_CALLS: Record<string, number> = {
+export const COST_PER_1K_CALLS: Record<string, number> = {
   chainlink: 0.0,    // free public feeds
   redstone:  0.0,    // free public feeds
   band:      0.0,    // free public feeds
@@ -7,7 +10,7 @@ const COST_PER_1K_CALLS: Record<string, number> = {
 };
 
 // Daily call budget per source (set to 0 to disable budget tracking).
-const DAILY_BUDGET_CALLS: Record<string, number> = {
+export const DAILY_BUDGET_CALLS: Record<string, number> = {
   chainlink: 10000,
   redstone:  10000,
   band:      10000,
@@ -63,4 +66,82 @@ export function getDailyCounts(): Record<string, number> {
 export function resetDailyCounts(): void {
   for (const k of Object.keys(dailyCounts)) delete dailyCounts[k];
   lastResetDate = new Date().toISOString().slice(0, 10);
+}
+
+export interface CostModelIntegrityResult {
+  valid: boolean;
+  driftDetected: boolean;
+  maxDriftPct: number;
+  tolerancePct: number;
+  discrepancies: string[];
+}
+
+/**
+ * Reconciles runtime oracle call costs and daily budgets against config/cost-model.json (#555).
+ * Alerts if runtime assumptions diverge from the approved capacity model beyond tolerance.
+ */
+export function verifyRuntimeCostModelIntegrity(customModelPath?: string): CostModelIntegrityResult {
+  const defaultPath = path.resolve(__dirname, '../../../../config/cost-model.json');
+  const targetPath = customModelPath || defaultPath;
+
+  if (!fs.existsSync(targetPath)) {
+    return {
+      valid: true,
+      driftDetected: false,
+      maxDriftPct: 0,
+      tolerancePct: 10,
+      discrepancies: [`Warning: Cost model configuration not found at ${targetPath}`],
+    };
+  }
+
+  try {
+    const raw = fs.readFileSync(targetPath, 'utf8');
+    const model = JSON.parse(raw);
+    const tolerancePct = model.varianceThresholds?.runtimeCallCostTolerancePct ?? 10.0;
+    const discrepancies: string[] = [];
+    let maxDriftPct = 0;
+
+    const modeledRates = model.runtimeOracleCallModel?.ratesPer1kCalls || {};
+    const modeledBudgets = model.runtimeOracleCallModel?.dailyBudgetCalls || {};
+
+    for (const [source, rate] of Object.entries(COST_PER_1K_CALLS)) {
+      const modeledRate = modeledRates[source];
+      if (modeledRate !== undefined && modeledRate !== rate) {
+        const drift = modeledRate === 0 ? 100 : Math.abs(((rate - modeledRate) / modeledRate) * 100);
+        maxDriftPct = Math.max(maxDriftPct, drift);
+        discrepancies.push(
+          `Runtime rate for source '${source}' ($${rate}/1k) differs from modeled rate ($${modeledRate}/1k) by ${drift.toFixed(1)}%`,
+        );
+      }
+    }
+
+    for (const [source, budget] of Object.entries(DAILY_BUDGET_CALLS)) {
+      const modeledBudget = modeledBudgets[source];
+      if (modeledBudget !== undefined && modeledBudget !== budget) {
+        const drift = modeledBudget === 0 ? 100 : Math.abs(((budget - modeledBudget) / modeledBudget) * 100);
+        maxDriftPct = Math.max(maxDriftPct, drift);
+        discrepancies.push(
+          `Runtime daily budget for '${source}' (${budget}) differs from modeled budget (${modeledBudget}) by ${drift.toFixed(1)}%`,
+        );
+      }
+    }
+
+    const driftDetected = maxDriftPct > tolerancePct;
+
+    return {
+      valid: !driftDetected,
+      driftDetected,
+      maxDriftPct,
+      tolerancePct,
+      discrepancies,
+    };
+  } catch (err) {
+    return {
+      valid: false,
+      driftDetected: true,
+      maxDriftPct: 100,
+      tolerancePct: 10,
+      discrepancies: [`Failed to parse cost model: ${(err as Error).message}`],
+    };
+  }
 }
