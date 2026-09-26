@@ -426,6 +426,17 @@ pub fn set_whitelist(env: &Env, addr: &Address, status: bool) {
         .set(&DataKey::Whitelist(addr.clone()), &status);
 }
 
+// Issue #561 — whitelist is a fee-exempt consumer allowlist.
+// Returns true when the address has been explicitly granted fee-exempt status
+// by an admin via set_whitelist.  A missing key is treated as false so
+// newly-deployed contracts start with an empty whitelist.
+pub fn is_whitelisted(env: &Env, addr: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::Whitelist(addr.clone()))
+        .unwrap_or(false)
+}
+
 pub fn get_fee_balance(env: &Env) -> i128 {
     env.storage()
         .instance()

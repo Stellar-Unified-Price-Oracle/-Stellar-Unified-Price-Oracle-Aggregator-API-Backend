@@ -250,8 +250,13 @@ impl PriceOracleContract {
 
     // ── Queries ────────────────────────────────────────────────────────────
 
-    pub fn get_price(env: Env, asset: String) -> Option<AssetPrice> {
-        queries::get_price(&env, &asset)
+    // Issue #561 — whitelist is a fee-exempt consumer allowlist.  get_price
+    // requires either fee == 0 (open) or the caller to be whitelisted.  The
+    // caller address is the first argument so Soroban can enforce require_auth
+    // if the operator chooses to require it in future; the contract currently
+    // does not call require_auth here so read-only callers need not sign.
+    pub fn get_price(env: Env, caller: Address, asset: String) -> Result<Option<AssetPrice>, OracleError> {
+        queries::get_price(&env, &caller, &asset)
     }
 
     pub fn get_assets(env: Env) -> Vec<String> {
@@ -260,6 +265,21 @@ impl PriceOracleContract {
 
     pub fn get_price_history(env: Env, asset: String, limit: u32) -> Vec<PriceDataPoint> {
         queries::get_price_history(&env, &asset, limit)
+    }
+
+    // Issue #571 — time-bounded history query.
+    pub fn get_price_history_since(
+        env: Env,
+        asset: String,
+        since_timestamp: u64,
+        limit: u32,
+    ) -> Vec<PriceDataPoint> {
+        queries::get_price_history_since(&env, &asset, since_timestamp, limit)
+    }
+
+    // Issue #561 — observable whitelist accessor.
+    pub fn is_whitelisted(env: Env, addr: Address) -> bool {
+        queries::is_whitelisted(&env, &addr)
     }
 
     // ── Admin functions ────────────────────────────────────────────────────

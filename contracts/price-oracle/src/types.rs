@@ -2,33 +2,6 @@ use soroban_sdk::{contracttype, Address, Bytes, BytesN, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PostQuantumScheme {
-    Dilithium,
-    Falcon,
-    Sphincs,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PostQuantumAdminKey {
-    pub scheme: PostQuantumScheme,
-    pub public_key: String,
-    pub fingerprint: String,
-    pub requested_at: u64,
-    pub activates_at: u64,
-    pub revoked_at: Option<u64>,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HybridSignature {
-    pub ed25519_signature: String,
-    pub pq_signature: String,
-    pub pq_scheme: PostQuantumScheme,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceDataPoint {
     pub asset: String,
     pub price: i128,
@@ -253,9 +226,9 @@ pub enum DataKey {
     GovernanceProposalCount,
     GovernanceProposal(u32),
     Vote(u32, Address),
-    PostQuantumAdminKey(String),
-    PostQuantumKeyLog(u32),
-    PostQuantumKeyLogCount,
+    PostQuantumAdminKey(String), // reserved — no entrypoints; see docs/PQ_READINESS.md migration note
+    PostQuantumKeyLog(u32),      // reserved — no entrypoints; see docs/PQ_READINESS.md migration note
+    PostQuantumKeyLogCount,      // reserved — no entrypoints; see docs/PQ_READINESS.md migration note
     // Issue #375 — proxy upgrade timelock + canary
     PendingUpgradeHash,
     PendingUpgradeEta,

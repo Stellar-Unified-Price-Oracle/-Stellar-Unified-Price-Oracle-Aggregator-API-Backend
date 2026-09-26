@@ -72,6 +72,26 @@ interface GetTransactionResponse {
   resultMetaXdr?: unknown;
 }
 
+// Issue #576 — non-retryable contract error codes.
+//
+// These on-chain rejection codes indicate a logic-level rejection (wrong
+// source, contract paused, price deviation).  Retrying immediately or with
+// backoff cannot make them succeed, so they must be routed to a dead-letter
+// path instead of the standard retry queue.
+const NON_RETRYABLE_CONTRACT_ERRORS = new Set([
+  'UnauthorizedSource',
+  'ContractPaused',
+  'PriceDeviationTooLarge',
+  'InvalidPrice',
+  'InvalidDecimals',
+  'NotWhitelisted',
+]);
+
+// Maximum number of getTransaction polls before declaring a timeout.
+const TX_POLL_RETRIES = parseInt(process.env.TX_POLL_RETRIES || '20', 10);
+// Milliseconds between each getTransaction poll.
+const TX_POLL_INTERVAL_MS = parseInt(process.env.TX_POLL_INTERVAL_MS || '2000', 10);
+
 const GAS_ALERT_THRESHOLD = parseInt(process.env.CONTRACT_GAS_ALERT_THRESHOLD || '50000', 10);
 
 /** Fee policy configuration for Soroban transactions (Issue #578) */
@@ -278,7 +298,8 @@ export class ContractPublisher {
 
       this.recordRpcCall('simulate');
       const simulateResponse: SimulateResponse = await this.server.simulateTransaction(tx);
-      const simulationFee = simulateResponse?.minResourceFee ?? simulateResponse?.cost?.feeCharged ?? 'unknown';
+      const simulationFee =
+        simulateResponse?.minResourceFee ?? simulateResponse?.cost?.feeCharged ?? 'unknown';
 
       logger.debug(`[Contract] Simulation result for ${fnName} ${asset}`, {
         txHash,
@@ -350,9 +371,53 @@ export class ContractPublisher {
       const feeNum = parseInt(String(actualFee), 10);
 
       if (!Number.isNaN(feeNum)) {
-        contractSubmissionGas.observe({ function: fnName, asset, status: 'success' }, feeNum);
-        contractSubmissionGasTotal.inc({ function: fnName, asset, status: 'success' }, feeNum);
+        contractSubmissionGas.observe({ function: fnName, asset, status: 'pending' }, feeNum);
+        contractSubmissionGasTotal.inc({ function: fnName, asset, status: 'pending' }, feeNum);
       }
+
+      if (!Number.isNaN(feeNum) && feeNum > GAS_ALERT_THRESHOLD) {
+        checkGasAlert({ txHash, function: fnName, fee: feeNum, threshold: GAS_ALERT_THRESHOLD });
+      }
+
+      // Poll until SUCCESS, FAILED, or timeout.
+      logger.debug(`[Contract] Polling getTransaction for ${txHash}`);
+      const { status: txStatus, response: txResponse } = await pollForOutcome(this.server, txHash);
+
+      if (txStatus === 'SUCCESS') {
+        contractSubmissionOutcome.inc({ function: fnName, asset, outcome: 'success' });
+        recordOutcome(fnName, 'success');
+
+        emitContractLog({
+          txHash,
+          function: fnName,
+          asset,
+          params,
+          simulationFee: String(simulationFee),
+          actualFee: String(actualFee),
+          status: 'success',
+          durationMs: Date.now() - startMs,
+          timestamp: Math.floor(Date.now() / 1000),
+        });
+
+        await this.captureContractEvents(txHash, txResponse);
+        return txHash;
+      }
+
+      // FAILED or NOT_FOUND (timeout).
+      const outcome = txStatus === 'FAILED' ? 'failed' : 'timeout';
+      const contractErrorName = txStatus === 'FAILED'
+        ? extractContractErrorName(txResponse?.resultMetaXdr)
+        : null;
+
+      contractSubmissionOutcome.inc({ function: fnName, asset, outcome });
+      recordOutcome(fnName, outcome === 'timeout' ? 'timeout' : 'failed');
+
+      logger.error(`[Contract] Submission ${outcome} for ${asset}`, {
+        txHash,
+        outcome,
+        contractError: contractErrorName,
+        durationMs: Date.now() - startMs,
+      });
 
       emitContractLog({
         txHash,
@@ -361,18 +426,29 @@ export class ContractPublisher {
         params,
         simulationFee: String(simulationFee),
         actualFee: String(actualFee),
-        status: 'success',
+        status: 'failed',
+        error: contractErrorName ?? outcome,
         durationMs: Date.now() - startMs,
         timestamp: Math.floor(Date.now() / 1000),
       });
 
-      if (!isNaN(feeNum) && feeNum > GAS_ALERT_THRESHOLD) {
-        checkGasAlert({ txHash, function: fnName, fee: feeNum, threshold: GAS_ALERT_THRESHOLD });
+      // Issue #576 — non-retryable contract errors (wrong source, paused,
+      // deviation) must not be queued for retry; doing so would hot-loop.
+      // Retryable failures (timeout, not_found, transient on-chain errors)
+      // are enqueued normally.
+      const isNonRetryable =
+        contractErrorName !== null && NON_RETRYABLE_CONTRACT_ERRORS.has(contractErrorName);
+
+      if (isNonRetryable) {
+        logger.warn(
+          `[Publisher] Non-retryable contract error '${contractErrorName}' for ${asset} — skipping retry queue`,
+          { txHash, contractErrorName },
+        );
+      } else {
+        this.retryQueue.enqueue({ asset, price, decimals, timestamp });
       }
 
-      await this.captureContractEvents(txHash);
-
-      return txHash;
+      return null;
     } catch (err) {
       if (!isRetry && isBadSeqError(err)) {
         logger.warn(`[Contract] tx_bad_seq exception for ${asset}. Resyncing sequence and retrying once...`);
@@ -436,7 +512,10 @@ export class ContractPublisher {
           Operation.invokeContractFunction({
             contract: this.contractId,
             function: 'get_price',
-            args: [nativeToScVal(asset, { type: 'string' })],
+            args: [
+              nativeToScVal(this.keypair.publicKey(), { type: 'address' }),
+              nativeToScVal(asset, { type: 'string' }),
+            ],
           }),
         )
         .setTimeout(30)
@@ -449,7 +528,9 @@ export class ContractPublisher {
         return null;
       }
 
-      const decoded = scValToNative(simulateResponse.result.retval) as { timestamp?: unknown } | undefined;
+      const decoded = scValToNative(simulateResponse.result.retval) as
+        | { timestamp?: unknown }
+        | undefined;
       if (decoded === undefined || decoded === null || decoded.timestamp === undefined) {
         return null;
       }
@@ -462,14 +543,20 @@ export class ContractPublisher {
     }
   }
 
-  private async captureContractEvents(txHash: string): Promise<void> {
+  // Issue #576 — captureContractEvents is now called only after a confirmed
+  // SUCCESS status from getTransaction, so the response already contains the
+  // inclusion meta.  The response is passed in rather than re-fetched.
+  private async captureContractEvents(
+    txHash: string,
+    txResponse: GetTransactionResponse,
+  ): Promise<void> {
     try {
       this.recordRpcCall('get_transaction');
       const response: GetTransactionResponse = await this.server.getTransaction(txHash);
       if (!response || response.status === 'NOT_FOUND') return;
 
-      const events: xdr.DiagnosticEvent[] = response?.resultMetaXdr
-        ? this.extractEvents(response.resultMetaXdr)
+      const events: xdr.DiagnosticEvent[] = txResponse?.resultMetaXdr
+        ? this.extractEvents(txResponse.resultMetaXdr)
         : [];
 
       for (const event of events) {
@@ -481,13 +568,17 @@ export class ContractPublisher {
         logger.info(`[Contract] Captured ${events.length} event(s) from tx ${txHash}`);
       }
     } catch (err) {
-      logger.debug(`[Contract] Could not capture events for ${txHash}: ${err instanceof Error ? err.message : err}`);
+      logger.debug(
+        `[Contract] Could not capture events for ${txHash}: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 
   private extractEvents(resultMetaXdr: unknown): xdr.DiagnosticEvent[] {
     if (Array.isArray(resultMetaXdr)) {
-      return resultMetaXdr.filter((event): event is xdr.DiagnosticEvent => xdr.DiagnosticEvent.isValid(event));
+      return resultMetaXdr.filter(
+        (event): event is xdr.DiagnosticEvent => xdr.DiagnosticEvent.isValid(event),
+      );
     }
 
     let meta: xdr.TransactionMeta;
