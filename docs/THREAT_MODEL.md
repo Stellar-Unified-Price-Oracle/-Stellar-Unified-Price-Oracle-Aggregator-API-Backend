@@ -42,6 +42,20 @@ architecture. Supersedes any earlier single-region MVP assumptions.
 | Region failover injects stale or conflicting state | Active-active replication design | See `docs/active-active-multi-region.md` |
 | Classical signatures broken by a future quantum adversary | PQ signature migration plan | See `docs/PQ_READINESS.md` |
 | CI/CD compromise ships malicious code | Branch protection + required status checks prevent bypassing CI | Tracked — `docs/GOVERNANCE.md` |
+| Merkle tree second-preimage attack (internal node forged as leaf) | Domain separation (RFC 6962 pattern): prefix leaf hashes with 0x00 tag and internal node hashes with 0x01 tag; max co-path bounded to 64 siblings | Implemented (Issue #566) |
+
+## Merkle tree construction & proof soundness rules (Issue #566)
+
+To prevent second-preimage attacks where an internal node hash could be presented as a valid leaf preimage in `apply_batch_entry`, the contract verifier (`contracts/price-oracle/src/merkle.rs`) and the off-chain builder (`services/aggregator/src/infrastructure/merkle.ts`) adhere to strict domain separation:
+
+1. **Leaf Domain Tag (`0x00`)**:
+   `hash_leaf(entry) = SHA-256(0x00 || asset_bytes || 0x00 || price_be16 || decimals_be4 || timestamp_be8 || source_bytes)`
+2. **Internal Node Domain Tag (`0x01`)**:
+   `hash_pair(left, right) = SHA-256(0x01 || left || right)`
+3. **Co-Path Length Bounding**:
+   Proofs with sibling lists longer than `MAX_PROOF_SIBLINGS = 64` are rejected immediately prior to hashing.
+4. **Drift Prevention**:
+   Any modification to the leaf layout or hashing domain tags must be made simultaneously in both the Rust contract and TypeScript aggregator builder, with formal invariant checks verified in `verification/smt/price-oracle-invariants.smt2`.
 
 ## Review cadence
 

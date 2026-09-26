@@ -60,16 +60,42 @@ pulls fresh prices from oracle sources.
   default batch size, either raise `ARCHIVAL_BATCH_SIZE` or shorten
   `ARCHIVAL_INTERVAL_MS` so batches run more frequently.
 
-## Soroban fee optimization
+## Poll loop overrun policy & cycle deadlines (Issue #575)
 
-- Use the network's current base fee plus a small surge multiplier rather
-  than a fixed high fee; static over-bidding wastes XLM at low network load
-  and under-bids during congestion.
-- Batch independent contract calls into a single transaction where the
-  contract interface allows it, to amortize the base transaction fee across
-  more state changes.
-- Monitor submission failures due to `tx_fee_bump` / insufficient fee and
-  adjust the surge multiplier reactively rather than statically over-fixing
-  it.
-- Keep a dedicated fee-source key balance topped up separately from
-  admin/signer keys so fee spend is easy to attribute and rate-limit.
+Aggregator price polling runs in a self-scheduling loop protected by a single-flight mutex:
+
+- **At most one cycle in flight**: If a poll cycle takes longer than `POLLING_INTERVAL_MS`, overlapping ticks are immediately skipped. Duplicate on-chain submissions and interleaved file writes are impossible by construction.
+- **Overrun semantics**:
+  - If a cycle finishes within `POLLING_INTERVAL_MS`, the next cycle is scheduled for `POLLING_INTERVAL_MS - elapsedMs`.
+  - If a cycle exceeds `POLLING_INTERVAL_MS` (overrun), the missed tick is skipped, and the next cycle is scheduled after a **1000ms recovery delay** to prevent CPU/network starvation.
+  - An overrun event increments `poll_cycle_overruns_total`.
+  - If 3 consecutive cycles overrun, a sustained overrun alert is logged and routed to AlertManager.
+- **Bounded deadline**: Each poll cycle is wrapped in a hard timeout (`max(10s, POLLING_INTERVAL_MS * 1.5)`). If upstream oracle sources or RPC stalls exceed the deadline, the cycle is aborted and resources cleaned up.
+- **Observability**:
+  - `poll_cycle_duration_ms`: histogram of end-to-end poll cycle durations.
+  - `poll_cycle_overruns_total`: counter of skipped/overrunning cycles.
+
+## Soroban fee policy & resource fee limits (Issue #578)
+
+Transactions submitted to Soroban use an explicit, bounded fee policy rather than a hardcoded 100 stroop fee:
+
+- **Base inclusion fee & surge multiplier**:
+  - Configured via `CONTRACT_BASE_INCLUSION_FEE` (default `100` stroops) and `CONTRACT_FEE_SURGE_MULTIPLIER` (default `1.2`x, clamped between `1.0`x and `3.0`x).
+  - Capped by `CONTRACT_MAX_INCLUSION_FEE` (default `50,000` stroops).
+- **Simulation minResourceFee guard**:
+  - On transaction simulation, the RPC returns `minResourceFee`.
+  - If simulation `minResourceFee` exceeds `CONTRACT_MAX_RESOURCE_FEE` (default `1,000,000` stroops), the transaction is rejected immediately to protect against runaway fees or network spikes.
+- **Dynamic fee assembly**:
+  - The actual fee offered to the network includes both the surge-adjusted inclusion fee and the validated resource fee.
+
+## Account sequence caching & RPC call reduction (Issue #578)
+
+- **Local sequence allocation**:
+  The singleton `ContractPublisher` caches the Stellar `Account` instance. When building transactions across multiple assets in a round, the SDK locally increments `account.sequenceNumber()`, requiring only **1 `getAccount` call per round** (or 0 when sequence is valid across rounds).
+- **Bad-sequence recovery (`tx_bad_seq`)**:
+  If the network reports `tx_bad_seq` (e.g. out-of-band transaction submitted from the same key), the publisher invalidates its cached account, re-fetches sequence from RPC, and retries the submission once.
+- **Heartbeat read optimization**:
+  Read-only simulation (`getOnChainTimestamp`, canary refresh) uses a lightweight virtual account instance and never performs an RPC `getAccount` call. This reduces RPC call volume during staleness heartbeat checks by >90%.
+- **Metrics**:
+  - `contract_rpc_calls_total{call_type}`: counter of RPC invocations (`get_account`, `simulate`, `send`, `get_transaction`).
+  - `contract_rpc_calls_per_round{call_type}`: gauge recording RPC invocations during the latest round.
