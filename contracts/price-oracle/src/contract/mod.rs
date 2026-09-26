@@ -16,6 +16,7 @@
 use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, String, Vec};
 
 use crate::errors::OracleError;
+use crate::merkle;
 use crate::types::{
     AssetPrice, BatchPriceEntry, MerkleProof, MultiSigConfig, MultiSigProposal, PriceDataPoint,
     ProposalAction, SourceReputation,
@@ -68,8 +69,9 @@ impl PriceOracleContract {
         source: Address,
         nonce: u64,
         root: Bytes,
+        batch_size: u32,
     ) -> Result<u64, OracleError> {
-        submission::submit_batch(&env, &source, nonce, &root)
+        submission::submit_batch(&env, &source, nonce, &root, batch_size)
     }
 
     pub fn apply_batch_entry(
@@ -290,6 +292,9 @@ impl PriceOracleContract {
         source: Address,
         name: String,
     ) -> Result<(), OracleError> {
+        // Issue #568 — reject source names longer than MAX_STRING_LEN so that
+        // hash_leaf can never panic when encoding this source's name later.
+        merkle::validate_string_len(&name)?;
         admin::add_oracle_source(&env, &admin, &source, &name)
     }
 

@@ -24,6 +24,7 @@ import {
 import { AggregatedPrice } from '../infrastructure/types';
 import { CanaryRollbackGuard, shouldRouteToCanary } from './canary';
 import { SubmissionRetryQueue } from './retry-queue';
+import { MerkleTree, BatchPriceEntry } from '../infrastructure/merkle';
 
 interface ContractCallLog {
   txHash: string;
@@ -733,6 +734,18 @@ export class ContractPublisher {
     // Re-read the on-chain canary registration once per publish round
     await this.refreshCanary();
 
+    // Issue #577 — attempt the Merkle batch path first.
+    // One submit_batch transaction commits the root; N apply_batch_entry
+    // transactions (one per asset, but far cheaper than full submit_price)
+    // apply the individual prices.  Falls back to per-asset submit_price when
+    // batch construction or the commit transaction fails.
+    const batchSucceeded = await this.publishViaBatch(prices);
+    if (batchSucceeded) {
+      return;
+    }
+
+    // Fallback: per-asset submit_price (original behaviour).
+    logger.warn('[Publisher] Batch path failed or unavailable, falling back to per-asset submission');
     for (const price of prices) {
       this.submissionSequence += 1;
       const routeToCanary =

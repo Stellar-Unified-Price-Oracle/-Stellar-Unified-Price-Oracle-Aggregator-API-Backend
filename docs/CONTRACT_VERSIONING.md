@@ -142,3 +142,44 @@ The introduction of RFC 6962 domain separation (prefix `0x00` for leaves, `0x01`
 - `docs/CONTRACT_UPGRADE_GOVERNANCE.md` — upgrade approval flow
 - `docs/CANARY_DEPLOYMENTS.md` — canary rollout process
 - `contracts/price-oracle/src/compat_test.rs` — enforcement tests
+
+## Asset and source symbol grammar (Issue #568)
+
+All strings accepted by the contract (`asset` in `submit_price` / `submit_batch`
+/ `apply_batch_entry`, `name` in `add_oracle_source`) are subject to the
+following constraints, enforced at the submission boundary:
+
+| Constraint | Value | Error |
+|---|---|---|
+| Maximum byte length | 64 bytes | `AssetNameTooLong (41)` |
+| Minimum byte length | 1 byte (empty string is valid only internally) | `InvalidMerkleProof` if it causes an empty hash |
+| Encoding | UTF-8 | n/a (Soroban `String` is UTF-8) |
+| Character set | No restriction beyond UTF-8; asset names are conventionally uppercase ASCII (e.g. `XLM`, `USDC`) | n/a |
+
+**Off-chain enforcement:** The aggregator must validate asset and source strings
+against these bounds before constructing a `MerkleBatch`; a string that would be
+rejected on-chain should never be included in a batch.  The TypeScript
+`validate_string_len` helper mirrors the on-chain `merkle::validate_string_len`.
+
+## Merkle tree odd-node rule (Issues #567, #577)
+
+Both the on-chain verifier (`contracts/price-oracle/src/merkle.rs`) and the
+off-chain builder (`services/aggregator/src/infrastructure/merkle.ts`) use the
+**promote-last** rule for odd-length levels:
+
+> When the number of nodes at a level is odd, the last node is carried up to
+> the next level unchanged.  It is **not** duplicated.
+
+**Why promote-last:**
+
+- The old duplicate-last rule allowed the final leaf to appear at two tree
+  positions (`n-1` and `n`) with different sibling paths.  Both proofs were
+  valid, so the same price entry could be applied twice under different
+  `leaf_index` values.
+- Promote-last is unambiguous: each leaf has exactly one position, and
+  `leaf_index >= batch_size` is rejected with `BatchIndexOutOfRange`.
+
+**Consistency requirement:** Any off-chain tool that builds Merkle proofs for
+this contract (e.g. future SDKs, CLI scripts) must implement promote-last.
+Proofs built with duplicate-last will produce a different root and will be
+rejected by `verify_proof`.

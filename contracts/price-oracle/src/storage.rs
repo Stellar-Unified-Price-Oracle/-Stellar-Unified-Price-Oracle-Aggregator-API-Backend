@@ -348,6 +348,18 @@ pub fn set_batch_root(env: &Env, nonce: u64, root: &Bytes) {
     prune_batch_roots(env, nonce + 1);
 }
 
+/// Store the number of entries in a batch alongside its root.
+/// Required for enforce leaf_index < batch_size (Issue #567).
+pub fn set_batch_size(env: &Env, nonce: u64, size: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::BatchSize(nonce), &size);
+}
+
+pub fn get_batch_size(env: &Env, nonce: u64) -> Option<u32> {
+    env.storage().instance().get(&DataKey::BatchSize(nonce))
+}
+
 pub fn get_batch_root(env: &Env, nonce: u64) -> Option<Bytes> {
     env.storage().instance().get(&DataKey::BatchRoot(nonce))
 }
@@ -360,6 +372,9 @@ fn prune_batch_roots(env: &Env, current_nonce: u64) {
     let mut k = watermark;
     while k < prune_to {
         env.storage().instance().remove(&DataKey::BatchRoot(k));
+        env.storage()
+            .instance()
+            .remove(&DataKey::BatchSize(k));
         env.storage()
             .instance()
             .remove(&DataKey::BatchAppliedLeaves(k));

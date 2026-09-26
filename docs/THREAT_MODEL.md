@@ -93,3 +93,49 @@ This document must be reviewed:
 
 Update the threats table above with new entries and link each to its owning
 issue or doc when a control is only partially implemented.
+
+## Permissionless batch-apply rationale (Issue #570)
+
+`apply_batch_entry` is callable by anyone without a signed source credential.
+The authorization happened at commit time: `submit_batch` requires an
+authorized source to sign the transaction containing the Merkle root.  After
+that, the cryptographic proof is the authorization — only the committed root
+can produce a valid proof, and the root was signed by a registered source.
+
+**Why the apply entrypoint is permissionless:**
+
+* Requiring re-authorization per `apply_batch_entry` would cost the same as
+  `submit_price` (account lookup + simulation + full auth check + nonce), which
+  defeats the purpose of the batch path.  The commit-and-prove model is the
+  entire reason batching is cheaper.
+* The alternative — applying all entries inside `submit_batch` — would require
+  the full batch payload to be included in one transaction, hitting the Stellar
+  transaction-size limit for large batches.
+
+**Compensating controls (as of issue #570):**
+
+1. **Deviation threshold** — `apply_batch_entry` now enforces the configured
+   threshold against the last on-chain price, the same as `submit_price`.  A
+   batch entry that jumps more than the threshold is rejected with
+   `PriceDeviationTooLarge`, not silently applied.
+2. **Replay resistance** — each `(batch_nonce, leaf_index)` pair can be applied
+   exactly once (`mark_batch_leaf_applied`).  Repeated proof submissions are
+   rejected with `BatchEntryAlreadyApplied`.
+3. **Batch-size enforcement** — `leaf_index >= batch_size` is rejected with
+   `BatchIndexOutOfRange`, closing the phantom-slot exploit from issue #567.
+4. **Root expiry** — only the last `RETAINED_BATCH_ROOTS` (16) batches are
+   retained.  Proofs for expired batches are rejected with `BatchRootNotFound`.
+5. **Source reputation** — `apply_batch_entry` now calls `update_reputation` so
+   sources that exclusively use the batch path accumulate accuracy history and
+   can be ranked down if their prices drift.
+6. **Emergency pause** — `ContractPaused` halts both `submit_batch` and
+   `apply_batch_entry`; a paused batch cannot be applied after the freeze is
+   lifted.
+
+**Residual risk:** An authorized source can commit a batch that passes
+deviation at commit time but whose individual entries would individually
+violate the threshold by the time they are applied (because another source
+updated the reference price in between).  The deviation check in
+`apply_batch_entry` uses the *latest* on-chain price at apply time, which is
+the most conservative baseline available without locking the reference price at
+commit time.

@@ -22,6 +22,7 @@
 
 use soroban_sdk::{Bytes, Env, String};
 
+use crate::errors::OracleError;
 use crate::types::BatchPriceEntry;
 
 // Soroban's `String` has no direct byte accessor; `copy_into_slice` requires an
@@ -29,10 +30,7 @@ use crate::types::BatchPriceEntry;
 // well under this cap in practice.
 const MAX_STRING_LEN: usize = 64;
 
-/// Maximum co-path length accepted by `verify_proof` (Issue #385).
-///
-/// Bounds the SHA-256 work a permissionless caller can force in a single
-/// `apply_batch_entry` call; 64 levels covers any realistic batch size.
+/// Maximum co-path length accepted by verify_proof (Issue #385).
 pub const MAX_PROOF_SIBLINGS: usize = 64;
 
 /// Domain separation tag for leaf hashes (RFC 6962 / NIST SP 800-108 pattern).
@@ -43,12 +41,15 @@ pub const NODE_DOMAIN_TAG: u8 = 0x01;
 
 fn string_to_bytes(env: &Env, s: &String) -> Bytes {
     let len = s.len() as usize;
+    if len > MAX_STRING_LEN {
+        return Err(OracleError::AssetNameTooLong);
+    }
     let mut buf = [0u8; MAX_STRING_LEN];
     s.copy_into_slice(&mut buf[..len]);
-    Bytes::from_slice(env, &buf[..len])
+    Ok(Bytes::from_slice(env, &buf[..len]))
 }
 
-// ── Leaf encoding ─────────────────────────────────────────────────────────────
+// -- Leaf encoding -----------------------------------------------------------------
 
 /// Compute the canonical SHA-256 leaf hash for a BatchPriceEntry.
 ///
@@ -73,22 +74,17 @@ pub fn hash_leaf(env: &Env, entry: &BatchPriceEntry) -> Bytes {
     buf.append(&string_to_bytes(env, &entry.asset));
     // Separator
     buf.push_back(0x00);
-    // price: i128 as 16-byte big-endian
     let price_bytes = entry.price.to_be_bytes();
     buf.append(&Bytes::from_array(env, &price_bytes));
-    // decimals: u32 as 4-byte big-endian
     let dec_bytes = entry.decimals.to_be_bytes();
     buf.append(&Bytes::from_array(env, &dec_bytes));
-    // timestamp: u64 as 8-byte big-endian
     let ts_bytes = entry.timestamp.to_be_bytes();
     buf.append(&Bytes::from_array(env, &ts_bytes));
-    // source address bytes (32 bytes for Stellar public key)
-    buf.append(&string_to_bytes(env, &entry.source.to_string()));
-
-    env.crypto().sha256(&buf).into()
+    buf.append(&string_to_bytes(env, &entry.source.to_string())?);
+    Ok(env.crypto().sha256(&buf).into())
 }
 
-// ── Node hashing ──────────────────────────────────────────────────────────────
+// -- Node hashing ------------------------------------------------------------------
 
 /// Hash two child nodes into a parent node.
 /// Prefixed with 0x01 domain separation tag (Issue #566).
@@ -103,9 +99,9 @@ fn hash_pair(env: &Env, left: &Bytes, right: &Bytes) -> Bytes {
     env.crypto().sha256(&buf).into()
 }
 
-// ── Proof verification ────────────────────────────────────────────────────────
+// -- Proof verification ------------------------------------------------------------
 
-/// Verify that `entry` is included in the batch whose Merkle root is `root`.
+/// Verify inclusion of entry in batch with given root.
 ///
 /// `leaf_index` is the 0-based position of the entry in the original batch
 /// array. `siblings` are the co-path hashes from leaf level to root level.
@@ -115,38 +111,48 @@ pub fn verify_proof(
     env: &Env,
     entry: &BatchPriceEntry,
     leaf_index: u32,
+    batch_size: u32,
     siblings: &soroban_sdk::Vec<Bytes>,
     root: &Bytes,
-) -> bool {
+) -> Result<bool, OracleError> {
     if siblings.len() as usize > MAX_PROOF_SIBLINGS {
-        return false;
+        return Ok(false);
     }
-
-    let mut current = hash_leaf(env, entry);
+    if leaf_index >= batch_size {
+        return Err(OracleError::BatchIndexOutOfRange);
+    }
+    let mut current = hash_leaf(env, entry)?;
     let mut index = leaf_index;
-
-    for i in 0..siblings.len() {
-        let sibling = match siblings.get(i) {
-            Some(s) => s,
-            None => return false,
-        };
-        current = if index % 2 == 0 {
-            hash_pair(env, &current, &sibling)
+    let mut level_size = batch_size;
+    let mut sibling_cursor = 0u32;
+    while level_size > 1 {
+        let is_last = index == level_size - 1;
+        let is_odd_level = level_size % 2 == 1;
+        if is_last && is_odd_level {
+            // Promote: no sibling, carry current up unchanged.
         } else {
-            hash_pair(env, &sibling, &current)
-        };
+            let sibling = match siblings.get(sibling_cursor) {
+                Some(s) => s,
+                None => return Ok(false),
+            };
+            sibling_cursor += 1;
+            current = if index % 2 == 0 {
+                hash_pair(env, &current, &sibling)
+            } else {
+                hash_pair(env, &sibling, &current)
+            };
+        }
         index /= 2;
+        level_size = (level_size + 1) / 2;
     }
-
-    &current == root
+    Ok(&current == root)
 }
 
-// ── Root computation (used for single-entry batch shortcut) ───────────────────
+// -- Root computation --------------------------------------------------------------
 
 /// Compute the Merkle root for a slice of pre-hashed leaves.
-/// Used on-chain when the full leaf set fits in the transaction budget
-/// (typically for small batches ≤ 8 entries).
-#[allow(dead_code)] // exercised by merkle_test; kept non-test so batch builders can reuse it
+/// Odd-level rule: last node is promoted, not duplicated.
+#[allow(dead_code)]
 pub fn compute_root(env: &Env, leaves: soroban_sdk::Vec<Bytes>) -> Bytes {
     if leaves.is_empty() {
         return Bytes::new(env);
@@ -154,29 +160,24 @@ pub fn compute_root(env: &Env, leaves: soroban_sdk::Vec<Bytes>) -> Bytes {
     if leaves.len() == 1 {
         return leaves.get(0).unwrap();
     }
-
     let mut current_level = leaves;
-
     loop {
         let len = current_level.len();
-        if len == 1 {
-            break;
-        }
-
+        if len == 1 { break; }
         let mut next_level: soroban_sdk::Vec<Bytes> = soroban_sdk::Vec::new(env);
         let mut i = 0u32;
         while i < len {
             let left = current_level.get(i).unwrap();
-            let right = if i + 1 < len {
-                current_level.get(i + 1).unwrap()
+            if i + 1 < len {
+                let right = current_level.get(i + 1).unwrap();
+                next_level.push_back(hash_pair(env, &left, &right));
+                i += 2;
             } else {
-                left.clone() // duplicate last leaf if odd count
-            };
-            next_level.push_back(hash_pair(env, &left, &right));
-            i += 2;
+                next_level.push_back(left);
+                i += 1;
+            }
         }
         current_level = next_level;
     }
-
     current_level.get(0).unwrap()
 }
