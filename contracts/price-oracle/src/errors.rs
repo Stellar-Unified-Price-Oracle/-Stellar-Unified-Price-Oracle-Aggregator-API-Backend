@@ -8,6 +8,7 @@ pub enum OracleError {
     AdminOnly = 2,
     AssetNotFound = 3,
     PriceTooOld = 4,
+    // Issue #569 — decimals range validation (0..=18) and immutability
     InvalidDecimals = 5,
     AlreadyInitialized = 6,
     SourceAlreadyExists = 7,
@@ -52,8 +53,12 @@ pub enum OracleError {
     InvalidSlashAmount = 38,
     NoStakeToSlash = 39,
     InvalidStakeAmount = 40,
-    // Issue #568 — oversized asset or source-name string
-    AssetNameTooLong = 41,
-    // Issue #567 — leaf_index exceeds committed batch_size
-    BatchIndexOutOfRange = 42,
+    // Issue #572 — TTL extension bounds and sub-floor validation
+    InvalidTtlBounds = 41,
+    TtlSubFloor = 42,
+    // Issue #565 — Two-step admin handover
+    NoPendingAdmin = 43,
+    AdminTransferWindowElapsed = 44,
+    // Issue #564 — Multi-sig proposal expiry
+    ProposalExpired = 45,
 }

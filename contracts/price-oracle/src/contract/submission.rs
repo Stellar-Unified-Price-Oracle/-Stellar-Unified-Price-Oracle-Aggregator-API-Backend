@@ -9,6 +9,9 @@ use crate::storage;
 use crate::types::{BatchPriceEntry, MerkleProof, PriceDataPoint};
 use crate::utils;
 
+// Issue #569 — maximum supported price decimals scale
+pub const MAX_DECIMALS: u32 = 18;
+
 pub(crate) fn submit_price(
     env: &Env,
     source: &Address,
@@ -28,6 +31,15 @@ pub(crate) fn submit_price(
     }
     if price < 0 {
         return Err(OracleError::InvalidPrice);
+    }
+    // Issue #569 — validate decimals range and prevent un-governed scale changes
+    if decimals > MAX_DECIMALS {
+        return Err(OracleError::InvalidDecimals);
+    }
+    if let Some(prev) = storage::get_latest_price(env, asset) {
+        if prev.decimals != decimals {
+            return Err(OracleError::InvalidDecimals);
+        }
     }
 
     // Issue #568 - validate asset string length at the submission boundary.
@@ -137,16 +149,17 @@ pub(crate) fn apply_batch_entry(
         return Err(OracleError::InvalidPrice);
     }
 
-    // Issue #570 - deviation check mirrors submit_price.
-    if let Some(threshold_bps) = storage::get_deviation_threshold(env) {
-        if let Some(prev) = storage::get_latest_price(env, &entry.asset) {
-            if utils::deviation_exceeds(entry.price, prev.price, threshold_bps) {
-                return Err(OracleError::PriceDeviationTooLarge);
-            }
+    // Issue #569 — validate decimals range and prevent un-governed scale changes
+    if entry.decimals > MAX_DECIMALS {
+        return Err(OracleError::InvalidDecimals);
+    }
+    if let Some(prev) = storage::get_latest_price(env, &entry.asset) {
+        if prev.decimals != entry.decimals {
+            return Err(OracleError::InvalidDecimals);
         }
     }
 
-    if !merkle::verify_proof(env, entry, proof.leaf_index, batch_size, &proof.siblings, &root)? {
+    if !merkle::verify_proof(env, entry, proof.leaf_index, &proof.siblings, &root) {
         return Err(OracleError::InvalidMerkleProof);
     }
 

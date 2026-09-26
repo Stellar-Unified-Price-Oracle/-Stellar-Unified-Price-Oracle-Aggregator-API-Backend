@@ -12,6 +12,10 @@ on:
         options:
           - staging
           - production
+      slo_override_reason:
+        description: "Emergency override reason to bypass SLO error-budget gate"
+        required: false
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -237,6 +241,18 @@ jobs:
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG_STAGING }}" > ~/.kube/config
 
+      - name: Gate release on SLO error-budget burn rate (#552)
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL || 'http://prometheus.monitoring.svc:9090' }}
+          SLO_OVERRIDE_REASON: ${{ github.event.inputs.slo_override_reason }}
+          SLO_OVERRIDE_APPROVER: ${{ github.actor }}
+        run: |
+          node scripts/slo-release-gate.ts --environment=staging || {
+            echo "::error::Staging deployment blocked by SLO error-budget release gate (#552)"
+            exit 1
+          }
+
       - name: Deploy to staging
         if: steps.guard.outputs.configured == 'true'
         run: |
@@ -276,6 +292,18 @@ jobs:
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG_PROD }}" > ~/.kube/config
+
+      - name: Gate release on SLO error-budget burn rate (#552)
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL || 'http://prometheus.monitoring.svc:9090' }}
+          SLO_OVERRIDE_REASON: ${{ github.event.inputs.slo_override_reason }}
+          SLO_OVERRIDE_APPROVER: ${{ github.actor }}
+        run: |
+          node scripts/slo-release-gate.ts --environment=production || {
+            echo "::error::Production deployment blocked by SLO error-budget release gate (#552)"
+            exit 1
+          }
 
       - name: Deploy to production
         if: steps.guard.outputs.configured == 'true'

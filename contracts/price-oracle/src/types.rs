@@ -2,33 +2,6 @@ use soroban_sdk::{contracttype, Address, Bytes, BytesN, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PostQuantumScheme {
-    Dilithium,
-    Falcon,
-    Sphincs,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PostQuantumAdminKey {
-    pub scheme: PostQuantumScheme,
-    pub public_key: String,
-    pub fingerprint: String,
-    pub requested_at: u64,
-    pub activates_at: u64,
-    pub revoked_at: Option<u64>,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HybridSignature {
-    pub ed25519_signature: String,
-    pub pq_signature: String,
-    pub pq_scheme: PostQuantumScheme,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceDataPoint {
     pub asset: String,
     pub price: i128,
@@ -93,6 +66,19 @@ pub struct MultiSigConfig {
     pub threshold: u32,
 }
 
+/// Maximum number of signers the multisig may hold.
+/// Bounded to keep instance-storage serialisation size predictable.
+pub const MAX_SIGNERS: u32 = 20;
+
+/// Minimum number of signers required at all times (prevents bricking by
+/// removing every signer).
+pub const MIN_SIGNERS: u32 = 2;
+
+/// Proposal TTL in ledger seconds (~5 s/ledger on mainnet).
+/// After this window the proposal can no longer be approved or executed.
+/// 30 days = 30 * 24 * 60 * 60 = 2_592_000 seconds.
+pub const PROPOSAL_EXPIRY_SECONDS: u64 = 2_592_000;
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub enum ProposalAction {
@@ -113,6 +99,10 @@ pub enum ProposalAction {
     // Issue #379 — multi-region aware emergency pause
     Pause,
     Unpause,
+    // Issue #564 — Proposal action for setting stake treasury
+    SetStakeTreasury(Address),
+    // Issue #569 — Governed decimals change
+    UpdateAssetDecimals(String, u32),
 }
 
 // ── Multi-sig types ──────────────────────────────────────────────────────────
@@ -123,7 +113,8 @@ pub struct MultiSigProposal {
     pub id: u32,
     pub action: ProposalAction,
     pub approvals: Vec<Address>,
-    pub executed: u32, // 0 = pending, 1 = executed (bool avoided for XDR compat)
+    pub executed: u32,   // 0 = pending, 1 = executed (bool avoided for XDR compat)
+    pub cancelled: u32,  // 0 = active, 1 = cancelled
     pub created_at: u64,
     pub proposer: Address,
 }
@@ -221,6 +212,7 @@ pub enum DataKey {
     QueryFee,
     Whitelist(Address),
     FeeBalance,
+    FeeToken,
     StakeInfo(Address),
     StakeToken(Address),
     StakeTreasury,
@@ -236,13 +228,15 @@ pub enum DataKey {
     GovernanceProposalCount,
     GovernanceProposal(u32),
     Vote(u32, Address),
-    PostQuantumAdminKey(String),
-    PostQuantumKeyLog(u32),
-    PostQuantumKeyLogCount,
+    PostQuantumAdminKey(String), // reserved — no entrypoints; see docs/PQ_READINESS.md migration note
+    PostQuantumKeyLog(u32),      // reserved — no entrypoints; see docs/PQ_READINESS.md migration note
+    PostQuantumKeyLogCount,      // reserved — no entrypoints; see docs/PQ_READINESS.md migration note
     // Issue #375 — proxy upgrade timelock + canary
     PendingUpgradeHash,
     PendingUpgradeEta,
     UpgradeApprovals,
     CanaryImplementation,
     CanaryTrafficShareBps,
+    // Issue #565 — Two-step admin handover
+    PendingAdmin,
 }

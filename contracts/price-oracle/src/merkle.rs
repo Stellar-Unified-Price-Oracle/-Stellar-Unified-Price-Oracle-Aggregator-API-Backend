@@ -1,47 +1,45 @@
-// On-chain Merkle proof verifier using Soroban's native SHA-256.
+// On-chain Merkle proof verifier using Soroban's native SHA-256 with RFC 6962 domain separation.
 //
-// Tree construction (mirrors the off-chain TypeScript builder):
-//   1. For each BatchPriceEntry, compute leaf = SHA-256(canonical_bytes(entry)).
-//   2. If the leaf count is odd, promote the last leaf unchanged to the next
-//      level (do NOT duplicate it).  This avoids the ambiguity where the same
-//      leaf appears at two tree positions with different valid proofs.
-//   3. Build parent nodes: parent = SHA-256(left || right), sorted by
+// Domain separation (Issue #566):
+//   To prevent second-preimage attacks where an internal node can be presented
+//   as a leaf, leaf hashes and internal node hashes are prefixed with distinct
+//   1-byte domain separation tags:
+//     - Leaves:        0x00 (LEAF_DOMAIN_TAG)
+//     - Internal nodes: 0x01 (NODE_DOMAIN_TAG)
+//
+// Tree construction (mirrors off-chain TypeScript MerkleTree builder in services/aggregator):
+//   1. For each BatchPriceEntry, compute leaf = SHA-256(0x00 || canonical_bytes(entry)).
+//   2. If the leaf count is odd, duplicate the last leaf.
+//   3. Build parent nodes: parent = SHA-256(0x01 || left || right), sorted by
 //      position (left child always has lower index).
 //   4. Repeat until one root remains.
 //
 // Proof verification:
-//   Given a leaf hash, its index, and the sibling co-path, recompute the root
-//   by alternately hashing (leaf, sibling) or (sibling, leaf) based on whether
-//   the current index is even (left child) or odd (right child). When a level
-//   is odd-length and the verifier is at the last node (no sibling exists),
-//   the node is promoted: the current hash becomes the parent directly.
-//   The proof is valid iff the recomputed root matches the stored batch root.
+//   Given a leaf entry, its index, and sibling co-path, recompute the root
+//   by hashing leaf with 0x00 tag, then iteratively hashing with siblings
+//   using the 0x01 node tag based on index parity. The proof is valid iff
+//   the recomputed root matches the stored batch root.
 
 use soroban_sdk::{Bytes, Env, String};
 
 use crate::errors::OracleError;
 use crate::types::BatchPriceEntry;
 
-// Soroban's String has no direct byte accessor; copy_into_slice requires an
-// exact-length buffer. Asset symbols and strkey-encoded addresses must not
-// exceed this cap; the submission boundary rejects strings that do.
-pub const MAX_STRING_LEN: usize = 64;
+// Soroban's `String` has no direct byte accessor; `copy_into_slice` requires an
+// exact-length buffer. Asset symbols and strkey-encoded addresses are always
+// well under this cap in practice.
+const MAX_STRING_LEN: usize = 64;
 
 /// Maximum co-path length accepted by verify_proof (Issue #385).
 pub const MAX_PROOF_SIBLINGS: usize = 64;
 
-/// Validate that a Soroban string fits within MAX_STRING_LEN.
-///
-/// Call this at every submission boundary so the contract never reaches
-/// string_to_bytes with an oversized input.
-pub fn validate_string_len(s: &String) -> Result<(), OracleError> {
-    if s.len() as usize > MAX_STRING_LEN {
-        return Err(OracleError::AssetNameTooLong);
-    }
-    Ok(())
-}
+/// Domain separation tag for leaf hashes (RFC 6962 / NIST SP 800-108 pattern).
+pub const LEAF_DOMAIN_TAG: u8 = 0x00;
 
-fn string_to_bytes(env: &Env, s: &String) -> Result<Bytes, OracleError> {
+/// Domain separation tag for internal node hashes.
+pub const NODE_DOMAIN_TAG: u8 = 0x01;
+
+fn string_to_bytes(env: &Env, s: &String) -> Bytes {
     let len = s.len() as usize;
     if len > MAX_STRING_LEN {
         return Err(OracleError::AssetNameTooLong);
@@ -55,10 +53,26 @@ fn string_to_bytes(env: &Env, s: &String) -> Result<Bytes, OracleError> {
 
 /// Compute the canonical SHA-256 leaf hash for a BatchPriceEntry.
 ///
-/// Returns Err(AssetNameTooLong) if asset or source string exceeds MAX_STRING_LEN.
-pub fn hash_leaf(env: &Env, entry: &BatchPriceEntry) -> Result<Bytes, OracleError> {
+/// Encoding (all big-endian, fixed width):
+///   [0x00 domain tag]
+///   ++ [asset bytes (variable)] ++ [0x00 separator]
+///   ++ [price  : 16 bytes i128 big-endian]
+///   ++ [decimals: 4 bytes u32 big-endian]
+///   ++ [timestamp: 8 bytes u64 big-endian]
+///   ++ [source: 32-byte Stellar account ID bytes]
+///
+/// A 0x00 domain tag prefix distinguishes leaf hashes from internal node hashes (Issue #566).
+/// A 0x00 separator after the asset string prevents length-extension attacks
+/// where two different (asset, rest) pairs could produce the same byte sequence.
+pub fn hash_leaf(env: &Env, entry: &BatchPriceEntry) -> Bytes {
     let mut buf = Bytes::new(env);
-    buf.append(&string_to_bytes(env, &entry.asset)?);
+
+    // Leaf domain separation tag (Issue #566)
+    buf.push_back(LEAF_DOMAIN_TAG);
+
+    // Asset string bytes
+    buf.append(&string_to_bytes(env, &entry.asset));
+    // Separator
     buf.push_back(0x00);
     let price_bytes = entry.price.to_be_bytes();
     buf.append(&Bytes::from_array(env, &price_bytes));
@@ -72,8 +86,14 @@ pub fn hash_leaf(env: &Env, entry: &BatchPriceEntry) -> Result<Bytes, OracleErro
 
 // -- Node hashing ------------------------------------------------------------------
 
+/// Hash two child nodes into a parent node.
+/// Prefixed with 0x01 domain separation tag (Issue #566).
+/// Left and right are determined by leaf_index parity, not sorted by value,
+/// so the tree structure is position-stable.
 fn hash_pair(env: &Env, left: &Bytes, right: &Bytes) -> Bytes {
     let mut buf = Bytes::new(env);
+    // Node domain separation tag (Issue #566)
+    buf.push_back(NODE_DOMAIN_TAG);
     buf.append(left);
     buf.append(right);
     env.crypto().sha256(&buf).into()
@@ -83,8 +103,10 @@ fn hash_pair(env: &Env, left: &Bytes, right: &Bytes) -> Bytes {
 
 /// Verify inclusion of entry in batch with given root.
 ///
-/// leaf_index >= batch_size returns Err(BatchIndexOutOfRange).
-/// Odd-level promotion: last node on an odd-length level is promoted without hashing.
+/// `leaf_index` is the 0-based position of the entry in the original batch
+/// array. `siblings` are the co-path hashes from leaf level to root level.
+///
+/// Returns `true` iff the proof is valid.
 pub fn verify_proof(
     env: &Env,
     entry: &BatchPriceEntry,

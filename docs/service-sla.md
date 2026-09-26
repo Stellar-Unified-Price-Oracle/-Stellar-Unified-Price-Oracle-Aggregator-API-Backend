@@ -7,10 +7,11 @@ This SLA defines the minimum service commitments for the Stellar Unified Price O
 The Service targets the following operational objectives, aligned with the repository's current SLO definitions:
 
 - API availability: 99.9% monthly uptime
-- API latency: 99.0% of requests served under 1 second (p95 target)
+- API latency: 99.0% of requests served under 1 second (p95 target; internal per-hop budget detailed in [Latency Budget](./observability/LATENCY_BUDGET.md))
 - Price freshness: 99.5% of tracked assets remain within the configured staleness threshold
 
 These objectives are measured over rolling 30-day windows and are tracked through Prometheus and the project operational dashboards.
+Per-hop attribution and CI budget enforcement are documented in [docs/observability/LATENCY_BUDGET.md](./observability/LATENCY_BUDGET.md).
 
 ## 2. Service credits and remediation
 

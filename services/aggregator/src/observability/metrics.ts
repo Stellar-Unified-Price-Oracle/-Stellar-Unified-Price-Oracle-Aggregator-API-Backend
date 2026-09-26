@@ -169,29 +169,47 @@ export const pipelineStageLatencyMs = new client.Histogram({
   registers: [register],
 });
 
-// Issue #577 — Merkle batch path vs per-asset submission metrics.
-// Distinguishes the batch (submit_batch + N apply_batch_entry) path from the
-// per-asset (N x submit_price) path so operators can compare round cost.
-export const contractSubmissionsTotal = new client.Counter({
-  name: 'contract_submissions_total',
-  help: 'Total contract submissions grouped by path (batch|per_asset) and status',
-  labelNames: ['path', 'status'],
+// Issue #578 — RPC call tracking per round and total
+export const contractRpcCallsTotal = new client.Counter({
+  name: 'contract_rpc_calls_total',
+  help: 'Total RPC calls made to Soroban RPC by type',
+  labelNames: ['call_type'],
   registers: [register],
 });
 
-export const contractBatchRoundFeesTotal = new client.Counter({
-  name: 'contract_batch_round_fees_total',
-  help: 'Total fees (stroops) charged across all transactions in a batch round',
-  labelNames: ['path'],
+export const contractRpcCallsPerRound = new client.Gauge({
+  name: 'contract_rpc_calls_per_round',
+  help: 'Number of RPC calls made in the most recent publish and heartbeat round',
+  labelNames: ['call_type'],
   registers: [register],
 });
 
-export const contractBatchRoundTransactions = new client.Histogram({
-  name: 'contract_batch_round_transactions',
-  help: 'Number of transactions used per publish round (1 for batch commit + N applies vs N for per-asset)',
-  labelNames: ['path'],
-  buckets: [1, 2, 4, 8, 16, 32, 64],
+// Issue #575 — Poll loop duration and overruns
+export const pollCycleDurationMs = new client.Histogram({
+  name: 'poll_cycle_duration_ms',
+  help: 'Duration of aggregator poll cycles in milliseconds',
+  buckets: [100, 250, 500, 1000, 2500, 5000, 10000, 20000, 30000, 60000],
+  registers: [register],
+});
+
+export const pollCycleOverrunsTotal = new client.Counter({
+  name: 'poll_cycle_overruns_total',
+  help: 'Total number of poll cycles that overran their configured interval or were skipped',
+  registers: [register],
+});
+
+// Issue #574 — Retry queue depth and orphaned retry tracking
+export const retryQueueDepth = new client.Gauge({
+  name: 'retry_queue_depth',
+  help: 'Current number of submissions waiting in the publisher retry queue',
+  registers: [register],
+});
+
+export const retryQueueOrphanedRetriesTotal = new client.Counter({
+  name: 'retry_queue_orphaned_retries_total',
+  help: 'Total number of retries that were orphaned or dropped on shutdown',
   registers: [register],
 });
 
 export { register };
+
