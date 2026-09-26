@@ -65,3 +65,9 @@ pub(crate) fn get_query_fee(env: &Env) -> i128 {
 pub(crate) fn get_stake_treasury(env: &Env) -> Option<Address> {
     storage::get_stake_treasury(env)
 }
+
+// ── Issue #565 — Two-step admin handover query ───────────────────────────────
+
+pub(crate) fn get_pending_admin(env: &Env) -> Option<Address> {
+    storage::get_pending_admin(env).map(|(admin, _)| admin)
+}

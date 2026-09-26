@@ -12,7 +12,10 @@
 use soroban_sdk::{token, Address, Env, String};
 
 use crate::errors::OracleError;
-use crate::events::{FeesWithdrawn, QueryFeeSet, WhitelistUpdated};
+use crate::events::{
+    AdminTransferAccepted, AdminTransferCancelled, AdminTransferProposed, DeviationThresholdSet,
+    ReputationReset, SourceAdded, SourceRemoved, StakeTreasurySet, TrustedAssetSet,
+};
 use crate::storage;
 
 pub(crate) fn initialize(env: &Env, admin: &Address) -> Result<(), OracleError> {
@@ -21,6 +24,71 @@ pub(crate) fn initialize(env: &Env, admin: &Address) -> Result<(), OracleError> 
     }
     storage::set_admin(env, admin);
     storage::set_storage_layout_version(env, 1);
+    Ok(())
+}
+
+// ── Issue #565 — Two-step admin handover ─────────────────────────────────────
+
+pub(crate) fn propose_admin(
+    env: &Env,
+    admin: &Address,
+    new_admin: &Address,
+) -> Result<(), OracleError> {
+    admin.require_auth();
+    storage::verify_admin(env, admin)?;
+    let now = env.ledger().timestamp();
+    let deadline = now + storage::ADMIN_TRANSFER_WINDOW_SECONDS;
+    storage::set_pending_admin(env, new_admin, deadline);
+    AdminTransferProposed {
+        current_admin: admin.clone(),
+        pending_admin: new_admin.clone(),
+        deadline,
+    }
+    .publish(env);
+    Ok(())
+}
+
+pub(crate) fn accept_admin(
+    env: &Env,
+    new_admin: &Address,
+) -> Result<(), OracleError> {
+    new_admin.require_auth();
+    let (pending, _deadline) =
+        storage::get_pending_admin(env).ok_or(OracleError::NoPendingAdmin)?;
+    if &pending != new_admin {
+        return Err(OracleError::AdminOnly);
+    }
+    let old_admin = storage::get_admin(env);
+    storage::set_admin(env, new_admin);
+    storage::clear_pending_admin(env);
+    AdminTransferAccepted {
+        old_admin,
+        new_admin: new_admin.clone(),
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+    Ok(())
+}
+
+pub(crate) fn cancel_admin_transfer(
+    env: &Env,
+    admin: &Address,
+) -> Result<(), OracleError> {
+    admin.require_auth();
+    storage::verify_admin(env, admin)?;
+    let (pending, deadline) =
+        storage::get_pending_admin(env).ok_or(OracleError::NoPendingAdmin)?;
+    let now = env.ledger().timestamp();
+    if now > deadline {
+        return Err(OracleError::AdminTransferWindowElapsed);
+    }
+    storage::clear_pending_admin(env);
+    AdminTransferCancelled {
+        admin: admin.clone(),
+        pending_admin: pending,
+        timestamp: now,
+    }
+    .publish(env);
     Ok(())
 }
 
@@ -34,6 +102,7 @@ pub(crate) fn set_deviation_threshold(
     admin.require_auth();
     storage::verify_admin(env, admin)?;
     storage::set_deviation_threshold(env, threshold_bps);
+    DeviationThresholdSet { threshold_bps }.publish(env);
     Ok(())
 }
 
@@ -47,6 +116,10 @@ pub(crate) fn reset_reputation(
     admin.require_auth();
     storage::verify_admin(env, admin)?;
     storage::remove_source_reputation(env, source);
+    ReputationReset {
+        source: source.clone(),
+    }
+    .publish(env);
     Ok(())
 }
 
@@ -61,6 +134,11 @@ pub(crate) fn add_oracle_source(
     admin.require_auth();
     storage::verify_admin(env, admin)?;
     storage::add_source(env, source, name);
+    SourceAdded {
+        source: source.clone(),
+        name: name.clone(),
+    }
+    .publish(env);
     Ok(())
 }
 
@@ -72,6 +150,10 @@ pub(crate) fn remove_oracle_source(
     admin.require_auth();
     storage::verify_admin(env, admin)?;
     storage::remove_source(env, source);
+    SourceRemoved {
+        source: source.clone(),
+    }
+    .publish(env);
     Ok(())
 }
 
@@ -84,12 +166,17 @@ pub(crate) fn set_trusted_asset(
     admin.require_auth();
     storage::verify_admin(env, admin)?;
     storage::set_trusted_asset(env, asset, trusted);
+    TrustedAssetSet {
+        asset: asset.clone(),
+        trusted,
+    }
+    .publish(env);
     Ok(())
 }
 
 // ── Slashed-stake treasury ───────────────────────────────────────────────────
 
-/// Set the destination for slashed stake.  `slash` requires this to be
+/// Set the destination for slashed stake. `slash` requires this to be
 /// configured: confiscated tokens have to go somewhere an admin chose.
 pub(crate) fn set_stake_treasury(
     env: &Env,
@@ -99,6 +186,10 @@ pub(crate) fn set_stake_treasury(
     admin.require_auth();
     storage::verify_admin(env, admin)?;
     storage::set_stake_treasury(env, treasury);
+    StakeTreasurySet {
+        treasury: treasury.clone(),
+    }
+    .publish(env);
     Ok(())
 }
 
@@ -199,7 +290,7 @@ pub(crate) fn withdraw_fees(
     Ok(())
 }
 
-// ── Issue #376 — scheduled TTL / rent extension ──────────────────────────────
+// ── Issue #376 & Issue #572 — scheduled TTL / rent extension ─────────────────
 
 /// Extend the TTL of every persistent price-history entry plus the shared
 /// instance storage entry (Admin, GovernanceConfig, GovernanceProposal,
@@ -216,10 +307,21 @@ pub(crate) fn extend_storage_ttl(env: &Env) {
     }
 }
 
-pub(crate) fn extend_price_history_ttl(env: &Env, asset: &String, threshold: u32, extend_to: u32) {
-    storage::extend_price_history_ttl(env, asset, threshold, extend_to);
+pub(crate) fn extend_price_history_ttl(
+    env: &Env,
+    caller: &Address,
+    asset: &String,
+    threshold: u32,
+    extend_to: u32,
+) -> Result<(), OracleError> {
+    storage::extend_price_history_ttl(env, caller, asset, threshold, extend_to)
 }
 
-pub(crate) fn extend_instance_ttl(env: &Env, threshold: u32, extend_to: u32) {
-    storage::extend_instance_ttl(env, threshold, extend_to);
+pub(crate) fn extend_instance_ttl(
+    env: &Env,
+    caller: &Address,
+    threshold: u32,
+    extend_to: u32,
+) -> Result<(), OracleError> {
+    storage::extend_instance_ttl(env, caller, threshold, extend_to)
 }

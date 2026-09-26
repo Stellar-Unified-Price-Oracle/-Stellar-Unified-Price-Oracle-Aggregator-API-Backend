@@ -344,5 +344,44 @@ describe('Publisher Batch Submission with Merkle Tree', () => {
         expect(tree.verifyProof(batch.entries[i], batch.proofs[i])).toBe(true);
       }
     });
+
+    it('should reject proof attempting to prove an internal node as a leaf (second-preimage defense)', () => {
+      const batchEntries: BatchPriceEntry[] = [
+        { asset: 'XLM', price: 1000000n, decimals: 7, timestamp: 1700000000, source: 'src1' },
+        { asset: 'BTC', price: 50000000000n, decimals: 7, timestamp: 1700000000, source: 'src1' },
+      ];
+      const tree = new MerkleTree(batchEntries);
+      const forgedEntry: BatchPriceEntry = {
+        asset: 'FORGED',
+        price: 999999n,
+        decimals: 7,
+        timestamp: 1700000000,
+        source: 'src1',
+      };
+      // Internal nodes are domain-separated with 0x01 tag while hashLeaf uses 0x00
+      expect(tree.verifyProof(forgedEntry, { leafIndex: 0, siblings: [] })).toBe(false);
+    });
+
+    it('should reject proof with truncated co-path', () => {
+      const batchEntries: BatchPriceEntry[] = [
+        { asset: 'XLM', price: 1000000n, decimals: 7, timestamp: 1700000000, source: 'src1' },
+        { asset: 'BTC', price: 50000000000n, decimals: 7, timestamp: 1700000000, source: 'src1' },
+        { asset: 'ETH', price: 3000000000n, decimals: 7, timestamp: 1700000000, source: 'src1' },
+        { asset: 'USDC', price: 1000000n, decimals: 7, timestamp: 1700000000, source: 'src1' },
+      ];
+      const tree = new MerkleTree(batchEntries);
+      const proof = tree.getProof(0);
+      const truncatedProof = { leafIndex: 0, siblings: proof.siblings.slice(0, -1) };
+      expect(tree.verifyProof(batchEntries[0], truncatedProof)).toBe(false);
+    });
+
+    it('should reject proof with sibling list exceeding MAX_PROOF_SIBLINGS', () => {
+      const batchEntries: BatchPriceEntry[] = [
+        { asset: 'XLM', price: 1000000n, decimals: 7, timestamp: 1700000000, source: 'src1' },
+      ];
+      const tree = new MerkleTree(batchEntries);
+      const excessiveSiblings = new Array(65).fill(Buffer.alloc(32, 0));
+      expect(tree.verifyProof(batchEntries[0], { leafIndex: 0, siblings: excessiveSiblings })).toBe(false);
+    });
   });
 });

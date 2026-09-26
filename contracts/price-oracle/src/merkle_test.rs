@@ -50,6 +50,7 @@ mod merkle_tests {
                     left.clone()
                 };
                 let mut buf = Bytes::new(env);
+                buf.push_back(crate::merkle::NODE_DOMAIN_TAG);
                 buf.append(&left);
                 buf.append(&right);
                 next.push_back(env.crypto().sha256(&buf).into());
@@ -145,6 +146,7 @@ mod merkle_tests {
         let h1 = hash_leaf(&env, &e1);
 
         let mut buf = Bytes::new(&env);
+        buf.push_back(crate::merkle::NODE_DOMAIN_TAG);
         buf.append(&h0);
         buf.append(&h1);
         let root: Bytes = env.crypto().sha256(&buf).into();
@@ -173,6 +175,7 @@ mod merkle_tests {
         let h1 = hash_leaf(&env, &e1);
 
         let mut buf = Bytes::new(&env);
+        buf.push_back(crate::merkle::NODE_DOMAIN_TAG);
         buf.append(&h0);
         buf.append(&h1);
         let root: Bytes = env.crypto().sha256(&buf).into();
@@ -197,6 +200,68 @@ mod merkle_tests {
         };
 
         assert!(!verify_proof(&env, &entry, proof.leaf_index, &proof.siblings, &wrong_root));
+    }
+
+    #[test]
+    fn test_verify_proof_rejects_internal_node_as_leaf() {
+        let env = Env::default();
+        let source = Address::generate(&env);
+
+        let e0 = make_entry(&env, "XLM", 100_000_000, &source);
+        let e1 = make_entry(&env, "BTC", 50_000_000_000, &source);
+
+        let mut leaves: Vec<Bytes> = Vec::new(&env);
+        leaves.push_back(hash_leaf(&env, &e0));
+        leaves.push_back(hash_leaf(&env, &e1));
+
+        let (root, _) = build_tree(&env, leaves);
+
+        // Attempt second-preimage attack: treat an internal node or root as a leaf
+        let fake_entry = make_entry(&env, "FORGED", 999_999, &source);
+        let empty_siblings: Vec<Bytes> = Vec::new(&env);
+
+        // A proof attempting to prove an internal node as a leaf is rejected
+        // because hash_leaf has 0x00 domain separation tag while internal nodes have 0x01
+        assert!(!verify_proof(&env, &fake_entry, 0, &empty_siblings, &root));
+    }
+
+    #[test]
+    fn test_verify_proof_rejects_truncated_copath() {
+        let env = Env::default();
+        let source = Address::generate(&env);
+
+        let e0 = make_entry(&env, "XLM", 100_000_000, &source);
+        let e1 = make_entry(&env, "BTC", 50_000_000_000, &source);
+        let e2 = make_entry(&env, "ETH", 3_000_000_000, &source);
+        let e3 = make_entry(&env, "USDC", 1_000_000, &source);
+
+        let mut leaves: Vec<Bytes> = Vec::new(&env);
+        leaves.push_back(hash_leaf(&env, &e0));
+        leaves.push_back(hash_leaf(&env, &e1));
+        leaves.push_back(hash_leaf(&env, &e2));
+        leaves.push_back(hash_leaf(&env, &e3));
+
+        let (root, proofs) = build_tree(&env, leaves);
+        let mut truncated_siblings = proofs.get(0).unwrap();
+        truncated_siblings.pop_back();
+
+        assert!(!verify_proof(&env, &e0, 0, &truncated_siblings, &root));
+    }
+
+    #[test]
+    fn test_verify_proof_rejects_siblings_longer_than_max() {
+        let env = Env::default();
+        let source = Address::generate(&env);
+        let entry = make_entry(&env, "XLM", 100_000_000, &source);
+        let root = hash_leaf(&env, &entry);
+
+        let mut excessive_siblings: Vec<Bytes> = Vec::new(&env);
+        let dummy = Bytes::from_array(&env, &[0u8; 32]);
+        for _ in 0..(MAX_PROOF_SIBLINGS + 1) {
+            excessive_siblings.push_back(dummy.clone());
+        }
+
+        assert!(!verify_proof(&env, &entry, 0, &excessive_siblings, &root));
     }
 
     // ── Unit: compute_root ────────────────────────────────────────────────────
@@ -226,6 +291,7 @@ mod merkle_tests {
         let h1 = hash_leaf(&env, &e1);
 
         let mut buf = Bytes::new(&env);
+        buf.push_back(crate::merkle::NODE_DOMAIN_TAG);
         buf.append(&h0);
         buf.append(&h1);
         let expected: Bytes = env.crypto().sha256(&buf).into();

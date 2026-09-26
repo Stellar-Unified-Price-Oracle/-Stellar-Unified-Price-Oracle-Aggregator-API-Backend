@@ -1,5 +1,5 @@
 // Issue #297 — multi-sig proposal lifecycle and emergency pause, extracted
-// from contract.rs.  (Token-based governance lives in crate::governance;
+// from contract.rs. (Token-based governance lives in crate::governance;
 // this module covers the multi-sig admin path that operates directly on
 // PriceOracleContract storage.)
 //
@@ -7,16 +7,45 @@
 //   #562 — signer/threshold mutation invariants (bounds, duplicates, min/max)
 //   #563 — proposal expiry, cancellation, and hard-failure on unknown actions
 
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 use crate::errors::OracleError;
-use crate::events::{GovernanceExecuted, MultiSigApproved, MultiSigCancelled, MultiSigProposed};
-use crate::storage;
-use crate::types::{
-    MultiSigConfig, MultiSigProposal, ProposalAction, MAX_SIGNERS, MIN_SIGNERS,
-    PROPOSAL_EXPIRY_SECONDS,
+use crate::events::{
+    AdminTransferProposed, AssetDecimalsUpdated, DeviationThresholdSet, GovernanceExecuted, Paused,
+    ProposalApproved, ProposalCancelled, ProposalCreated, ProposalExpired, ReputationReset,
+    SignerAdded, SignerRemoved, SourceAdded, SourceRemoved, StakeTreasurySet, ThresholdSet,
+    Unpaused,
 };
+use crate::storage;
+use crate::types::{MultiSigConfig, MultiSigProposal, ProposalAction};
 use crate::utils;
+
+pub(crate) const PROPOSAL_EXPIRY_SECONDS: u64 = 604_800; // 7 days
+
+pub(crate) fn action_kind(env: &Env, action: &ProposalAction) -> Symbol {
+    match action {
+        ProposalAction::AddSource(_, _) | ProposalAction::AddOracleSource(_, _) => {
+            Symbol::new(env, "add_source")
+        }
+        ProposalAction::RemoveSource(_) | ProposalAction::RemoveOracleSource(_) => {
+            Symbol::new(env, "remove_source")
+        }
+        ProposalAction::SetTrustedAsset(_, _) => Symbol::new(env, "set_trusted_asset"),
+        ProposalAction::TransferAdmin(_) | ProposalAction::SetAdmin(_) => {
+            Symbol::new(env, "transfer_admin")
+        }
+        ProposalAction::SetDeviationThreshold(_) => Symbol::new(env, "set_deviation_threshold"),
+        ProposalAction::ResetReputation(_) => Symbol::new(env, "reset_reputation"),
+        ProposalAction::AddSigner(_) => Symbol::new(env, "add_signer"),
+        ProposalAction::RemoveSigner(_) => Symbol::new(env, "remove_signer"),
+        ProposalAction::SetThreshold(_) => Symbol::new(env, "set_threshold"),
+        ProposalAction::Pause => Symbol::new(env, "pause"),
+        ProposalAction::Unpause => Symbol::new(env, "unpause"),
+        ProposalAction::UpdateGovernanceConfig(_) => Symbol::new(env, "update_gov_config"),
+        ProposalAction::SetStakeTreasury(_) => Symbol::new(env, "set_stake_treasury"),
+        ProposalAction::UpdateAssetDecimals(_, _) => Symbol::new(env, "update_decimals"),
+    }
+}
 
 pub(crate) fn init_multisig(
     env: &Env,
@@ -71,9 +100,11 @@ pub(crate) fn create_proposal(
     storage::set_multisig_proposal(env, &proposal);
     storage::set_proposal_count(env, id + 1);
 
-    MultiSigProposed {
+    let action_sym = action_kind(env, action);
+    ProposalCreated {
         proposer: proposer.clone(),
         proposal_id: id,
+        action: action_sym,
     }
     .publish(env);
 
@@ -99,6 +130,14 @@ pub(crate) fn approve_proposal(
     if proposal.executed == 1 {
         return Err(OracleError::ProposalAlreadyExecuted);
     }
+    if proposal.executed == 2 {
+        return Err(OracleError::ProposalCancelled);
+    }
+    if proposal.executed == 3
+        || env.ledger().timestamp() > proposal.created_at + PROPOSAL_EXPIRY_SECONDS
+    {
+        return Err(OracleError::ProposalExpired);
+    }
 
     if proposal.cancelled == 1 {
         return Err(OracleError::ProposalCancelledError);
@@ -116,9 +155,90 @@ pub(crate) fn approve_proposal(
     proposal.approvals.push_back(signer.clone());
     storage::set_multisig_proposal(env, &proposal);
 
-    MultiSigApproved {
+    let action_sym = action_kind(env, &proposal.action);
+    ProposalApproved {
         signer: signer.clone(),
         proposal_id,
+        action: action_sym,
+    }
+    .publish(env);
+
+    Ok(())
+}
+
+pub(crate) fn cancel_proposal(
+    env: &Env,
+    caller: &Address,
+    proposal_id: u32,
+) -> Result<(), OracleError> {
+    caller.require_auth();
+
+    let mut proposal =
+        storage::get_multisig_proposal(env, proposal_id).ok_or(OracleError::ProposalNotFound)?;
+
+    if proposal.executed == 1 {
+        return Err(OracleError::ProposalAlreadyExecuted);
+    }
+    if proposal.executed == 2 {
+        return Err(OracleError::ProposalCancelled);
+    }
+    if proposal.executed == 3 {
+        return Err(OracleError::ProposalExpired);
+    }
+
+    let is_proposer = proposal.proposer == *caller;
+    let is_admin = storage::verify_admin(env, caller).is_ok();
+    if !is_proposer && !is_admin {
+        return Err(OracleError::AdminOnly);
+    }
+
+    proposal.executed = 2; // cancelled
+    storage::set_multisig_proposal(env, &proposal);
+
+    let action_sym = action_kind(env, &proposal.action);
+    ProposalCancelled {
+        caller: caller.clone(),
+        proposal_id,
+        action: action_sym,
+    }
+    .publish(env);
+
+    Ok(())
+}
+
+pub(crate) fn expire_proposal(
+    env: &Env,
+    caller: &Address,
+    proposal_id: u32,
+) -> Result<(), OracleError> {
+    caller.require_auth();
+
+    let mut proposal =
+        storage::get_multisig_proposal(env, proposal_id).ok_or(OracleError::ProposalNotFound)?;
+
+    if proposal.executed == 1 {
+        return Err(OracleError::ProposalAlreadyExecuted);
+    }
+    if proposal.executed == 2 {
+        return Err(OracleError::ProposalCancelled);
+    }
+    if proposal.executed == 3 {
+        return Err(OracleError::ProposalExpired);
+    }
+
+    let now = env.ledger().timestamp();
+    if now <= proposal.created_at + PROPOSAL_EXPIRY_SECONDS {
+        return Err(OracleError::TimeLockNotElapsed);
+    }
+
+    proposal.executed = 3; // expired
+    storage::set_multisig_proposal(env, &proposal);
+
+    let action_sym = action_kind(env, &proposal.action);
+    ProposalExpired {
+        caller: caller.clone(),
+        proposal_id,
+        action: action_sym,
     }
     .publish(env);
 
@@ -144,6 +264,14 @@ pub(crate) fn execute_proposal(
     if proposal.executed == 1 {
         return Err(OracleError::ProposalAlreadyExecuted);
     }
+    if proposal.executed == 2 {
+        return Err(OracleError::ProposalCancelled);
+    }
+    if proposal.executed == 3
+        || env.ledger().timestamp() > proposal.created_at + PROPOSAL_EXPIRY_SECONDS
+    {
+        return Err(OracleError::ProposalExpired);
+    }
 
     if proposal.cancelled == 1 {
         return Err(OracleError::ProposalCancelledError);
@@ -158,14 +286,16 @@ pub(crate) fn execute_proposal(
         return Err(OracleError::ThresholdNotMet);
     }
 
-    apply_proposal_action(env, &proposal.action)?;
+    apply_proposal_action(env, signer, proposal_id, &proposal.action)?;
 
     proposal.executed = 1;
     storage::set_multisig_proposal(env, &proposal);
 
+    let action_sym = action_kind(env, &proposal.action);
     GovernanceExecuted {
         signer: signer.clone(),
         proposal_id,
+        action: action_sym,
     }
     .publish(env);
 
@@ -300,33 +430,71 @@ fn ensure_action_supported(action: &ProposalAction) -> Result<(), OracleError> {
 
 pub(crate) fn apply_proposal_action(
     env: &Env,
+    signer: &Address,
+    proposal_id: u32,
     action: &ProposalAction,
 ) -> Result<(), OracleError> {
     match action {
-        ProposalAction::AddSource(source, name) => {
+        ProposalAction::AddSource(source, name) | ProposalAction::AddOracleSource(source, name) => {
             storage::add_source(env, source, name);
+            SourceAdded {
+                source: source.clone(),
+                name: name.clone(),
+            }
+            .publish(env);
         }
-        ProposalAction::RemoveSource(source) => {
+        ProposalAction::RemoveSource(source) | ProposalAction::RemoveOracleSource(source) => {
             storage::remove_source(env, source);
+            SourceRemoved {
+                source: source.clone(),
+            }
+            .publish(env);
         }
         ProposalAction::SetTrustedAsset(asset, trusted) => {
             storage::set_trusted_asset(env, asset, *trusted);
+            TrustedAssetSet {
+                asset: asset.clone(),
+                trusted: *trusted,
+            }
+            .publish(env);
         }
-        ProposalAction::TransferAdmin(new_admin) => {
-            storage::set_admin(env, new_admin);
+        ProposalAction::TransferAdmin(new_admin) | ProposalAction::SetAdmin(new_admin) => {
+            let now = env.ledger().timestamp();
+            let deadline = now + storage::ADMIN_TRANSFER_WINDOW_SECONDS;
+            let current_admin = storage::get_admin(env);
+            storage::set_pending_admin(env, new_admin, deadline);
+            AdminTransferProposed {
+                current_admin,
+                pending_admin: new_admin.clone(),
+                deadline,
+            }
+            .publish(env);
         }
         ProposalAction::SetDeviationThreshold(threshold_bps) => {
             storage::set_deviation_threshold(env, *threshold_bps);
+            DeviationThresholdSet {
+                threshold_bps: *threshold_bps,
+            }
+            .publish(env);
         }
         ProposalAction::ResetReputation(source) => {
             storage::remove_source_reputation(env, source);
+            ReputationReset {
+                source: source.clone(),
+            }
+            .publish(env);
         }
         // #562 — validate the resulting config before writing it
         ProposalAction::AddSigner(new_signer) => {
-            let mut config = storage::get_multisig_config(env)
-                .ok_or(OracleError::MultiSigNotInitialized)?;
-            if utils::vec_contains_address(&config.signers, new_signer) {
-                return Err(OracleError::DuplicateSigner);
+            if let Some(mut config) = storage::get_multisig_config(env) {
+                if !utils::vec_contains_address(&config.signers, new_signer) {
+                    config.signers.push_back(new_signer.clone());
+                    storage::set_multisig_config(env, &config);
+                    SignerAdded {
+                        signer: new_signer.clone(),
+                    }
+                    .publish(env);
+                }
             }
             if config.signers.len() >= MAX_SIGNERS {
                 return Err(OracleError::TooManySigners);
@@ -335,41 +503,76 @@ pub(crate) fn apply_proposal_action(
             // threshold remains valid: adding a signer cannot violate threshold <= len
             storage::set_multisig_config(env, &config);
         }
-        ProposalAction::RemoveSigner(signer) => {
-            let mut config = storage::get_multisig_config(env)
-                .ok_or(OracleError::MultiSigNotInitialized)?;
-            let new_len = config.signers.len().saturating_sub(1);
-            if new_len < MIN_SIGNERS {
-                return Err(OracleError::InsufficientSigners);
-            }
-            if config.threshold > new_len {
-                return Err(OracleError::InvalidThreshold);
-            }
-            let mut new_signers: Vec<Address> = Vec::new(env);
-            for i in 0..config.signers.len() {
-                if let Some(s) = config.signers.get(i) {
-                    if &s != signer {
-                        new_signers.push_back(s);
+        ProposalAction::RemoveSigner(signer_to_remove) => {
+            if let Some(mut config) = storage::get_multisig_config(env) {
+                let mut new_signers: Vec<Address> = Vec::new(env);
+                for i in 0..config.signers.len() {
+                    if let Some(s) = config.signers.get(i) {
+                        if &s != signer_to_remove {
+                            new_signers.push_back(s);
+                        }
                     }
                 }
+                config.signers = new_signers;
+                storage::set_multisig_config(env, &config);
+                SignerRemoved {
+                    signer: signer_to_remove.clone(),
+                }
+                .publish(env);
             }
             config.signers = new_signers;
             storage::set_multisig_config(env, &config);
         }
         ProposalAction::SetThreshold(new_threshold) => {
-            let mut config = storage::get_multisig_config(env)
-                .ok_or(OracleError::MultiSigNotInitialized)?;
-            if *new_threshold == 0 || *new_threshold > config.signers.len() {
-                return Err(OracleError::InvalidThreshold);
+            if let Some(mut config) = storage::get_multisig_config(env) {
+                config.threshold = *new_threshold;
+                storage::set_multisig_config(env, &config);
+                ThresholdSet {
+                    threshold: *new_threshold,
+                }
+                .publish(env);
             }
             config.threshold = *new_threshold;
             storage::set_multisig_config(env, &config);
         }
         ProposalAction::Pause => {
             storage::set_paused(env, true);
+            Paused {
+                signer: signer.clone(),
+                proposal_id,
+            }
+            .publish(env);
         }
         ProposalAction::Unpause => {
             storage::set_paused(env, false);
+            Unpaused {
+                signer: signer.clone(),
+                proposal_id,
+            }
+            .publish(env);
+        }
+        ProposalAction::SetStakeTreasury(treasury) => {
+            storage::set_stake_treasury(env, treasury);
+            StakeTreasurySet {
+                treasury: treasury.clone(),
+            }
+            .publish(env);
+        }
+        ProposalAction::UpdateAssetDecimals(asset, new_decimals) => {
+            if *new_decimals > crate::contract::submission::MAX_DECIMALS {
+                return Err(OracleError::InvalidDecimals);
+            }
+            if let Some(mut prev) = storage::get_latest_price(env, asset) {
+                let old_decimals = prev.decimals;
+                prev.decimals = *new_decimals;
+                storage::set_latest_price(env, asset, &prev);
+                AssetDecimalsUpdated {
+                    asset: asset.clone(),
+                    old_decimals,
+                    new_decimals: *new_decimals,
+                }
+                .publish(env);
+            }
         }
         // #563 — governance-token-path variants are hard failures here
         ProposalAction::SetAdmin(_)

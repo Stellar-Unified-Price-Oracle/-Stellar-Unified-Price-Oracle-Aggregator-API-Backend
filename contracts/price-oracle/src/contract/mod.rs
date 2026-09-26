@@ -196,8 +196,6 @@ impl PriceOracleContract {
         governance::execute_proposal(&env, &signer, proposal_id)
     }
 
-    /// Cancel a pending proposal.  Callable by the original proposer or any
-    /// current signer.  Emits MultiSigCancelled. (#563)
     pub fn cancel_proposal(
         env: Env,
         caller: Address,
@@ -206,12 +204,42 @@ impl PriceOracleContract {
         governance::cancel_proposal(&env, &caller, proposal_id)
     }
 
+    pub fn expire_proposal(
+        env: Env,
+        caller: Address,
+        proposal_id: u32,
+    ) -> Result<(), OracleError> {
+        governance::expire_proposal(&env, &caller, proposal_id)
+    }
+
     pub fn get_proposal(env: Env, proposal_id: u32) -> Option<MultiSigProposal> {
         governance::get_proposal(&env, proposal_id)
     }
 
     pub fn get_multisig_config(env: Env) -> Option<MultiSigConfig> {
         governance::get_multisig_config(&env)
+    }
+
+    // ── Issue #565 — Two-step admin handover ───────────────────────────────
+
+    pub fn propose_admin(
+        env: Env,
+        admin: Address,
+        new_admin: Address,
+    ) -> Result<(), OracleError> {
+        admin::propose_admin(&env, &admin, &new_admin)
+    }
+
+    pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), OracleError> {
+        admin::accept_admin(&env, &new_admin)
+    }
+
+    pub fn cancel_admin_transfer(env: Env, admin: Address) -> Result<(), OracleError> {
+        admin::cancel_admin_transfer(&env, &admin)
+    }
+
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        queries::get_pending_admin(&env)
     }
 
     // ── Issue #379 — multi-region aware emergency pause ────────────────────
@@ -294,17 +322,28 @@ impl PriceOracleContract {
         admin::get_fee_balance(&env)
     }
 
-    // ── Issue #376 — scheduled TTL / rent extension ────────────────────────
+    // ── Issue #376 & Issue #572 — scheduled TTL / rent extension ───────────
 
     pub fn extend_storage_ttl(env: Env) {
         admin::extend_storage_ttl(&env);
     }
 
-    pub fn extend_price_history_ttl(env: Env, asset: String, threshold: u32, extend_to: u32) {
-        admin::extend_price_history_ttl(&env, &asset, threshold, extend_to);
+    pub fn extend_price_history_ttl(
+        env: Env,
+        caller: Address,
+        asset: String,
+        threshold: u32,
+        extend_to: u32,
+    ) -> Result<(), OracleError> {
+        admin::extend_price_history_ttl(&env, &caller, &asset, threshold, extend_to)
     }
 
-    pub fn extend_instance_ttl(env: Env, threshold: u32, extend_to: u32) {
-        admin::extend_instance_ttl(&env, threshold, extend_to);
+    pub fn extend_instance_ttl(
+        env: Env,
+        caller: Address,
+        threshold: u32,
+        extend_to: u32,
+    ) -> Result<(), OracleError> {
+        admin::extend_instance_ttl(&env, &caller, threshold, extend_to)
     }
 }
