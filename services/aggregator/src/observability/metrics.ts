@@ -169,4 +169,40 @@ export const pipelineStageLatencyMs = new client.Histogram({
   registers: [register],
 });
 
+// Issue #576 — submission outcome metrics (distinct from send latency).
+// contractSubmissionOutcome.inc() is called only once getTransaction resolves
+// with a terminal status so the counter reflects real on-chain outcomes, not
+// just network acceptance.
+export const contractSubmissionOutcome = new client.Counter({
+  name: 'contract_submission_outcome_total',
+  help: 'Terminal outcome of a Soroban transaction: success, failed, timeout, or not_found',
+  labelNames: ['function', 'asset', 'outcome'],
+  registers: [register],
+});
+
+// Ratio of failed outcomes to total outcomes in the last measurement window.
+// Alert when this ratio exceeds an operator-defined threshold (not just on
+// exceptions, which the send error path already covers).
+export const contractOutcomeFailureRatio = new client.Gauge({
+  name: 'contract_outcome_failure_ratio',
+  help: 'Rolling ratio of failed on-chain submission outcomes (failed+timeout+not_found) to total outcomes',
+  labelNames: ['function'],
+  registers: [register],
+});
+
+// Sliding window counters for failure-ratio calculation.
+export const contractOutcomeTotalWindow = new client.Gauge({
+  name: 'contract_outcome_total_window',
+  help: 'Total submission outcomes tracked in the current failure-ratio window',
+  labelNames: ['function'],
+  registers: [register],
+});
+
+export const contractOutcomeFailedWindow = new client.Gauge({
+  name: 'contract_outcome_failed_window',
+  help: 'Failed submission outcomes (failed+timeout+not_found) in the current failure-ratio window',
+  labelNames: ['function'],
+  registers: [register],
+});
+
 export { register };

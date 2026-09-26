@@ -52,4 +52,6 @@ pub enum OracleError {
     InvalidSlashAmount = 38,
     NoStakeToSlash = 39,
     InvalidStakeAmount = 40,
+    // Issue #561 — whitelist enforcement
+    NotWhitelisted = 41,
 }

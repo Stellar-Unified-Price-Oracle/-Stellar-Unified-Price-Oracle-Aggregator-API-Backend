@@ -17,7 +17,14 @@ import {
   canaryTrafficShareBps,
 } from '../observability/metrics';
 import { AggregatedPrice } from '../infrastructure/types';
-import { contractSubmissionGas, contractSubmissionGasTotal } from '../observability/metrics';
+import {
+  contractSubmissionGas,
+  contractSubmissionGasTotal,
+  contractSubmissionOutcome,
+  contractOutcomeFailureRatio,
+  contractOutcomeTotalWindow,
+  contractOutcomeFailedWindow,
+} from '../observability/metrics';
 import { CanaryRollbackGuard, shouldRouteToCanary } from './canary';
 import { SubmissionRetryQueue } from './retry-queue';
 
@@ -72,7 +79,44 @@ interface GetTransactionResponse {
   resultMetaXdr?: unknown;
 }
 
+// Issue #576 — non-retryable contract error codes.
+//
+// These on-chain rejection codes indicate a logic-level rejection (wrong
+// source, contract paused, price deviation).  Retrying immediately or with
+// backoff cannot make them succeed, so they must be routed to a dead-letter
+// path instead of the standard retry queue.
+const NON_RETRYABLE_CONTRACT_ERRORS = new Set([
+  'UnauthorizedSource',
+  'ContractPaused',
+  'PriceDeviationTooLarge',
+  'InvalidPrice',
+  'InvalidDecimals',
+  'NotWhitelisted',
+]);
+
+// Maximum number of getTransaction polls before declaring a timeout.
+const TX_POLL_RETRIES = parseInt(process.env.TX_POLL_RETRIES || '20', 10);
+// Milliseconds between each getTransaction poll.
+const TX_POLL_INTERVAL_MS = parseInt(process.env.TX_POLL_INTERVAL_MS || '2000', 10);
+
 const GAS_ALERT_THRESHOLD = parseInt(process.env.CONTRACT_GAS_ALERT_THRESHOLD || '50000', 10);
+
+// Sliding-window state for the outcome failure-ratio metric (issue #576).
+// Keyed by function name so each entrypoint has an independent ratio.
+const outcomeWindow: Map<string, { total: number; failed: number }> = new Map();
+
+function recordOutcome(fnName: string, outcome: 'success' | 'failed' | 'timeout' | 'not_found'): void {
+  const current = outcomeWindow.get(fnName) ?? { total: 0, failed: 0 };
+  current.total += 1;
+  if (outcome !== 'success') {
+    current.failed += 1;
+  }
+  outcomeWindow.set(fnName, current);
+  const ratio = current.total > 0 ? current.failed / current.total : 0;
+  contractOutcomeFailureRatio.set({ function: fnName }, ratio);
+  contractOutcomeTotalWindow.set({ function: fnName }, current.total);
+  contractOutcomeFailedWindow.set({ function: fnName }, current.failed);
+}
 
 function emitContractLog(entry: ContractCallLog): void {
   const level = entry.status === 'success' ? 'info' : 'error';
@@ -95,6 +139,75 @@ function checkGasAlert(alert: GasAlert): void {
     fee: alert.fee,
     threshold: alert.threshold,
   });
+}
+
+/**
+ * Issue #576 — poll getTransaction until a terminal status is returned or
+ * TX_POLL_RETRIES is exhausted.
+ *
+ * Returns one of:
+ *   'SUCCESS'   — transaction included and succeeded on-chain
+ *   'FAILED'    — transaction included but failed on-chain
+ *   'NOT_FOUND' — transaction never included within the poll window (timeout)
+ *
+ * A NOT_FOUND after all retries is logged as 'timeout' in metrics to
+ * distinguish "never seen" from "still pending".
+ */
+async function pollForOutcome(
+  server: SorobanRpc.Server,
+  txHash: string,
+): Promise<{ status: 'SUCCESS' | 'FAILED' | 'NOT_FOUND'; response: GetTransactionResponse }> {
+  for (let i = 0; i < TX_POLL_RETRIES; i++) {
+    await new Promise((resolve) => setTimeout(resolve, TX_POLL_INTERVAL_MS));
+    try {
+      const response: GetTransactionResponse = await server.getTransaction(txHash);
+      const status = response?.status;
+      if (status === 'SUCCESS' || status === 'FAILED') {
+        return { status, response };
+      }
+      // NOT_FOUND means still pending — keep polling.
+    } catch (err) {
+      logger.warn(`[Contract] getTransaction poll error for ${txHash}`, {
+        attempt: i + 1,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return { status: 'NOT_FOUND', response: {} };
+}
+
+/**
+ * Inspect the resultMetaXdr of a FAILED transaction to extract the contract
+ * error name (e.g. "UnauthorizedSource") if present.  Returns null when the
+ * error cannot be decoded.
+ */
+function extractContractErrorName(resultMetaXdr: unknown): string | null {
+  try {
+    let meta: xdr.TransactionMeta;
+    if (typeof resultMetaXdr === 'string') {
+      meta = xdr.TransactionMeta.fromXDR(resultMetaXdr, 'base64');
+    } else if (Buffer.isBuffer(resultMetaXdr)) {
+      meta = xdr.TransactionMeta.fromXDR(resultMetaXdr);
+    } else {
+      return null;
+    }
+    if (meta.switch() !== 3) return null;
+    const sorobanMeta = meta.v3().sorobanMeta();
+    const returnValue = sorobanMeta?.returnValue();
+    if (!returnValue) return null;
+    const native = scValToNative(returnValue);
+    if (typeof native === 'object' && native !== null && 'Err' in native) {
+      const err = (native as { Err: unknown }).Err;
+      if (typeof err === 'string') return err;
+      if (typeof err === 'object' && err !== null) {
+        const keys = Object.keys(err);
+        if (keys.length > 0) return keys[0];
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export class ContractPublisher {
@@ -142,7 +255,7 @@ export class ContractPublisher {
     this.retryQueue.start();
   }
 
-  // ── Individual submission (unchanged) ──────────────────────────────────────
+  // ── Individual submission ──────────────────────────────────────────────────
 
   async submitPrice(
     asset: string,
@@ -195,7 +308,8 @@ export class ContractPublisher {
       txHash = tx.hash().toString('hex');
 
       const simulateResponse: SimulateResponse = await this.server.simulateTransaction(tx);
-      const simulationFee = simulateResponse?.minResourceFee ?? simulateResponse?.cost?.feeCharged ?? 'unknown';
+      const simulationFee =
+        simulateResponse?.minResourceFee ?? simulateResponse?.cost?.feeCharged ?? 'unknown';
 
       logger.debug(`[Contract] Simulation result for ${fnName} ${asset}`, {
         txHash,
@@ -219,14 +333,61 @@ export class ContractPublisher {
         return null;
       }
 
+      // Issue #576 — sendTransaction only means the network accepted the
+      // envelope into its queue.  We must poll getTransaction for the
+      // terminal on-chain status before recording any outcome.
       const sendResponse: SendResponse = await this.server.sendTransaction(tx);
       const actualFee = sendResponse?.fee ?? simulationFee;
       const feeNum = parseInt(String(actualFee), 10);
 
       if (!Number.isNaN(feeNum)) {
-        contractSubmissionGas.observe({ function: fnName, asset, status: 'success' }, feeNum);
-        contractSubmissionGasTotal.inc({ function: fnName, asset, status: 'success' }, feeNum);
+        contractSubmissionGas.observe({ function: fnName, asset, status: 'pending' }, feeNum);
+        contractSubmissionGasTotal.inc({ function: fnName, asset, status: 'pending' }, feeNum);
       }
+
+      if (!Number.isNaN(feeNum) && feeNum > GAS_ALERT_THRESHOLD) {
+        checkGasAlert({ txHash, function: fnName, fee: feeNum, threshold: GAS_ALERT_THRESHOLD });
+      }
+
+      // Poll until SUCCESS, FAILED, or timeout.
+      logger.debug(`[Contract] Polling getTransaction for ${txHash}`);
+      const { status: txStatus, response: txResponse } = await pollForOutcome(this.server, txHash);
+
+      if (txStatus === 'SUCCESS') {
+        contractSubmissionOutcome.inc({ function: fnName, asset, outcome: 'success' });
+        recordOutcome(fnName, 'success');
+
+        emitContractLog({
+          txHash,
+          function: fnName,
+          asset,
+          params,
+          simulationFee: String(simulationFee),
+          actualFee: String(actualFee),
+          status: 'success',
+          durationMs: Date.now() - startMs,
+          timestamp: Math.floor(Date.now() / 1000),
+        });
+
+        await this.captureContractEvents(txHash, txResponse);
+        return txHash;
+      }
+
+      // FAILED or NOT_FOUND (timeout).
+      const outcome = txStatus === 'FAILED' ? 'failed' : 'timeout';
+      const contractErrorName = txStatus === 'FAILED'
+        ? extractContractErrorName(txResponse?.resultMetaXdr)
+        : null;
+
+      contractSubmissionOutcome.inc({ function: fnName, asset, outcome });
+      recordOutcome(fnName, outcome === 'timeout' ? 'timeout' : 'failed');
+
+      logger.error(`[Contract] Submission ${outcome} for ${asset}`, {
+        txHash,
+        outcome,
+        contractError: contractErrorName,
+        durationMs: Date.now() - startMs,
+      });
 
       emitContractLog({
         txHash,
@@ -235,18 +396,29 @@ export class ContractPublisher {
         params,
         simulationFee: String(simulationFee),
         actualFee: String(actualFee),
-        status: 'success',
+        status: 'failed',
+        error: contractErrorName ?? outcome,
         durationMs: Date.now() - startMs,
         timestamp: Math.floor(Date.now() / 1000),
       });
 
-      if (!isNaN(feeNum) && feeNum > GAS_ALERT_THRESHOLD) {
-        checkGasAlert({ txHash, function: fnName, fee: feeNum, threshold: GAS_ALERT_THRESHOLD });
+      // Issue #576 — non-retryable contract errors (wrong source, paused,
+      // deviation) must not be queued for retry; doing so would hot-loop.
+      // Retryable failures (timeout, not_found, transient on-chain errors)
+      // are enqueued normally.
+      const isNonRetryable =
+        contractErrorName !== null && NON_RETRYABLE_CONTRACT_ERRORS.has(contractErrorName);
+
+      if (isNonRetryable) {
+        logger.warn(
+          `[Publisher] Non-retryable contract error '${contractErrorName}' for ${asset} — skipping retry queue`,
+          { txHash, contractErrorName },
+        );
+      } else {
+        this.retryQueue.enqueue({ asset, price, decimals, timestamp });
       }
 
-      await this.captureContractEvents(txHash);
-
-      return txHash;
+      return null;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       emitContractLog({
@@ -260,6 +432,9 @@ export class ContractPublisher {
         timestamp: Math.floor(Date.now() / 1000),
       });
       logger.error(`[Contract] Failed to submit ${asset}: ${errMsg}`, { txHash });
+
+      contractSubmissionOutcome.inc({ function: fnName, asset, outcome: 'failed' });
+      recordOutcome(fnName, 'failed');
 
       this.retryQueue.enqueue({
         asset,
@@ -289,7 +464,10 @@ export class ContractPublisher {
           Operation.invokeContractFunction({
             contract: this.contractId,
             function: 'get_price',
-            args: [nativeToScVal(asset, { type: 'string' })],
+            args: [
+              nativeToScVal(this.keypair.publicKey(), { type: 'address' }),
+              nativeToScVal(asset, { type: 'string' }),
+            ],
           }),
         )
         .setTimeout(30)
@@ -301,7 +479,9 @@ export class ContractPublisher {
         return null;
       }
 
-      const decoded = scValToNative(simulateResponse.result.retval) as { timestamp?: unknown } | undefined;
+      const decoded = scValToNative(simulateResponse.result.retval) as
+        | { timestamp?: unknown }
+        | undefined;
       if (decoded === undefined || decoded === null || decoded.timestamp === undefined) {
         return null;
       }
@@ -314,13 +494,18 @@ export class ContractPublisher {
     }
   }
 
-  private async captureContractEvents(txHash: string): Promise<void> {
+  // Issue #576 — captureContractEvents is now called only after a confirmed
+  // SUCCESS status from getTransaction, so the response already contains the
+  // inclusion meta.  The response is passed in rather than re-fetched.
+  private async captureContractEvents(
+    txHash: string,
+    txResponse: GetTransactionResponse,
+  ): Promise<void> {
     try {
-      const response: GetTransactionResponse = await this.server.getTransaction(txHash);
-      if (!response || response.status === 'NOT_FOUND') return;
+      if (!txResponse || txResponse.status === 'NOT_FOUND') return;
 
-      const events: xdr.DiagnosticEvent[] = response?.resultMetaXdr
-        ? this.extractEvents(response.resultMetaXdr)
+      const events: xdr.DiagnosticEvent[] = txResponse?.resultMetaXdr
+        ? this.extractEvents(txResponse.resultMetaXdr)
         : [];
 
       for (const event of events) {
@@ -332,13 +517,17 @@ export class ContractPublisher {
         logger.info(`[Contract] Captured ${events.length} event(s) from tx ${txHash}`);
       }
     } catch (err) {
-      logger.debug(`[Contract] Could not capture events for ${txHash}: ${err instanceof Error ? err.message : err}`);
+      logger.debug(
+        `[Contract] Could not capture events for ${txHash}: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 
   private extractEvents(resultMetaXdr: unknown): xdr.DiagnosticEvent[] {
     if (Array.isArray(resultMetaXdr)) {
-      return resultMetaXdr.filter((event): event is xdr.DiagnosticEvent => xdr.DiagnosticEvent.isValid(event));
+      return resultMetaXdr.filter(
+        (event): event is xdr.DiagnosticEvent => xdr.DiagnosticEvent.isValid(event),
+      );
     }
 
     let meta: xdr.TransactionMeta;

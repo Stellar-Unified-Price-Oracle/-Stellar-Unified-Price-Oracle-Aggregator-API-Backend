@@ -43,6 +43,32 @@ architecture. Supersedes any earlier single-region MVP assumptions.
 | Classical signatures broken by a future quantum adversary | PQ signature migration plan | See `docs/PQ_READINESS.md` |
 | CI/CD compromise ships malicious code | Branch protection + required status checks prevent bypassing CI | Tracked — `docs/GOVERNANCE.md` |
 
+## Whitelist — fee-exempt consumer allowlist (issue #561)
+
+The `Whitelist(Address)` storage key and the `set_whitelist` / `is_whitelisted`
+entrypoints implement a **fee-exempt consumer allowlist**.  The semantics are:
+
+- When the query fee (`QueryFee`) is zero the `get_price` endpoint is open to
+  all callers.  The whitelist has no effect.
+- When the query fee is non-zero, `get_price` returns `NotWhitelisted` for any
+  caller that is not on the list.  The list is managed exclusively by the admin
+  via `set_whitelist(admin, addr, true|false)`.
+- `is_whitelisted(addr)` is a read-only query so operators can verify the
+  current state without re-reading raw storage.
+
+### What the whitelist does NOT protect against
+
+- **Submission authorization** — `submit_price`, `submit_batch`, and
+  `apply_batch_entry` authorize through `is_authorized_source` (the
+  `Source(Address)` storage key), not the whitelist.  A whitelisted address
+  that is not an authorized source will still be rejected by every submission
+  path.
+- **Emergency pause** — the pause flag halts all submissions regardless of
+  whitelist status.
+- **Staking / slashing** — unrelated to the whitelist.
+- **Admin operations** — all admin-only entrypoints require `verify_admin` on
+  top of `require_auth`; whitelist status confers no elevated privilege.
+
 ## Review cadence
 
 This document must be reviewed:

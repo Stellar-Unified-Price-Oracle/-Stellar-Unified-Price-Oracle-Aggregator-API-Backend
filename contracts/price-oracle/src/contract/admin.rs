@@ -101,10 +101,18 @@ pub(crate) fn set_query_fee(env: &Env, fee: i128) {
     storage::set_query_fee(env, &fee);
 }
 
-pub(crate) fn set_whitelist(env: &Env, addr: &Address, status: bool) {
-    let admin = storage::get_admin(env);
+// Issue #561 — whitelist is a fee-exempt consumer allowlist.
+// Only the admin can grant or revoke fee-exempt status.
+pub(crate) fn set_whitelist(
+    env: &Env,
+    admin: &Address,
+    addr: &Address,
+    status: bool,
+) -> Result<(), OracleError> {
     admin.require_auth();
+    storage::verify_admin(env, admin)?;
     storage::set_whitelist(env, addr, status);
+    Ok(())
 }
 
 pub(crate) fn withdraw_fees(env: &Env, to: &Address) {
