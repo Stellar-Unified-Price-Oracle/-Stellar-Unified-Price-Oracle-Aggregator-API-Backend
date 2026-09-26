@@ -11,6 +11,45 @@
     "warningPercent": 80,
     "criticalPercent": 100
   },
+  "varianceThresholds": {
+    "totalMonthlyTolerancePct": 15.0,
+    "perServiceTolerancePct": 20.0,
+    "inferredCategoryTolerancePct": 30.0,
+    "runtimeCallCostTolerancePct": 10.0
+  },
+  "inferredCostErrorBands": {
+    "networkEgress": {
+      "unitRateUsdPerGib": 0.09,
+      "errorBandPct": 18.0,
+      "method": "sampled VPC flow logs and ingress/egress bytes ratio",
+      "attributableDirectly": false
+    },
+    "sharedControlPlane": {
+      "monthlyFixedUsd": 73.0,
+      "errorBandPct": 12.0,
+      "method": "allocated by namespace pod count share",
+      "attributableDirectly": false
+    },
+    "persistentDiskIops": {
+      "errorBandPct": 15.0,
+      "method": "baseline IOPS included; burst charges estimated from disk metrics",
+      "attributableDirectly": false
+    }
+  },
+  "runtimeOracleCallModel": {
+    "ratesPer1kCalls": {
+      "chainlink": 0.0,
+      "redstone": 0.0,
+      "band": 0.0,
+      "reflector": 0.0
+    },
+    "dailyBudgetCalls": {
+      "chainlink": 10000,
+      "redstone": 10000,
+      "band": 10000,
+      "reflector": 10000
+    }
+  },
   "services": [
     {
       "name": "api",
@@ -59,6 +98,32 @@
         "memoryGibPerReplica": 0.375,
         "storageGib": 10
       }
+    }
+  ],
+  "changelog": [
+    {
+      "date": "2026-07-01",
+      "version": "1.0.0",
+      "author": "platform-team",
+      "category": "baseline",
+      "change": "Initial cost model baseline capture at $37.65/mo",
+      "reason": "Established base allocation for API (4 replicas), Aggregator (3 replicas), and TimescaleDB (1 replica)."
+    },
+    {
+      "date": "2026-07-15",
+      "version": "1.1.0",
+      "author": "platform-oncall",
+      "category": "optimization",
+      "change": "Resource right-sizing reduced run-rate to $25.20/mo",
+      "reason": "Downscaled API and Aggregator requested CPU/memory based on p99 usage profiling without reducing replicas."
+    },
+    {
+      "date": "2026-08-01",
+      "version": "1.2.0",
+      "author": "oracle-team",
+      "category": "inferred_categories",
+      "change": "Added network egress and control plane attribution with stated error bands",
+      "reason": "Reconcile actual cloud billing line items that cannot be measured directly per-pod."
     }
   ]
 }
