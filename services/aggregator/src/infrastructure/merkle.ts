@@ -15,6 +15,7 @@ export interface MerkleProof {
 
 export interface MerkleBatch {
   root: Buffer;
+  batchSize: number;
   entries: BatchPriceEntry[];
   proofs: MerkleProof[];
 }
@@ -65,12 +66,20 @@ export class MerkleTree {
     let current = [...this.leaves];
     this.levels.push(current);
 
+    // Odd-level rule: promote the last node unchanged (no duplication).
+    // This matches the Rust compute_root/verify_proof behaviour and prevents
+    // the duplicate-slot ambiguity fixed in issue #567.
     while (current.length > 1) {
       const next: Buffer[] = [];
       for (let i = 0; i < current.length; i += 2) {
         const left = current[i];
-        const right = i + 1 < current.length ? current[i + 1] : left; // duplicate last if odd
-        next.push(hashPair(left, right));
+        if (i + 1 < current.length) {
+          const right = current[i + 1];
+          next.push(hashPair(left, right));
+        } else {
+          // Promote last node at an odd-length level.
+          next.push(left);
+        }
       }
       this.levels.push(next);
       current = next;
@@ -79,6 +88,10 @@ export class MerkleTree {
 
   get root(): Buffer {
     return this.levels[this.levels.length - 1][0];
+  }
+
+  get size(): number {
+    return this.leaves.length;
   }
 
   getProof(leafIndex: number): MerkleProof {
@@ -91,12 +104,15 @@ export class MerkleTree {
 
     for (let level = 0; level < this.levels.length - 1; level++) {
       const levelNodes = this.levels[level];
-      const siblingIndex = index % 2 === 0 ? index + 1 : index - 1;
+      const isLast = index === levelNodes.length - 1;
+      const isOddLevel = levelNodes.length % 2 === 1;
 
-      // If sibling is beyond the array (odd-length level), use the node itself
-      const sibling =
-        siblingIndex < levelNodes.length ? levelNodes[siblingIndex] : levelNodes[index];
-      siblings.push(sibling);
+      if (isLast && isOddLevel) {
+        // Promoted node: no sibling emitted for this level.
+      } else {
+        const siblingIndex = index % 2 === 0 ? index + 1 : index - 1;
+        siblings.push(levelNodes[siblingIndex]);
+      }
 
       index = Math.floor(index / 2);
     }
@@ -107,11 +123,22 @@ export class MerkleTree {
   verifyProof(entry: BatchPriceEntry, proof: MerkleProof): boolean {
     let current = hashLeaf(entry);
     let index = proof.leafIndex;
+    let levelSize = this.leaves.length;
+    let sibCursor = 0;
 
-    for (const sibling of proof.siblings) {
-      current =
-        index % 2 === 0 ? hashPair(current, sibling) : hashPair(sibling, current);
+    while (levelSize > 1) {
+      const isLast = index === levelSize - 1;
+      const isOddLevel = levelSize % 2 === 1;
+
+      if (isLast && isOddLevel) {
+        // Promoted: no sibling consumed.
+      } else {
+        if (sibCursor >= proof.siblings.length) return false;
+        const sibling = proof.siblings[sibCursor++];
+        current = index % 2 === 0 ? hashPair(current, sibling) : hashPair(sibling, current);
+      }
       index = Math.floor(index / 2);
+      levelSize = Math.ceil(levelSize / 2);
     }
 
     return current.equals(this.root);
@@ -122,6 +149,7 @@ export class MerkleTree {
     const proofs = entries.map((_, i) => tree.getProof(i));
     return {
       root: tree.root,
+      batchSize: tree.size,
       entries,
       proofs,
     };

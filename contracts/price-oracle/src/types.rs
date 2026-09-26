@@ -214,6 +214,8 @@ pub enum DataKey {
     SourceReputation(Address),
     BatchNonce,
     BatchRoot(u64),
+    // Issue #567 — committed entry count per batch (enables leaf_index < batch_size check)
+    BatchSize(u64),
     BatchAppliedLeaves(u64),
     BatchPruneWatermark,
     QueryFee,

@@ -169,4 +169,29 @@ export const pipelineStageLatencyMs = new client.Histogram({
   registers: [register],
 });
 
+// Issue #577 — Merkle batch path vs per-asset submission metrics.
+// Distinguishes the batch (submit_batch + N apply_batch_entry) path from the
+// per-asset (N x submit_price) path so operators can compare round cost.
+export const contractSubmissionsTotal = new client.Counter({
+  name: 'contract_submissions_total',
+  help: 'Total contract submissions grouped by path (batch|per_asset) and status',
+  labelNames: ['path', 'status'],
+  registers: [register],
+});
+
+export const contractBatchRoundFeesTotal = new client.Counter({
+  name: 'contract_batch_round_fees_total',
+  help: 'Total fees (stroops) charged across all transactions in a batch round',
+  labelNames: ['path'],
+  registers: [register],
+});
+
+export const contractBatchRoundTransactions = new client.Histogram({
+  name: 'contract_batch_round_transactions',
+  help: 'Number of transactions used per publish round (1 for batch commit + N applies vs N for per-asset)',
+  labelNames: ['path'],
+  buckets: [1, 2, 4, 8, 16, 32, 64],
+  registers: [register],
+});
+
 export { register };

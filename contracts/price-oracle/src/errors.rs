@@ -52,4 +52,8 @@ pub enum OracleError {
     InvalidSlashAmount = 38,
     NoStakeToSlash = 39,
     InvalidStakeAmount = 40,
+    // Issue #568 — oversized asset or source-name string
+    AssetNameTooLong = 41,
+    // Issue #567 — leaf_index exceeds committed batch_size
+    BatchIndexOutOfRange = 42,
 }

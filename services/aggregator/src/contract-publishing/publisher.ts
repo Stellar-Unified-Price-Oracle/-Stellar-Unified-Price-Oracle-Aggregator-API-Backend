@@ -15,11 +15,15 @@ import {
   canaryRollbacksTotal,
   canarySubmissionsTotal,
   canaryTrafficShareBps,
+  contractSubmissionsTotal,
+  contractBatchRoundFeesTotal,
+  contractBatchRoundTransactions,
 } from '../observability/metrics';
 import { AggregatedPrice } from '../infrastructure/types';
 import { contractSubmissionGas, contractSubmissionGasTotal } from '../observability/metrics';
 import { CanaryRollbackGuard, shouldRouteToCanary } from './canary';
 import { SubmissionRetryQueue } from './retry-queue';
+import { MerkleTree, BatchPriceEntry } from '../infrastructure/merkle';
 
 interface ContractCallLog {
   txHash: string;
@@ -488,10 +492,21 @@ export class ContractPublisher {
   }
 
   async publishAggregated(prices: AggregatedPrice[]): Promise<void> {
-    // Re-read the on-chain canary registration once per publish round so a
-    // promote/rollback by an operator is picked up promptly.
+    // Re-read the on-chain canary registration once per publish round.
     await this.refreshCanary();
 
+    // Issue #577 — attempt the Merkle batch path first.
+    // One submit_batch transaction commits the root; N apply_batch_entry
+    // transactions (one per asset, but far cheaper than full submit_price)
+    // apply the individual prices.  Falls back to per-asset submit_price when
+    // batch construction or the commit transaction fails.
+    const batchSucceeded = await this.publishViaBatch(prices);
+    if (batchSucceeded) {
+      return;
+    }
+
+    // Fallback: per-asset submit_price (original behaviour).
+    logger.warn('[Publisher] Batch path failed or unavailable, falling back to per-asset submission');
     for (const price of prices) {
       this.submissionSequence += 1;
       const routeToCanary =
@@ -526,6 +541,249 @@ export class ContractPublisher {
           price.timestamp,
         );
       }
+    }
+
+    contractBatchRoundTransactions.observe({ path: 'per_asset' }, prices.length);
+    contractSubmissionsTotal.inc({ path: 'per_asset', status: 'success' }, prices.length);
+  }
+
+  // Issue #577 — Merkle batch path implementation.
+  //
+  // Design:
+  //   1. Read the current batch nonce from the contract (get_batch_nonce).
+  //   2. Build a MerkleTree from all prices in this round.
+  //   3. Call submit_batch(nonce, root, batch_size) — one authorized tx.
+  //   4. For each entry, call apply_batch_entry with its proof.
+  //      If apply fails for an entry (deviation, proof error, etc.) that
+  //      entry is dropped for this round — a per-asset retry is NOT initiated
+  //      here to avoid double-writing; the next poll round will re-submit it.
+  //
+  // Returns true if the batch commit succeeded (even if some applies failed).
+  // Returns false when the commit fails so the caller falls back.
+  //
+  // Nonce: if the nonce read from the contract does not match the one we
+  // expected (another region committed), the batch is abandoned and the
+  // fallback path runs.
+  //
+  // Root expiry: RETAINED_BATCH_ROOTS = 16. Each round produces one batch.
+  // Applies that have not been submitted within 16 rounds will be rejected
+  // by the contract because the root has been pruned. The publisher
+  // completes all applies in the same round, so this is not a concern in
+  // practice, but the caller must be aware of it for partial-failure cases.
+  private async publishViaBatch(prices: AggregatedPrice[]): Promise<boolean> {
+    if (prices.length === 0) return true;
+
+    try {
+      // Step 1: read current nonce.
+      const nonce = await this.getBatchNonce();
+      if (nonce === null) {
+        logger.warn('[Publisher/Batch] Could not read batch nonce, skipping batch path');
+        return false;
+      }
+
+      // Step 2: build Merkle tree.
+      const entries: BatchPriceEntry[] = prices.map((p) => ({
+        asset: p.asset,
+        price: BigInt(p.price),
+        decimals: p.decimals,
+        timestamp: p.timestamp,
+        source: this.keypair.publicKey(),
+      }));
+
+      const batch = MerkleTree.build(entries);
+
+      // Step 3: submit_batch.
+      const commitHash = await this.submitBatchRoot(
+        nonce,
+        batch.root,
+        batch.batchSize,
+      );
+      if (!commitHash) {
+        logger.warn('[Publisher/Batch] submit_batch transaction failed, falling back');
+        return false;
+      }
+
+      contractSubmissionsTotal.inc({ path: 'batch', status: 'commit_success' });
+
+      // Step 4: apply each entry.
+      let applyFees = 0;
+      let applyCount = 0;
+      for (let i = 0; i < entries.length; i++) {
+        const proof = batch.proofs[i];
+        const fee = await this.applyBatchEntry(nonce, entries[i], proof);
+        if (fee !== null) {
+          applyFees += fee;
+          applyCount += 1;
+          contractSubmissionsTotal.inc({ path: 'batch', status: 'apply_success' });
+        } else {
+          contractSubmissionsTotal.inc({ path: 'batch', status: 'apply_failed' });
+          logger.warn(`[Publisher/Batch] apply_batch_entry failed for ${entries[i].asset} at index ${i}`);
+        }
+      }
+
+      // Record round cost metrics.
+      contractBatchRoundTransactions.observe({ path: 'batch' }, 1 + entries.length);
+      contractBatchRoundFeesTotal.inc({ path: 'batch' }, applyFees);
+      logger.info(`[Publisher/Batch] Round complete: ${applyCount}/${entries.length} entries applied`, {
+        nonce,
+        batchSize: batch.batchSize,
+        appliedCount: applyCount,
+      });
+
+      return true;
+    } catch (err) {
+      logger.error('[Publisher/Batch] Unexpected error in batch path', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+  }
+
+  private async getBatchNonce(): Promise<bigint | null> {
+    try {
+      const account = await this.server.getAccount(this.keypair.publicKey());
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: this.contractId,
+            function: 'get_batch_nonce',
+            args: [],
+          }),
+        )
+        .setTimeout(30)
+        .build();
+      tx.sign(this.keypair);
+      const sim: SimulateResponse = await this.server.simulateTransaction(tx);
+      if (sim.error || !sim.result?.retval) return null;
+      return BigInt(scValToNative(sim.result.retval) as number | bigint);
+    } catch (err) {
+      logger.warn('[Publisher/Batch] getBatchNonce failed', { error: String(err) });
+      return null;
+    }
+  }
+
+  private async submitBatchRoot(
+    nonce: bigint,
+    root: Buffer,
+    batchSize: number,
+  ): Promise<string | null> {
+    const startMs = Date.now();
+    const fnName = 'submit_batch';
+    let txHash = '';
+    try {
+      const account = await this.server.getAccount(this.keypair.publicKey());
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: this.contractId,
+            function: fnName,
+            args: [
+              nativeToScVal(this.keypair.publicKey(), { type: 'address' }),
+              nativeToScVal(nonce, { type: 'u64' }),
+              nativeToScVal(root, { type: 'bytes' }),
+              nativeToScVal(batchSize, { type: 'u32' }),
+            ],
+          }),
+        )
+        .setTimeout(30)
+        .build();
+      tx.sign(this.keypair);
+      txHash = tx.hash().toString('hex');
+      const sim: SimulateResponse = await this.server.simulateTransaction(tx);
+      if (sim.error) {
+        logger.warn(`[Publisher/Batch] submit_batch simulation failed`, { error: String(sim.error), txHash });
+        return null;
+      }
+      const sendRes: SendResponse = await this.server.sendTransaction(tx);
+      const fee = parseInt(String(sendRes?.fee ?? sim.minResourceFee ?? '0'), 10);
+      if (!isNaN(fee)) {
+        contractSubmissionGas.observe({ function: fnName, asset: 'batch', status: 'success' }, fee);
+        contractSubmissionGasTotal.inc({ function: fnName, asset: 'batch', status: 'success' }, fee);
+        contractBatchRoundFeesTotal.inc({ path: 'batch' }, fee);
+      }
+      logger.info(`[Publisher/Batch] submit_batch committed nonce=${nonce} batchSize=${batchSize}`, {
+        txHash,
+        durationMs: Date.now() - startMs,
+      });
+      return txHash;
+    } catch (err) {
+      logger.error(`[Publisher/Batch] submit_batch threw`, { error: String(err), txHash });
+      return null;
+    }
+  }
+
+  private async applyBatchEntry(
+    nonce: bigint,
+    entry: BatchPriceEntry,
+    proof: { leafIndex: number; siblings: Buffer[] },
+  ): Promise<number | null> {
+    const fnName = 'apply_batch_entry';
+    let txHash = '';
+    try {
+      const account = await this.server.getAccount(this.keypair.publicKey());
+      const entryScVal = nativeToScVal(
+        {
+          asset: entry.asset,
+          price: entry.price,
+          decimals: entry.decimals,
+          timestamp: entry.timestamp,
+          source: entry.source,
+        },
+        { type: 'map' },
+      );
+      const proofScVal = nativeToScVal(
+        {
+          leaf_index: proof.leafIndex,
+          siblings: proof.siblings,
+        },
+        { type: 'map' },
+      );
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: this.contractId,
+            function: fnName,
+            args: [
+              nativeToScVal(nonce, { type: 'u64' }),
+              entryScVal,
+              proofScVal,
+            ],
+          }),
+        )
+        .setTimeout(30)
+        .build();
+      tx.sign(this.keypair);
+      txHash = tx.hash().toString('hex');
+      const sim: SimulateResponse = await this.server.simulateTransaction(tx);
+      if (sim.error) {
+        logger.warn(`[Publisher/Batch] apply_batch_entry simulation failed for ${entry.asset}`, {
+          error: String(sim.error),
+          txHash,
+        });
+        return null;
+      }
+      const sendRes: SendResponse = await this.server.sendTransaction(tx);
+      const fee = parseInt(String(sendRes?.fee ?? sim.minResourceFee ?? '0'), 10);
+      if (!isNaN(fee)) {
+        contractSubmissionGas.observe({ function: fnName, asset: entry.asset, status: 'success' }, fee);
+        contractSubmissionGasTotal.inc({ function: fnName, asset: entry.asset, status: 'success' }, fee);
+      }
+      return isNaN(fee) ? 0 : fee;
+    } catch (err) {
+      logger.warn(`[Publisher/Batch] apply_batch_entry threw for ${entry.asset}`, {
+        error: String(err),
+        txHash,
+      });
+      return null;
     }
   }
 
