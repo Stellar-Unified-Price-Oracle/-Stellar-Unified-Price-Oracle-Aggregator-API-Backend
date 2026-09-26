@@ -1,5 +1,13 @@
 // Issue #297 — admin-only configuration, treasury, and maintenance operations.
 // Every function here first verifies the caller is the contract admin.
+//
+// Fixes applied here:
+//   #559 — withdraw_fees now uses an explicit FeeToken config instead of the
+//           recipient address; balance is only zeroed after a successful
+//           transfer; function returns Result<(), OracleError>.
+//   #560 — set_query_fee, set_whitelist, and withdraw_fees now accept an
+//           explicit `admin` parameter, call storage::verify_admin, and
+//           return Result<(), OracleError> so rejection surfaces an error code.
 
 use soroban_sdk::{token, Address, Env, String};
 
@@ -187,27 +195,99 @@ pub(crate) fn set_stake_treasury(
 
 // ── Fees and whitelist ───────────────────────────────────────────────────────
 
-pub(crate) fn set_query_fee(env: &Env, fee: i128) {
-    let admin = storage::get_admin(env);
+/// Configure the SEP-41 token whose collected fees are held in this contract
+/// and paid out via `withdraw_fees`.  Must be called before any fee withdrawal.
+/// (#559)
+pub(crate) fn set_fee_token(
+    env: &Env,
+    admin: &Address,
+    token: &Address,
+) -> Result<(), OracleError> {
     admin.require_auth();
+    storage::verify_admin(env, admin)?;
+    storage::set_fee_token(env, token);
+    Ok(())
+}
+
+/// Return the configured fee token address, or None if not yet set. (#559)
+pub(crate) fn get_fee_token(env: &Env) -> Option<Address> {
+    storage::get_fee_token(env)
+}
+
+/// Return the current accumulated fee balance. (#559)
+pub(crate) fn get_fee_balance(env: &Env) -> i128 {
+    storage::get_fee_balance(env)
+}
+
+/// Set the per-query fee.
+/// (#560 — takes an explicit `admin` parameter, verifies caller, returns Result)
+pub(crate) fn set_query_fee(
+    env: &Env,
+    admin: &Address,
+    fee: i128,
+) -> Result<(), OracleError> {
+    admin.require_auth();
+    storage::verify_admin(env, admin)?;
     storage::set_query_fee(env, &fee);
+    QueryFeeSet {
+        admin: admin.clone(),
+        fee,
+    }
+    .publish(env);
+    Ok(())
 }
 
-pub(crate) fn set_whitelist(env: &Env, addr: &Address, status: bool) {
-    let admin = storage::get_admin(env);
+/// Toggle whitelist status for an address.
+/// (#560 — takes an explicit `admin` parameter, verifies caller, returns Result)
+pub(crate) fn set_whitelist(
+    env: &Env,
+    admin: &Address,
+    addr: &Address,
+    status: bool,
+) -> Result<(), OracleError> {
     admin.require_auth();
+    storage::verify_admin(env, admin)?;
     storage::set_whitelist(env, addr, status);
+    WhitelistUpdated {
+        admin: admin.clone(),
+        addr: addr.clone(),
+        status,
+    }
+    .publish(env);
+    Ok(())
 }
 
-pub(crate) fn withdraw_fees(env: &Env, to: &Address) {
-    let admin = storage::get_admin(env);
+/// Transfer the accumulated fee balance to `to` using the explicitly
+/// configured fee token.
+///
+/// - Resolves the fee token from storage, not from the `to` argument (#559).
+/// - Only zeroes FeeBalance after the transfer succeeds (#559).
+/// - Requires explicit `admin` parameter and verify_admin (#560).
+/// - Returns Result<(), OracleError> (#559, #560).
+/// - Emits FeesWithdrawn (#559).
+pub(crate) fn withdraw_fees(
+    env: &Env,
+    admin: &Address,
+    to: &Address,
+) -> Result<(), OracleError> {
     admin.require_auth();
+    storage::verify_admin(env, admin)?;
+
+    let fee_token = storage::get_fee_token(env).ok_or(OracleError::FeeTokenNotConfigured)?;
     let balance = storage::get_fee_balance(env);
     if balance > 0 {
+        let token_client = token::Client::new(env, &fee_token);
+        token_client.transfer(&env.current_contract_address(), to, &balance);
+        // Only zero the balance after a successful transfer.
         storage::set_fee_balance(env, &0);
-        let token = token::Client::new(env, to);
-        token.transfer(&env.current_contract_address(), to, &balance);
+        FeesWithdrawn {
+            recipient: to.clone(),
+            token: fee_token,
+            amount: balance,
+        }
+        .publish(env);
     }
+    Ok(())
 }
 
 // ── Issue #376 & Issue #572 — scheduled TTL / rent extension ─────────────────

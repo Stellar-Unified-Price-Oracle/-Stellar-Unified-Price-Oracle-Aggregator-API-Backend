@@ -290,20 +290,36 @@ impl PriceOracleContract {
         admin::set_trusted_asset(&env, &admin, &asset, trusted)
     }
 
-    pub fn set_query_fee(env: Env, fee: i128) {
-        admin::set_query_fee(&env, fee);
+    pub fn set_query_fee(env: Env, admin: Address, fee: i128) -> Result<(), OracleError> {
+        admin::set_query_fee(&env, &admin, fee)
     }
 
     pub fn get_query_fee(env: Env) -> i128 {
         queries::get_query_fee(&env)
     }
 
-    pub fn set_whitelist(env: Env, addr: Address, status: bool) {
-        admin::set_whitelist(&env, &addr, status);
+    pub fn set_whitelist(env: Env, admin: Address, addr: Address, status: bool) -> Result<(), OracleError> {
+        admin::set_whitelist(&env, &admin, &addr, status)
     }
 
-    pub fn withdraw_fees(env: Env, to: Address) {
-        admin::withdraw_fees(&env, &to);
+    pub fn withdraw_fees(env: Env, admin: Address, to: Address) -> Result<(), OracleError> {
+        admin::withdraw_fees(&env, &admin, &to)
+    }
+
+    /// Configure the SEP-41 token held as fee balance.
+    /// Must be called before `withdraw_fees`. (#559)
+    pub fn set_fee_token(env: Env, admin: Address, token: Address) -> Result<(), OracleError> {
+        admin::set_fee_token(&env, &admin, &token)
+    }
+
+    /// Return the configured fee token, or None if not yet set. (#559)
+    pub fn get_fee_token(env: Env) -> Option<Address> {
+        admin::get_fee_token(&env)
+    }
+
+    /// Return the accumulated fee balance held by the contract. (#559)
+    pub fn get_fee_balance(env: Env) -> i128 {
+        admin::get_fee_balance(&env)
     }
 
     // ── Issue #376 & Issue #572 — scheduled TTL / rent extension ───────────

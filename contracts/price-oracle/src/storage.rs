@@ -437,6 +437,14 @@ pub fn set_fee_balance(env: &Env, balance: &i128) {
     env.storage().instance().set(&DataKey::FeeBalance, balance);
 }
 
+pub fn set_fee_token(env: &Env, token: &Address) {
+    env.storage().instance().set(&DataKey::FeeToken, token);
+}
+
+pub fn get_fee_token(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::FeeToken)
+}
+
 // Issue #70 — source reputation
 pub fn set_source_reputation(env: &Env, source: &Address, reputation: &SourceReputation) {
     env.storage()

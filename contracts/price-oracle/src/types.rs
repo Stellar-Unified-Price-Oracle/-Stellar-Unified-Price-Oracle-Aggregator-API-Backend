@@ -93,6 +93,19 @@ pub struct MultiSigConfig {
     pub threshold: u32,
 }
 
+/// Maximum number of signers the multisig may hold.
+/// Bounded to keep instance-storage serialisation size predictable.
+pub const MAX_SIGNERS: u32 = 20;
+
+/// Minimum number of signers required at all times (prevents bricking by
+/// removing every signer).
+pub const MIN_SIGNERS: u32 = 2;
+
+/// Proposal TTL in ledger seconds (~5 s/ledger on mainnet).
+/// After this window the proposal can no longer be approved or executed.
+/// 30 days = 30 * 24 * 60 * 60 = 2_592_000 seconds.
+pub const PROPOSAL_EXPIRY_SECONDS: u64 = 2_592_000;
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub enum ProposalAction {
@@ -127,7 +140,8 @@ pub struct MultiSigProposal {
     pub id: u32,
     pub action: ProposalAction,
     pub approvals: Vec<Address>,
-    pub executed: u32, // 0 = pending, 1 = executed (bool avoided for XDR compat)
+    pub executed: u32,   // 0 = pending, 1 = executed (bool avoided for XDR compat)
+    pub cancelled: u32,  // 0 = active, 1 = cancelled
     pub created_at: u64,
     pub proposer: Address,
 }
@@ -223,6 +237,7 @@ pub enum DataKey {
     QueryFee,
     Whitelist(Address),
     FeeBalance,
+    FeeToken,
     StakeInfo(Address),
     StakeToken(Address),
     StakeTreasury,
