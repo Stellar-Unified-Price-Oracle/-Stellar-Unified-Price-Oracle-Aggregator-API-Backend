@@ -38,6 +38,23 @@ pub fn verify_admin(env: &Env, admin: &Address) -> Result<(), OracleError> {
     Ok(())
 }
 
+// Issue #565 — Two-step admin handover
+pub const ADMIN_TRANSFER_WINDOW_SECONDS: u64 = 259_200; // 3 days (72 hours)
+
+pub fn set_pending_admin(env: &Env, pending: &Address, deadline: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PendingAdmin, &(pending.clone(), deadline));
+}
+
+pub fn get_pending_admin(env: &Env) -> Option<(Address, u64)> {
+    env.storage().instance().get(&DataKey::PendingAdmin)
+}
+
+pub fn clear_pending_admin(env: &Env) {
+    env.storage().instance().remove(&DataKey::PendingAdmin);
+}
+
 // ── Issue #379 — multi-region aware emergency pause ────────────────────────────
 
 pub fn set_paused(env: &Env, paused: bool) {
@@ -199,18 +216,74 @@ pub fn get_price_history(env: &Env, asset: &String) -> Vec<PriceDataPoint> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
-// Issue #376 — TTL / rent extension. Called periodically by an off-chain job
-// so PriceHistory (persistent) and the contract instance (Admin, GovConfig,
-// proposals, etc. — all instance storage) never hit their TTL floor and get
-// archived/evicted.
-pub fn extend_price_history_ttl(env: &Env, asset: &String, threshold: u32, extend_to: u32) {
-    env.storage()
-        .persistent()
-        .extend_ttl(&DataKey::PriceHistory(asset.clone()), threshold, extend_to);
+// Issue #376 & Issue #572 — TTL / rent extension with caller auth, bounds validation, and auditable events.
+pub fn extend_price_history_ttl(
+    env: &Env,
+    caller: &Address,
+    asset: &String,
+    threshold: u32,
+    extend_to: u32,
+) -> Result<(), OracleError> {
+    caller.require_auth();
+    if extend_to < threshold
+        || threshold < MIN_TTL_THRESHOLD_LEDGERS
+        || extend_to > MAX_TTL_EXTEND_TO_LEDGERS
+    {
+        return Err(OracleError::InvalidTtlBounds);
+    }
+    let key = DataKey::PriceHistory(asset.clone());
+    if !env.storage().persistent().has(&key) {
+        return Err(OracleError::AssetNotFound);
+    }
+    let prev_ttl = env.storage().persistent().get_ttl(&key);
+    if prev_ttl == 0 {
+        return Err(OracleError::TtlSubFloor);
+    }
+    env.storage().persistent().extend_ttl(&key, threshold, extend_to);
+    let new_ttl = env.storage().persistent().get_ttl(&key);
+    if new_ttl <= prev_ttl && prev_ttl < threshold {
+        return Err(OracleError::TtlSubFloor);
+    }
+    crate::events::TtlExtended {
+        asset: asset.clone(),
+        caller: caller.clone(),
+        previous_ttl: prev_ttl,
+        new_ttl,
+    }
+    .publish(env);
+    Ok(())
 }
 
-pub fn extend_instance_ttl(env: &Env, threshold: u32, extend_to: u32) {
+pub fn extend_instance_ttl(
+    env: &Env,
+    caller: &Address,
+    threshold: u32,
+    extend_to: u32,
+) -> Result<(), OracleError> {
+    caller.require_auth();
+    if extend_to < threshold
+        || threshold < MIN_TTL_THRESHOLD_LEDGERS
+        || extend_to > MAX_TTL_EXTEND_TO_LEDGERS
+    {
+        return Err(OracleError::InvalidTtlBounds);
+    }
+    let prev_ttl = env.storage().instance().get_ttl();
+    if prev_ttl == 0 {
+        return Err(OracleError::TtlSubFloor);
+    }
     env.storage().instance().extend_ttl(threshold, extend_to);
+    let new_ttl = env.storage().instance().get_ttl();
+    if new_ttl <= prev_ttl && prev_ttl < threshold {
+        return Err(OracleError::TtlSubFloor);
+    }
+    crate::events::TtlExtended {
+        asset: String::from_str(env, "instance"),
+        caller: caller.clone(),
+        previous_ttl: prev_ttl,
+        new_ttl,
+    }
+    .publish(env);
+    Ok(())
 }
 
 pub fn get_all_assets(env: &Env) -> Vec<String> {
@@ -373,6 +446,14 @@ pub fn get_fee_balance(env: &Env) -> i128 {
 
 pub fn set_fee_balance(env: &Env, balance: &i128) {
     env.storage().instance().set(&DataKey::FeeBalance, balance);
+}
+
+pub fn set_fee_token(env: &Env, token: &Address) {
+    env.storage().instance().set(&DataKey::FeeToken, token);
+}
+
+pub fn get_fee_token(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::FeeToken)
 }
 
 // Issue #70 — source reputation
@@ -632,6 +713,9 @@ pub fn clear_canary(env: &Env) {
 // margin between runs.
 pub const TTL_FLOOR_LEDGERS: u32 = 120_960; // ~7 days
 pub const TTL_EXTEND_TO_LEDGERS: u32 = 1_555_200; // ~90 days
+// Issue #572 — TTL bounds validation constants
+pub const MIN_TTL_THRESHOLD_LEDGERS: u32 = 17_280; // ~24 hours
+pub const MAX_TTL_EXTEND_TO_LEDGERS: u32 = 3_110_400; // ~180 days
 
 /// Extend the TTL of a single asset's price history entry so it never
 /// expires between scheduled rent-payment runs.

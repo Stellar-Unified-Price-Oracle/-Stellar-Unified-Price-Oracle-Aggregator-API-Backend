@@ -1,13 +1,50 @@
 {
   "currency": "USD",
-  "note": "Monthly reconciliation of the modeled requested-capacity run rate against the provider invoice. Append one entry per month; run `npm run cost:reconcile` to compute variance.",
+  "note": "Monthly reconciliation of the modeled requested-capacity run rate against actual cloud provider invoices (#555). Run `npm run cost:reconcile` to compute variance.",
   "invoices": [
     {
       "month": "2026-07",
       "invoicedTotal": 27.4,
-      "byService": { "api": 9.1, "aggregator": 7.8, "timescaledb": 10.5 },
+      "byService": {
+        "api": 9.1,
+        "aggregator": 7.8,
+        "timescaledb": 10.5
+      },
+      "attributableCategories": {
+        "computeVcpu": 18.25,
+        "memoryGib": 5.25,
+        "storageVolume": 1.70,
+        "oracleApiCalls": 0.00
+      },
+      "inferredCategories": {
+        "networkEgress": 1.20,
+        "sharedControlPlane": 1.00
+      },
       "reconciledBy": "platform-oncall",
+      "dataSource": "AWS Cost & Usage Report (CUR) + K8s OpenCost",
       "notes": "Baseline capture; egress and control-plane fees folded into per-service split."
+    },
+    {
+      "month": "2026-08",
+      "invoicedTotal": 26.8,
+      "byService": {
+        "api": 8.5,
+        "aggregator": 8.1,
+        "timescaledb": 10.2
+      },
+      "attributableCategories": {
+        "computeVcpu": 17.90,
+        "memoryGib": 5.10,
+        "storageVolume": 1.70,
+        "oracleApiCalls": 0.00
+      },
+      "inferredCategories": {
+        "networkEgress": 1.10,
+        "sharedControlPlane": 1.00
+      },
+      "reconciledBy": "platform-oncall",
+      "dataSource": "AWS Cost & Usage Report (CUR) + K8s OpenCost",
+      "notes": "Post-optimization run rate verified within 6.3% variance of model."
     }
   ]
 }

@@ -169,40 +169,47 @@ export const pipelineStageLatencyMs = new client.Histogram({
   registers: [register],
 });
 
-// Issue #576 — submission outcome metrics (distinct from send latency).
-// contractSubmissionOutcome.inc() is called only once getTransaction resolves
-// with a terminal status so the counter reflects real on-chain outcomes, not
-// just network acceptance.
-export const contractSubmissionOutcome = new client.Counter({
-  name: 'contract_submission_outcome_total',
-  help: 'Terminal outcome of a Soroban transaction: success, failed, timeout, or not_found',
-  labelNames: ['function', 'asset', 'outcome'],
+// Issue #578 — RPC call tracking per round and total
+export const contractRpcCallsTotal = new client.Counter({
+  name: 'contract_rpc_calls_total',
+  help: 'Total RPC calls made to Soroban RPC by type',
+  labelNames: ['call_type'],
   registers: [register],
 });
 
-// Ratio of failed outcomes to total outcomes in the last measurement window.
-// Alert when this ratio exceeds an operator-defined threshold (not just on
-// exceptions, which the send error path already covers).
-export const contractOutcomeFailureRatio = new client.Gauge({
-  name: 'contract_outcome_failure_ratio',
-  help: 'Rolling ratio of failed on-chain submission outcomes (failed+timeout+not_found) to total outcomes',
-  labelNames: ['function'],
+export const contractRpcCallsPerRound = new client.Gauge({
+  name: 'contract_rpc_calls_per_round',
+  help: 'Number of RPC calls made in the most recent publish and heartbeat round',
+  labelNames: ['call_type'],
   registers: [register],
 });
 
-// Sliding window counters for failure-ratio calculation.
-export const contractOutcomeTotalWindow = new client.Gauge({
-  name: 'contract_outcome_total_window',
-  help: 'Total submission outcomes tracked in the current failure-ratio window',
-  labelNames: ['function'],
+// Issue #575 — Poll loop duration and overruns
+export const pollCycleDurationMs = new client.Histogram({
+  name: 'poll_cycle_duration_ms',
+  help: 'Duration of aggregator poll cycles in milliseconds',
+  buckets: [100, 250, 500, 1000, 2500, 5000, 10000, 20000, 30000, 60000],
   registers: [register],
 });
 
-export const contractOutcomeFailedWindow = new client.Gauge({
-  name: 'contract_outcome_failed_window',
-  help: 'Failed submission outcomes (failed+timeout+not_found) in the current failure-ratio window',
-  labelNames: ['function'],
+export const pollCycleOverrunsTotal = new client.Counter({
+  name: 'poll_cycle_overruns_total',
+  help: 'Total number of poll cycles that overran their configured interval or were skipped',
+  registers: [register],
+});
+
+// Issue #574 — Retry queue depth and orphaned retry tracking
+export const retryQueueDepth = new client.Gauge({
+  name: 'retry_queue_depth',
+  help: 'Current number of submissions waiting in the publisher retry queue',
+  registers: [register],
+});
+
+export const retryQueueOrphanedRetriesTotal = new client.Counter({
+  name: 'retry_queue_orphaned_retries_total',
+  help: 'Total number of retries that were orphaned or dropped on shutdown',
   registers: [register],
 });
 
 export { register };
+

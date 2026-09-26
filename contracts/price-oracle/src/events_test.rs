@@ -237,32 +237,210 @@ mod events_tests {
 
         let topics = Vec::from_array(
             &env,
+        let source_topics = Vec::from_array(
+            &env,
+            [
+                Symbol::new(&env, "source_added").into_val(&env),
+                oracle.clone().into_val(&env),
+            ],
+        );
+        let source_data = String::from_str(&env, "Chainlink").into_val(&env);
+
+        let price_topics = Vec::from_array(
+            &env,
             [
                 Symbol::new(&env, "price_submitted").into_val(&env),
                 asset.clone().into_val(&env),
                 oracle.clone().into_val(&env),
             ],
         );
-        let data = (100_000_000i128, 1_700_000_000u64).into_val(&env);
+        let price_data = (100_000_000i128, 1_700_000_000u64).into_val(&env);
+
+        let mut expected = Vec::new(&env);
+        expected.push_back((contract_id.clone(), source_topics, source_data));
+        expected.push_back((contract_id.clone(), price_topics, price_data));
         assert_eq!(
             env.events().all(),
-            single(&env, &contract_id, topics, data),
+            expected,
         );
 
         let root = Bytes::from_array(&env, &[7u8; 32]);
         client.submit_batch(&oracle, &0u64, &root);
 
-        let topics = Vec::from_array(
+        let batch_topics = Vec::from_array(
             &env,
             [
                 Symbol::new(&env, "batch_submitted").into_val(&env),
                 oracle.clone().into_val(&env),
             ],
         );
-        let data = (0u64, root).into_val(&env);
+        let batch_data = (0u64, root).into_val(&env);
+        expected.push_back((contract_id.clone(), batch_topics, batch_data));
         assert_eq!(
             env.events().all(),
-            single(&env, &contract_id, topics, data),
+            expected,
         );
+    }
+
+    #[test]
+    fn multisig_lifecycle_and_pause_events_keep_their_shape() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(PriceOracleContract, ());
+        let client = PriceOracleContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let signer1 = Address::generate(&env);
+        let signer2 = Address::generate(&env);
+        client.initialize(&admin);
+
+        let signers = Vec::from_array(&env, [signer1.clone(), signer2.clone()]);
+        client.init_multisig(&admin, &signers, &2u32);
+
+        // Propose Pause
+        let action = ProposalAction::Pause;
+        let prop_id = client.create_proposal(&signer1, &action);
+
+        let all_events = env.events().all();
+        let last = all_events.get(all_events.len() - 1).unwrap();
+        let expected_created_topics = Vec::from_array(
+            &env,
+            [
+                Symbol::new(&env, "proposal_created").into_val(&env),
+                signer1.clone().into_val(&env),
+            ],
+        );
+        let expected_created_data = (prop_id, Symbol::new(&env, "pause")).into_val(&env);
+        assert_eq!(last, (contract_id.clone(), expected_created_topics, expected_created_data));
+
+        // Approve proposal
+        client.approve_proposal(&signer2, &prop_id);
+        let all_events = env.events().all();
+        let last = all_events.get(all_events.len() - 1).unwrap();
+        let expected_approved_topics = Vec::from_array(
+            &env,
+            [
+                Symbol::new(&env, "proposal_approved").into_val(&env),
+                signer2.clone().into_val(&env),
+            ],
+        );
+        let expected_approved_data = (prop_id, Symbol::new(&env, "pause")).into_val(&env);
+        assert_eq!(last, (contract_id.clone(), expected_approved_topics, expected_approved_data));
+
+        // Execute proposal -> emits Paused and GovernanceExecuted
+        client.execute_proposal(&signer1, &prop_id);
+        let all_events = env.events().all();
+        let paused_event = all_events.get(all_events.len() - 2).unwrap();
+        let exec_event = all_events.get(all_events.len() - 1).unwrap();
+
+        let expected_paused_topics = Vec::from_array(
+            &env,
+            [
+                Symbol::new(&env, "paused").into_val(&env),
+                signer1.clone().into_val(&env),
+            ],
+        );
+        assert_eq!(paused_event, (contract_id.clone(), expected_paused_topics, prop_id.into_val(&env)));
+
+        let expected_exec_topics = Vec::from_array(
+            &env,
+            [
+                Symbol::new(&env, "governance_executed").into_val(&env),
+                signer1.clone().into_val(&env),
+            ],
+        );
+        let expected_exec_data = (prop_id, Symbol::new(&env, "pause")).into_val(&env);
+        assert_eq!(exec_event, (contract_id.clone(), expected_exec_topics, expected_exec_data));
+
+        // Cancel proposal
+        let prop2_id = client.create_proposal(&signer1, &ProposalAction::Unpause);
+        client.cancel_proposal(&signer1, &prop2_id);
+        let all_events = env.events().all();
+        let cancel_event = all_events.get(all_events.len() - 1).unwrap();
+        let expected_cancel_topics = Vec::from_array(
+            &env,
+            [
+                Symbol::new(&env, "proposal_cancelled").into_val(&env),
+                signer1.clone().into_val(&env),
+            ],
+        );
+        let expected_cancel_data = (prop2_id, Symbol::new(&env, "unpause")).into_val(&env);
+        assert_eq!(cancel_event, (contract_id.clone(), expected_cancel_topics, expected_cancel_data));
+    }
+
+    #[test]
+    fn admin_handover_and_ttl_events_keep_their_shape() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(PriceOracleContract, ());
+        let client = PriceOracleContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Propose admin
+        client.propose_admin(&admin, &new_admin);
+        let all_events = env.events().all();
+        let propose_event = all_events.get(all_events.len() - 1).unwrap();
+        let expected_propose_topics = Vec::from_array(
+            &env,
+            [
+                Symbol::new(&env, "admin_transfer_proposed").into_val(&env),
+                admin.clone().into_val(&env),
+                new_admin.clone().into_val(&env),
+            ],
+        );
+        assert_eq!(propose_event.0, contract_id);
+        assert_eq!(propose_event.1, expected_propose_topics);
+
+        // Cancel admin transfer
+        client.cancel_admin_transfer(&admin);
+        let all_events = env.events().all();
+        let cancel_event = all_events.get(all_events.len() - 1).unwrap();
+        let expected_cancel_topics = Vec::from_array(
+            &env,
+            [
+                Symbol::new(&env, "admin_transfer_cancelled").into_val(&env),
+                admin.clone().into_val(&env),
+                new_admin.clone().into_val(&env),
+            ],
+        );
+        assert_eq!(cancel_event.0, contract_id);
+        assert_eq!(cancel_event.1, expected_cancel_topics);
+
+        // Re-propose and accept
+        client.propose_admin(&admin, &new_admin);
+        client.accept_admin(&new_admin);
+        let all_events = env.events().all();
+        let accept_event = all_events.get(all_events.len() - 1).unwrap();
+        let expected_accept_topics = Vec::from_array(
+            &env,
+            [
+                Symbol::new(&env, "admin_transfer_accepted").into_val(&env),
+                admin.clone().into_val(&env),
+                new_admin.clone().into_val(&env),
+            ],
+        );
+        assert_eq!(accept_event.0, contract_id);
+        assert_eq!(accept_event.1, expected_accept_topics);
+
+        // TTL extension event
+        let caller = Address::generate(&env);
+        client.extend_instance_ttl(&caller, &34_560u32, &518_400u32);
+        let all_events = env.events().all();
+        let ttl_event = all_events.get(all_events.len() - 1).unwrap();
+        let expected_ttl_topics = Vec::from_array(
+            &env,
+            [
+                Symbol::new(&env, "ttl_extended").into_val(&env),
+                String::from_str(&env, "instance").into_val(&env),
+                caller.clone().into_val(&env),
+            ],
+        );
+        assert_eq!(ttl_event.0, contract_id);
+        assert_eq!(ttl_event.1, expected_ttl_topics);
     }
 }

@@ -39,3 +39,35 @@ slos:
 # > 14.4x burn over 1h drains the monthly budget at a reviewable pace.
 alerting:
   burn_rate_long_window_multiplier: 14.4
+
+# Release gating policy based on SLO error-budget burn rate (#552)
+# Documentation and operational runbook: docs/observability/SLO_RELEASE_GATE.md
+release_gating:
+  windows:
+    fast_burn_1h:
+      window: 1h
+      threshold: 14.4
+      action: BLOCK
+      description: Drains 2% of 30d budget in 1 hour; blocks release immediately.
+    fast_burn_6h:
+      window: 6h
+      threshold: 6.0
+      action: BLOCK
+      description: Drains 5% of 30d budget in 6 hours; blocks release immediately.
+    slow_burn_24h:
+      window: 24h
+      threshold: 3.0
+      action: DEGRADED_PERMIT
+      max_canary_share_bps: 500
+      auto_promotion: false
+      description: Chronic degradation; allows canary with <= 500 bps, disables auto-promotion.
+  budget_exhaustion:
+    min_remaining_budget_percent: 0.0
+    action: BLOCK
+  metrics_unavailable:
+    production: FAIL_CLOSED
+    staging: WARN_AND_PERMIT
+  attribution:
+    canary_label: release
+    canary_value: canary
+    canary_burn_isolated: true

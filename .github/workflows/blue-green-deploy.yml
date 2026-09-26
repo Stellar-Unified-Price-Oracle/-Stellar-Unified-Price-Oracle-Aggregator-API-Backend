@@ -12,6 +12,10 @@ on:
         default: "prod"
         type: choice
         options: [prod, staging]
+      slo_override_reason:
+        description: "Emergency override reason to bypass SLO error-budget gate"
+        required: false
+        type: string
   push:
     branches: [main]
     paths:
@@ -118,6 +122,18 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.image_tag || needs.build-and-push.outputs.image_tag }}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Gate release on SLO error-budget burn rate (#552)
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL || 'http://prometheus.monitoring.svc:9090' }}
+          SLO_OVERRIDE_REASON: ${{ github.event.inputs.slo_override_reason }}
+          SLO_OVERRIDE_APPROVER: ${{ github.actor }}
+        run: |
+          node scripts/slo-release-gate.ts --environment=${{ github.event.inputs.environment || 'prod' }} || {
+            echo "::error::Blue-green deployment blocked by SLO error-budget release gate (#552)"
+            exit 1
+          }
 
       - name: Run blue-green deploy
         if: steps.guard.outputs.configured == 'true'

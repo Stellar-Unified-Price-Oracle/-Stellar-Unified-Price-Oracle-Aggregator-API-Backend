@@ -9,6 +9,7 @@ import {
   wsConnectionDuration,
   wsErrorsTotal,
 } from '../observability/metrics';
+import { newTraceContext, formatTraceparent } from '../replication/trace-context';
 
 const SERVICE = 'aggregator';
 
@@ -62,7 +63,11 @@ export class WebSocketServer {
 
   broadcast(data: unknown): void {
     if (!this.wss) return;
-    const message = JSON.stringify(data);
+    const traceCtx = formatTraceparent(newTraceContext(true));
+    const envelope = (typeof data === 'object' && data !== null)
+      ? { ...(data as Record<string, unknown>), traceContext: traceCtx }
+      : { data, traceContext: traceCtx };
+    const message = JSON.stringify(envelope);
     let sent = 0;
     this.wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {

@@ -83,3 +83,44 @@ export function regionLatencyAttributes(stage: string, region: string, elapsedMs
     'pipeline.stage_latency_ms': Math.round(elapsedMs),
   };
 }
+
+export const REQUIRED_API_HOPS = [
+  'http.middleware',
+  'cache.lookup',
+  'store.read',
+  'http.serialization',
+];
+
+export interface TraceValidationResult {
+  complete: boolean;
+  missingHops: string[];
+  presentHops: string[];
+}
+
+export function validateTraceCoverage(
+  spanNames: string[],
+  requiredHops: string[] = REQUIRED_API_HOPS,
+): TraceValidationResult {
+  const spanSet = new Set(spanNames);
+  const missingHops = requiredHops.filter((hop) => !spanSet.has(hop));
+  return {
+    complete: missingHops.length === 0,
+    missingHops,
+    presentHops: spanNames,
+  };
+}
+
+export class MissingTraceSpanError extends Error {
+  constructor(missingHops: string[]) {
+    super(`Trace coverage incomplete. Missing required pipeline spans: ${missingHops.join(', ')}`);
+    this.name = 'MissingTraceSpanError';
+  }
+}
+
+export function assertTraceCoverage(spanNames: string[], requiredHops?: string[]): void {
+  const result = validateTraceCoverage(spanNames, requiredHops);
+  if (!result.complete) {
+    throw new MissingTraceSpanError(result.missingHops);
+  }
+}
+

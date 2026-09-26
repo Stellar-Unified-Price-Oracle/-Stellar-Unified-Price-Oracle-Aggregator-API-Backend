@@ -68,6 +68,7 @@ impl MultiSigAdminContract {
             action,
             approvals,
             executed: 0,
+            cancelled: 0,
             created_at: env.ledger().timestamp(),
             proposer,
         };

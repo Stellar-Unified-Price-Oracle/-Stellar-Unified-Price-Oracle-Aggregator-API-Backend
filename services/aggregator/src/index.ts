@@ -11,7 +11,15 @@ import { appendUptimeSnapshot } from './persistence/uptime-history';
 import { FileArchivalService } from './persistence/file-archival';
 import { RegionPriceReplicator } from './replication/region-price-replicator';
 import { RegionQuarantineManager } from './replication/region-quarantine';
-import { oracleSourceUptimePercent, onChainPriceStalenessSeconds, onChainHeartbeatAlertsTotal, serviceStartupDurationMs, pipelineStageLatencyMs } from './observability/metrics';
+import {
+  oracleSourceUptimePercent,
+  onChainPriceStalenessSeconds,
+  onChainHeartbeatAlertsTotal,
+  serviceStartupDurationMs,
+  pipelineStageLatencyMs,
+  pollCycleDurationMs,
+  pollCycleOverrunsTotal,
+} from './observability/metrics';
 import { DatabaseClient } from './persistence/database';
 import { BaseSource } from './oracle-sources/base';
 import { WebSocketServer } from './infrastructure/ws-server';
@@ -21,6 +29,11 @@ import { sourceCircuitBreaker } from './price-aggregation/source-circuit-breaker
 import { eventBus } from './domain-events';
 import { decryptSecret } from './infrastructure/crypto';
 import { getVaultClient } from '@stellar-oracle/vault-client';
+import {
+  enforceStartupCardinalityBudget,
+  setAllowedAssets,
+  setAllowedSources,
+} from './observability/cardinality';
 
 // In-process counters surfaced as structured log lines; the API /metrics
 // endpoint (prom-client) collects the canonical Prometheus metrics.
@@ -63,6 +76,7 @@ let startupTimeMs = 0;
 const onChainHeartbeat: Record<string, number> = {};
 let db: DatabaseClient | null = null;
 let pollSources: BaseSource[] = [];
+let publisher: ContractPublisher | null = null;
 
 async function poll(): Promise<AggregatedPrice[]> {
   const sources: BaseSource[] = pollSources;
@@ -188,9 +202,8 @@ async function poll(): Promise<AggregatedPrice[]> {
     logger.warn(`Unhealthy sources: ${unhealthy.map((s) => s.name).join(', ')}`);
   }
 
-  if (config.soroban.contractId) {
-    const publisher = new ContractPublisher();
-    const published = await tryCatchAsync(() => publisher.publishAggregated(aggregated));
+  if (config.soroban.contractId && publisher) {
+    const published = await tryCatchAsync(() => publisher!.publishAggregated(aggregated));
     if (!published.ok) {
       logger.error('Failed to publish aggregated prices to the contract', {
         assetCount: aggregated.length,
@@ -242,6 +255,11 @@ async function main(): Promise<void> {
   logger.info('Stellar Price Oracle Aggregator starting...');
   logger.info(`Polling interval: ${config.pollingIntervalMs}ms`);
   logger.info(`Watched assets: ${config.assets.join(', ')}`);
+
+  // Enforce Prometheus cardinality budget for configured sources and assets (#553)
+  enforceStartupCardinalityBudget(['chainlink', 'redstone', 'band', 'reflector'], config.assets);
+  setAllowedAssets(config.assets);
+  setAllowedSources(['chainlink', 'redstone', 'band', 'reflector']);
 
   for (const asset of config.assets) {
     anomalyDetector.applyRuntimeConfig(asset);
@@ -332,27 +350,93 @@ async function main(): Promise<void> {
   }));
   healthServer.start();
 
+  if (config.soroban.contractId) {
+    publisher = new ContractPublisher();
+    logger.info('Initialized process-scoped ContractPublisher');
+  }
+
   await poll();
   startupTimeMs = Date.now() - startupStartedAt;
   serviceStartupDurationMs.set({ service: 'aggregator' }, startupTimeMs);
   logger.info(`Aggregator startup complete in ${startupTimeMs}ms`);
 
-  setInterval(async () => {
+  // Issue #575 — Self-scheduling poll loop with single-flight execution and deadline
+  let isPolling = false;
+  let pollTimeout: NodeJS.Timeout | null = null;
+  let isShuttingDown = false;
+  let consecutiveOverruns = 0;
+  const OVERRUN_ALERT_THRESHOLD = 3;
+
+  async function runPollWithDeadline(deadlineMs: number): Promise<AggregatedPrice[]> {
+    let timer: NodeJS.Timeout;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Poll cycle exceeded deadline of ${deadlineMs}ms`)), deadlineMs);
+    });
     try {
-      const prices = await poll();
+      return await Promise.race([poll(), timeoutPromise]);
+    } finally {
+      clearTimeout(timer!);
+    }
+  }
+
+  async function executeCycle(): Promise<void> {
+    if (isShuttingDown) return;
+
+    if (isPolling) {
+      pollCycleOverrunsTotal.inc();
+      consecutiveOverruns++;
+      logger.warn('[PollLoop] Overrun detected: previous cycle still in flight; skipping overlapping tick');
+      if (consecutiveOverruns >= OVERRUN_ALERT_THRESHOLD) {
+        logger.error(`[PollLoop] Sustained overrun alert: ${consecutiveOverruns} consecutive cycles exceeded polling interval ${config.pollingIntervalMs}ms`);
+      }
+      return;
+    }
+
+    isPolling = true;
+    const cycleStart = performance.now();
+    const deadlineMs = Math.max(10_000, config.pollingIntervalMs * 1.5);
+
+    try {
+      const prices = await runPollWithDeadline(deadlineMs);
       wss.broadcast({ type: 'price_update', data: prices });
     } catch (err) {
-      logger.error('Poll cycle failed', err);
+      logger.error('Poll cycle failed or timed out', err);
+    } finally {
+      const elapsedMs = performance.now() - cycleStart;
+      isPolling = false;
+      pollCycleDurationMs.observe(elapsedMs);
+
+      if (elapsedMs > config.pollingIntervalMs) {
+        pollCycleOverrunsTotal.inc();
+        consecutiveOverruns++;
+        logger.warn(`[PollLoop] Cycle duration ${elapsedMs.toFixed(0)}ms exceeded interval ${config.pollingIntervalMs}ms`);
+      } else {
+        consecutiveOverruns = 0;
+      }
+
+      if (!isShuttingDown) {
+        // Overrun policy: skip tick and schedule next execution after remaining interval or minimum 1000ms delay
+        const nextDelay = Math.max(1000, config.pollingIntervalMs - elapsedMs);
+        pollTimeout = setTimeout(executeCycle, nextDelay);
+      }
     }
-  }, config.pollingIntervalMs);
+  }
+
+  // Schedule first self-scheduling recurring tick
+  pollTimeout = setTimeout(executeCycle, config.pollingIntervalMs);
 
   fileArchival.start();
 
-  process.on('SIGTERM', () => {
+  process.on('SIGTERM', async () => {
     logger.info('Shutting down...');
+    isShuttingDown = true;
+    if (pollTimeout) clearTimeout(pollTimeout);
     fileArchival.stop();
     wss.stop();
     healthServer.stop();
+    if (publisher) {
+      await publisher.shutdown();
+    }
     if (db) {
       db.disconnect().catch((err) => logger.error('Error disconnecting from database', err));
     }

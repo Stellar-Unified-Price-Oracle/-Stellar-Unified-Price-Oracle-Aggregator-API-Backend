@@ -12,6 +12,7 @@ import {
   oracleApiBudgetUtilization,
 } from '../observability/metrics';
 import { estimateCostUsd, recordCall, getBudgetUtilization } from '../infrastructure/cost-model';
+import { sanitizeAssetLabel, sanitizeSourceLabel } from '../observability/cardinality';
 
 const SLA_THRESHOLD_SECONDS = 5;
 
@@ -63,24 +64,27 @@ export abstract class BaseSource {
     const maxAttempts = 3;
     const baseDelay = 1000;
 
+    const safeAsset = sanitizeAssetLabel(asset);
+    const safeSource = sanitizeSourceLabel(this.name);
+
     // #64: track request latency per source
-    const timer = oracleSourceLatency.startTimer({ source: this.name, asset });
+    const timer = oracleSourceLatency.startTimer({ source: safeSource, asset: safeAsset });
 
     // #65: record API call and update cost metrics
-    oracleApiCallsTotal.inc({ source: this.name });
-    recordCall(this.name);
-    const costUsd = estimateCostUsd(this.name);
-    if (costUsd > 0) oracleApiCostTotal.inc({ source: this.name }, costUsd);
-    oracleApiBudgetUtilization.set({ source: this.name }, getBudgetUtilization(this.name));
+    oracleApiCallsTotal.inc({ source: safeSource });
+    recordCall(safeSource);
+    const costUsd = estimateCostUsd(safeSource);
+    if (costUsd > 0) oracleApiCostTotal.inc({ source: safeSource }, costUsd);
+    oracleApiBudgetUtilization.set({ source: safeSource }, getBudgetUtilization(safeSource));
 
     try {
       this.health.totalRequests++;
       const price = await this.fetchPrice(asset);
 
       const elapsed = timer({ status: 'success' });
-      oracleSourceRequestsTotal.inc({ source: this.name, status: 'success' });
+      oracleSourceRequestsTotal.inc({ source: safeSource, status: 'success' });
       if (elapsed > SLA_THRESHOLD_SECONDS) {
-        oracleSourceSlaBreaches.inc({ source: this.name });
+        oracleSourceSlaBreaches.inc({ source: safeSource });
         eventBus.publish({
           type: 'sla_breach',
           payload: {
@@ -100,7 +104,7 @@ export abstract class BaseSource {
       return price;
     } catch (err) {
       timer({ status: 'error' });
-      oracleSourceRequestsTotal.inc({ source: this.name, status: 'error' });
+      oracleSourceRequestsTotal.inc({ source: safeSource, status: 'error' });
 
       this.health.totalFailures++;
       this.health.lastFailure = Math.floor(Date.now() / 1000);

@@ -591,4 +591,266 @@ mod tests_impl {
         // Batch entries must produce consistent results
         assert!(price.price > 0);
     }
+
+    // ── Issue #569: Decimals range validation and mid-history immutability ──────
+
+    #[test]
+    fn test_decimals_boundary_values_and_change_rejection() {
+        let (env, client, _admin, oracle) = setup();
+
+        // 1. Decimals = 0 is valid
+        let asset0 = String::from_str(&env, "RAW");
+        let res0 = client.try_submit_price(
+            &oracle,
+            &asset0,
+            &100i128,
+            &0u32,
+            &env.ledger().timestamp(),
+        );
+        assert!(res0.is_ok());
+
+        // 2. Decimals = 18 (MAX_DECIMALS) is valid
+        let asset18 = String::from_str(&env, "ETH");
+        let res18 = client.try_submit_price(
+            &oracle,
+            &asset18,
+            &3000_000_000_000_000_000i128,
+            &18u32,
+            &env.ledger().timestamp(),
+        );
+        assert!(res18.is_ok());
+
+        // 3. Decimals = 19 (MAX_DECIMALS + 1) is rejected with InvalidDecimals
+        let asset19 = String::from_str(&env, "OVER");
+        let res19 = client.try_submit_price(
+            &oracle,
+            &asset19,
+            &100i128,
+            &19u32,
+            &env.ledger().timestamp(),
+        );
+        assert_eq!(res19, Err(Ok(OracleError::InvalidDecimals)));
+
+        // 4. Mid-history decimals change is rejected with InvalidDecimals
+        let asset_mid = String::from_str(&env, "XLM");
+        // Initial submission with decimals = 7
+        client.submit_price(
+            &oracle,
+            &asset_mid,
+            &100_000_000i128,
+            &7u32,
+            &env.ledger().timestamp(),
+        );
+        // Subsequent submission attempting to change decimals from 7 to 8 is rejected
+        let res_change = client.try_submit_price(
+            &oracle,
+            &asset_mid,
+            &100_000_000i128,
+            &8u32,
+            &(env.ledger().timestamp() + 10),
+        );
+        assert_eq!(res_change, Err(Ok(OracleError::InvalidDecimals)));
+
+        // Subsequent submission preserving decimals = 7 succeeds
+        let res_same = client.try_submit_price(
+            &oracle,
+            &asset_mid,
+            &105_000_000i128,
+            &7u32,
+            &(env.ledger().timestamp() + 20),
+        );
+        assert!(res_same.is_ok());
+    }
+
+    #[test]
+    fn test_batch_path_decimals_validation() {
+        let (env, client, _admin, oracle) = setup();
+
+        let asset = String::from_str(&env, "BTC");
+        client.submit_price(&oracle, &asset, &50_000_00000000i128, &8u32, &env.ledger().timestamp());
+
+        // Batch entry with decimals = 19 is rejected
+        let invalid_entry = BatchPriceEntry {
+            asset: asset.clone(),
+            price: 51_000_00000000i128,
+            decimals: 19u32,
+            timestamp: env.ledger().timestamp() + 10,
+            source: oracle.clone(),
+        };
+        let proof = MerkleProof {
+            leaf_index: 0,
+            siblings: Vec::new(&env),
+        };
+        let res_invalid = client.try_apply_batch_entry(&0u64, &invalid_entry, &proof);
+        assert_eq!(res_invalid, Err(Ok(OracleError::InvalidDecimals)));
+
+        // Batch entry with different decimals (e.g. 6 instead of 8) is rejected
+        let change_entry = BatchPriceEntry {
+            asset: asset.clone(),
+            price: 51_000_000000i128,
+            decimals: 6u32,
+            timestamp: env.ledger().timestamp() + 10,
+            source: oracle.clone(),
+        };
+        let res_change = client.try_apply_batch_entry(&0u64, &change_entry, &proof);
+        assert_eq!(res_change, Err(Ok(OracleError::InvalidDecimals)));
+    }
+
+    // ── Issue #572: TTL extension argument validation & error reporting ────────
+
+    #[test]
+    fn test_ttl_extension_validation() {
+        let (env, client, _admin, oracle) = setup();
+        let caller = <Address as TestAddress>::generate(&env);
+
+        let asset = String::from_str(&env, "XLM");
+        client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &env.ledger().timestamp());
+
+        // 1. extend_to < threshold is rejected with InvalidTtlBounds
+        let res_low = client.try_extend_price_history_ttl(
+            &caller,
+            &asset,
+            &50_000u32,
+            &40_000u32,
+        );
+        assert_eq!(res_low, Err(Ok(OracleError::InvalidTtlBounds)));
+
+        // 2. Extending non-existent asset is rejected with AssetNotFound
+        let missing_asset = String::from_str(&env, "NONEXISTENT");
+        let res_missing = client.try_extend_price_history_ttl(
+            &caller,
+            &missing_asset,
+            &34_560u32,
+            &518_400u32,
+        );
+        assert_eq!(res_missing, Err(Ok(OracleError::AssetNotFound)));
+
+        // 3. Valid parameters succeed
+        let res_valid = client.try_extend_price_history_ttl(
+            &caller,
+            &asset,
+            &34_560u32,
+            &518_400u32,
+        );
+        assert!(res_valid.is_ok());
+
+        // 4. Instance TTL extension with extend_to < threshold is rejected
+        let res_inst_low = client.try_extend_instance_ttl(
+            &caller,
+            &50_000u32,
+            &30_000u32,
+        );
+        assert_eq!(res_inst_low, Err(Ok(OracleError::InvalidTtlBounds)));
+
+        // 5. Valid instance TTL extension succeeds
+        let res_inst_valid = client.try_extend_instance_ttl(
+            &caller,
+            &34_560u32,
+            &518_400u32,
+        );
+        assert!(res_inst_valid.is_ok());
+    }
+
+    // ── Issue #565: Two-step admin handover ────────────────────────────────────
+
+    #[test]
+    fn test_admin_handover_accept() {
+        let (env, client, admin, _oracle) = setup();
+        let new_admin = <Address as TestAddress>::generate(&env);
+
+        // Initially no pending admin
+        assert_eq!(client.get_pending_admin(), None);
+
+        // Propose admin
+        client.propose_admin(&admin, &new_admin);
+        assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+
+        // Old admin is still the admin until acceptance
+        let other = <Address as TestAddress>::generate(&env);
+        assert!(client.try_add_oracle_source(&admin, &other, &String::from_str(&env, "Test")).is_ok());
+
+        // Accept admin by the proposed address
+        client.accept_admin(&new_admin);
+        assert_eq!(client.get_pending_admin(), None);
+
+        // Now new_admin is active, old admin is unauthorized
+        let source3 = <Address as TestAddress>::generate(&env);
+        assert!(client.try_add_oracle_source(&new_admin, &source3, &String::from_str(&env, "Test3")).is_ok());
+        assert!(client.try_add_oracle_source(&admin, &source3, &String::from_str(&env, "OldAdminFail")).is_err());
+    }
+
+    #[test]
+    fn test_admin_handover_accept_by_wrong_address_rejected() {
+        let (env, client, admin, _oracle) = setup();
+        let new_admin = <Address as TestAddress>::generate(&env);
+        let impostor = <Address as TestAddress>::generate(&env);
+
+        client.propose_admin(&admin, &new_admin);
+
+        // Impostor attempts to accept -> rejected with AdminOnly
+        let res = client.try_accept_admin(&impostor);
+        assert_eq!(res, Err(Ok(OracleError::AdminOnly)));
+
+        // Pending admin remains untouched
+        assert_eq!(client.get_pending_admin(), Some(new_admin));
+    }
+
+    #[test]
+    fn test_admin_handover_cancel_within_window() {
+        let (env, client, admin, _oracle) = setup();
+        let new_admin = <Address as TestAddress>::generate(&env);
+
+        client.propose_admin(&admin, &new_admin);
+        assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+
+        // Current admin cancels within the window
+        client.cancel_admin_transfer(&admin);
+        assert_eq!(client.get_pending_admin(), None);
+
+        // New admin can no longer accept
+        let res = client.try_accept_admin(&new_admin);
+        assert_eq!(res, Err(Ok(OracleError::NoPendingAdmin)));
+    }
+
+    #[test]
+    fn test_admin_handover_cancel_after_window_rejected() {
+        let (env, client, admin, _oracle) = setup();
+        let new_admin = <Address as TestAddress>::generate(&env);
+
+        client.propose_admin(&admin, &new_admin);
+
+        // Advance ledger timestamp beyond the 3-day window
+        env.ledger().with_mut(|li| {
+            li.timestamp += storage::ADMIN_TRANSFER_WINDOW_SECONDS + 1;
+        });
+
+        // Cancel is rejected because the cancellation window has elapsed
+        let res = client.try_cancel_admin_transfer(&admin);
+        assert_eq!(res, Err(Ok(OracleError::AdminTransferWindowElapsed)));
+    }
+
+    #[test]
+    fn test_admin_handover_through_multisig_address() {
+        let (env, client, admin, _oracle) = setup();
+
+        // MultiSig contract address as the new admin target
+        let msig_id = env.register(crate::multisig::MultiSigAdminContract, ());
+        let msig_client = crate::multisig::MultiSigAdminContractClient::new(&env, &msig_id);
+
+        let signer = <Address as TestAddress>::generate(&env);
+        let signers = Vec::from_array(&env, [signer.clone()]);
+        msig_client.initialize(&signers, &1u32);
+
+        // Propose multi-sig contract address as the new admin
+        client.propose_admin(&admin, &msig_id);
+        assert_eq!(client.get_pending_admin(), Some(msig_id.clone()));
+
+        // Accept through the multi-sig address
+        client.accept_admin(&msig_id);
+        assert_eq!(client.get_pending_admin(), None);
+
+        // Old admin is replaced
+        let dummy = <Address as TestAddress>::generate(&env);
+        assert!(client.try_add_oracle_source(&admin, &dummy, &String::from_str(&env, "Fail")).is_err());
+    }
 }

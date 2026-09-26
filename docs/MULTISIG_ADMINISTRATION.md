@@ -222,20 +222,25 @@ auditable action. Every emergency execution is written to the audit log
 5. **Document** the timeline, proposal IDs, and approving signers in
    `docs/runbooks/`.
 
-## 6. Operations hygiene
+## 6. Operations hygiene & Two-Step Admin Handover (Issue #565)
 
-- **Admin key retirement:** after bootstrap, transfer admin authority to the
-  multi-sig (or a KMS signing proxy) so no single key retains admin powers.
-  Admin transfer itself is a proposal (`ProposalAction::TransferAdmin` /
-  `SetAdmin`) — it is never performed via a direct, unproposed transaction.
+- **Two-Step Admin Handover Runbook:**
+  To prevent lockout from accidental typos in the recipient address, admin authority is transferred via a strictly enforced two-step handover:
+  1. **Proposal / Step 1:** A proposal carrying `ProposalAction::TransferAdmin(new_admin)` or a direct admin call to `PriceOracleContract::propose_admin(admin, new_admin)` stages the new address in `PendingAdmin` and sets a 72-hour cancellation window (`ADMIN_TRANSFER_WINDOW_SECONDS = 259,200`). This emits `admin_transfer_proposed`.
+  2. **Active Privilege Retention:** The current admin retains all existing administrative powers throughout the pending state. `get_pending_admin()` exposes the candidate address.
+  3. **Acceptance / Step 2:** The candidate address must explicitly call `PriceOracleContract::accept_admin()` with its own authorization (`new_admin.require_auth()`). This finalizes the transfer, clears `PendingAdmin`, and emits `admin_transfer_accepted`.
+  4. **Emergency Recovery & Unreachable Target:** If a typo occurs or the intended recipient fails to accept within the window, the current admin can abort the transfer by invoking `PriceOracleContract::cancel_admin_transfer(admin)`. This clears `PendingAdmin` and emits `admin_transfer_cancelled`. Note that `cancel_admin_transfer` must be executed before the 72-hour window elapses (`AdminTransferWindowElapsed`, code 44).
+  5. **Multi-Sig Contract as Admin:** When transferring admin authority to a `MultiSigAdminContract` instance, the `accept_admin` call is executed by that contract address, ensuring full programmatic ownership handoff.
+  6. **Alignment with Proxy Timelock:** The proxy's implementation pointer and canary registration utilize their existing 48-hour timelock (`propose_upgrade` / `approve_upgrade` / `execute_upgrade` / `cancel_upgrade`). Admin handover follows a mirrored two-step pattern to ensure uniform operational safety across both contracts.
+
 - **Quarterly signer review:** re-confirm every signer's identity, custody,
   and that their key can still sign (testnet practice run). Log results in
   `docs/runbooks/`.
 - **Backup & restoration test:** restore signer keys from backup in a
   non-production environment at least once per quarter (see
   `docs/KEY_MANAGEMENT.md`).
-- **Monitor proposal activity:** alert on new proposals, approvals, and
-  executions via the governance event stream; a proposal that appears without
+- **Monitor proposal activity:** alert on new proposals, approvals, cancellations,
+  and executions via the governance event stream; a proposal that appears without
   an accompanying ops ticket should be investigated.
 - **Keep the signer list minimal and stable:** prefer a small, well-audited
   set over a large one — each signer is an attack surface and an availability
@@ -251,12 +256,17 @@ auditable action. Every emergency execution is written to the audit log
 | `AlreadyApproved` | Signer approved the same proposal twice | No action needed; count only distinct signers |
 | `ProposalNotFound` | Wrong proposal id | Re-verify the id from the create response |
 | `ProposalAlreadyExecuted` | Action already applied | Verify on-chain state; the change is live |
+| `ProposalCancelled` | Proposal was cancelled by proposer or admin | Propose a new action if needed |
+| `ProposalExpired` | Proposal was not executed within 7 days | Propose a fresh action |
 | `InvalidThreshold` on init | Threshold 0 or larger than signer count | Fix threshold/signers and re-init |
+| `NoPendingAdmin` on accept/cancel | No transfer was staged | Call `propose_admin` or execute a transfer proposal first |
+| `AdminTransferWindowElapsed` | Cancellation window (>72h) closed | Target address must accept or submit fresh proposal |
 
 ## 8. Reference: error codes
 
 | Code | Name | Meaning |
 |---|---|---|
+| 5 | `InvalidDecimals` | Price decimals outside 0..=18 or attempted mid-history change |
 | 9 | `NotASigner` | Address is not a signer |
 | 10 | `ProposalNotFound` | Proposal id does not exist |
 | 11 | `ProposalAlreadyExecuted` | Proposal was already executed |
@@ -264,6 +274,12 @@ auditable action. Every emergency execution is written to the audit log
 | 13 | `InvalidThreshold` | Threshold is 0 or exceeds signer count |
 | 14 | `ThresholdNotMet` | Not enough approvals to execute |
 | 15 | `MultiSigNotInitialized` | Multi-sig config has not been initialized |
+| 20 | `ProposalCancelled` | Multi-sig or governance proposal was cancelled |
+| 41 | `InvalidTtlBounds` | TTL extend_to < threshold, exceeds max cap, or sub-day threshold |
+| 42 | `TtlSubFloor` | Entry has reached 0 TTL or extension resulted in a no-op |
+| 43 | `NoPendingAdmin` | No pending admin handover exists |
+| 44 | `AdminTransferWindowElapsed` | 72h cancellation window elapsed |
+| 45 | `ProposalExpired` | Proposal exceeded 7-day execution window |
 
 See `contracts/price-oracle/src/errors.rs` for the full list and
 `api/src/infrastructure/catalog.ts` for HTTP status mappings.
