@@ -2,17 +2,13 @@ import { httpClient } from '../infrastructure/http-client';
 import { config } from '../infrastructure/config';
 import { NormalizedPrice, OracleSourceName } from '../infrastructure/types';
 import { BaseSource } from './base';
-
-interface BandFeedData {
-  price: string;
-  decimals?: number;
-  updated_at?: number;
-}
+import { parseProviderResponse, reportInvalidPayload, type ProviderSchemaName } from './response-validation';
 
 export class BandSource extends BaseSource {
   name: OracleSourceName = 'band';
 
   private readonly baseUrl: string;
+  protected readonly schema: ProviderSchemaName = 'band';
 
   constructor() {
     super();
@@ -21,20 +17,21 @@ export class BandSource extends BaseSource {
 
   async fetchPrice(asset: string): Promise<NormalizedPrice | null> {
     const symbol = this.toSymbol(asset);
-    const response = await httpClient.get<{ data?: BandFeedData }>(
+    const response = await httpClient.get<unknown>(
       `${this.baseUrl}/oracle/v1/feeds/${symbol}`,
     );
 
-    if (!response.data?.data?.price) return null;
+    const result = parseProviderResponse(this.schema, response.data, asset);
+    if (result.kind === 'no-price') return null;
+    if (result.kind === 'invalid-payload') {
+      reportInvalidPayload(this.name, asset, result, response.data);
+      this.recordInvalidPayload(asset, result.issues);
+      return null;
+    }
 
     // Band reports the provider's own update time; keep it as `observedAt`
     // rather than falling back to local fetch time when it is missing.
-    return this.normalize(
-      asset,
-      response.data.data.price,
-      response.data.data.decimals || 9,
-      response.data.data.updated_at ?? null,
-    );
+    return this.normalizeValidated(asset, result);
   }
 
   private toSymbol(asset: string): string {

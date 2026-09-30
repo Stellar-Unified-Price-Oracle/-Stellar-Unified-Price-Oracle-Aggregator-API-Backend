@@ -1,0 +1,8 @@
+{
+  "prices": {
+    "Crypto.DOGE/USD": {
+      "price": "0.12",
+      "decimals": 8
+    }
+  }
+}

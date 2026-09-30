@@ -2,18 +2,13 @@ import { httpClient } from '../infrastructure/http-client';
 import { config } from '../infrastructure/config';
 import { NormalizedPrice, OracleSourceName } from '../infrastructure/types';
 import { BaseSource } from './base';
-
-interface RedstonePriceData {
-  value: string | number;
-  decimals?: number;
-}
-
-type RedstonePricesResponse = Record<string, RedstonePriceData | undefined>;
+import { parseProviderResponse, reportInvalidPayload, type ProviderSchemaName } from './response-validation';
 
 export class RedstoneSource extends BaseSource {
   name: OracleSourceName = 'redstone';
 
   private readonly baseUrl: string;
+  protected readonly schema: ProviderSchemaName = 'redstone';
 
   constructor() {
     super();
@@ -22,15 +17,20 @@ export class RedstoneSource extends BaseSource {
 
   async fetchPrice(asset: string): Promise<NormalizedPrice | null> {
     const symbol = asset.toUpperCase();
-    const response = await httpClient.get<RedstonePricesResponse>(`${this.baseUrl}/prices`, {
+    const response = await httpClient.get<unknown>(`${this.baseUrl}/prices`, {
       params: { symbols: symbol, provider: 'redstone' },
     });
 
-    const data = response.data?.[symbol];
-    if (!data?.value) return null;
+    const result = parseProviderResponse(this.schema, response.data, symbol);
+    if (result.kind === 'no-price') return null;
+    if (result.kind === 'invalid-payload') {
+      reportInvalidPayload(this.name, symbol, result, response.data);
+      this.recordInvalidPayload(symbol, result.issues);
+      return null;
+    }
 
     // The response carries no observation time, so the age of this price
     // cannot be established from the provider (`null`, not `Date.now()`).
-    return this.normalize(asset, data.value, data.decimals || 8, null);
+    return this.normalizeValidated(symbol, result);
   }
 }

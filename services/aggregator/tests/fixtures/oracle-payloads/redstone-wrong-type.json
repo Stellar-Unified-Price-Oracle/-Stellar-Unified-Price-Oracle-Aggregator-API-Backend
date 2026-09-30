@@ -1,0 +1,8 @@
+{
+  "XLM": {
+    "value": {
+      "nested": "object"
+    },
+    "decimals": 8
+  }
+}

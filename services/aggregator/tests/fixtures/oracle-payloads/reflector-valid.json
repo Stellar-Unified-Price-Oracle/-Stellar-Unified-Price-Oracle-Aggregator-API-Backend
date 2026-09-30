@@ -1,0 +1,9 @@
+{
+  "prices": {
+    "Crypto.XLM/USD": {
+      "price": "0.3987",
+      "decimals": 8,
+      "timestamp": 1727654400
+    }
+  }
+}

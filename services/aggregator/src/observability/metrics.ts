@@ -47,6 +47,15 @@ export const wsErrorsTotal = new client.Counter({
   registers: [register],
 });
 
+// Issue #586 — upgrade rejections counted by reason so rate-limit bypass
+// attempts, origin failures and auth failures are individually observable.
+export const wsUpgradeRejectionsTotal = new client.Counter({
+  name: 'ws_upgrade_rejections_total',
+  help: 'WebSocket upgrade rejections by reason (rate-limit, origin, csrf, hmac, ...)',
+  labelNames: ['service', 'reason'],
+  registers: [register],
+});
+
 // #64 — Oracle source latency tracking
 export const oracleSourceLatency = new client.Histogram({
   name: 'oracle_source_request_duration_seconds',
@@ -66,6 +75,15 @@ export const oracleSourceRequestsTotal = new client.Counter({
 export const oracleSourceSlaBreaches = new client.Counter({
   name: 'oracle_source_sla_breaches_total',
   help: 'Number of oracle source requests exceeding SLA threshold',
+  labelNames: ['source'],
+  registers: [register],
+});
+
+// Issue #584 — schema violations are a provider contract change, not an
+// ordinary fetch failure. Sustained rates must page, not degrade quietly.
+export const oracleSourceInvalidPayloadsTotal = new client.Counter({
+  name: 'oracle_source_invalid_payloads_total',
+  help: 'Provider responses that failed schema validation, by source',
   labelNames: ['source'],
   registers: [register],
 });

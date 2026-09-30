@@ -1,0 +1,11 @@
+{
+  "prices": {
+    "Crypto.XLM/USD": {
+      "price": [
+        1,
+        2
+      ],
+      "decimals": 8
+    }
+  }
+}
