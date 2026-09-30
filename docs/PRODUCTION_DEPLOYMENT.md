@@ -210,6 +210,30 @@ Istio mesh in `k8s/istio/`, Terraform in `infrastructure/terraform/`.
 - [ ] `docs/runbooks/*` reviewed by on-call; on-call has access to the
       encrypted secrets and rotation scripts.
 
+## 10. Graceful shutdown & drain budget (issue #579)
+
+The aggregator handles `SIGTERM` and `SIGINT` through one idempotent handler.
+The sequence is: **readiness flips to not-ready first**, scheduled work stops,
+the in-flight poll cycle is awaited, the contract-submission retry queue is
+drained, then servers close and the process exits `0`.
+
+The numbers must line up with the pod's `terminationGracePeriodSeconds` (60s
+in `k8s/blue-green/*`):
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `SHUTDOWN_DRAIN_DEADLINE_MS` | 25000 | Max wait for the in-flight poll cycle + retry-queue drain |
+| `SHUTDOWN_FORCE_EXIT_MS` | 35000 | Hard `process.exit(1)` timer, armed at first signal |
+| `terminationGracePeriodSeconds` | 60 | k8s kills the pod (SIGKILL) after this |
+
+Required invariant: **drain deadline < force-exit timer < grace period**
+(25000 < 35000 < 60000). If you change the defaults, keep that ordering and
+leave headroom for image filesystem cleanup and SIGKILL latency. Hitting the
+force-exit timer means the drain did not finish in time — the process exits
+with code **1** so the orchestrator surfaces the failure. History and uptime
+snapshot files are written atomically (temp file + rename), so even an abrupt
+SIGKILL cannot leave a partial file behind.
+
 ## Related documents
 
 - [`DEPLOY.md`](../DEPLOY.md) — quick start (local, Docker, Fly/Railway)

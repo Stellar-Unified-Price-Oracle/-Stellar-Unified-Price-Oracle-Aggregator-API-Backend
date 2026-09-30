@@ -3,7 +3,7 @@ import path from 'path';
 import { SourceHealthStatus } from '../infrastructure/types';
 import { config } from '../infrastructure/config';
 import { encrypt, decrypt, isEncrypted } from '../infrastructure/crypto';
-import { ensureDataDir, historyEncryptionEnabled } from './history';
+import { ensureDataDir, historyEncryptionEnabled, writeAtomic } from './history';
 
 const DATA_DIR = path.resolve(__dirname, '../../data');
 const UPTIME_FILE = (source: string) => path.join(DATA_DIR, `uptime-${source.toLowerCase()}.json`);
@@ -34,7 +34,8 @@ function readUptimeFile(filePath: string): UptimeSnapshot[] {
 function writeUptimeFile(filePath: string, snapshots: UptimeSnapshot[]): void {
   const serialized = JSON.stringify(snapshots);
   const payload = uptimeEncryptionEnabled() ? encrypt(serialized) : serialized;
-  fs.writeFileSync(filePath, payload);
+  // Atomic temp+rename write so a kill cannot leave a partial file (#579).
+  writeAtomic(filePath, payload);
 }
 
 function pruneUptimeHistory(history: UptimeSnapshot[]): UptimeSnapshot[] {

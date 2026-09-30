@@ -35,7 +35,18 @@ export function readHistoryFile(filePath: string): HistoricalPriceEntry[] {
 export function writeHistoryFile(filePath: string, history: HistoricalPriceEntry[]): void {
   const serialized = JSON.stringify(history);
   const payload = historyEncryptionEnabled() ? encrypt(serialized) : serialized;
-  fs.writeFileSync(filePath, payload);
+  writeAtomic(filePath, payload);
+}
+
+/**
+ * Writes via a temp file + rename so an abrupt kill can never leave a partial
+ * file on disk (issue #579): the write happens to `filePath.tmp-<pid>`, and
+ * `renameSync` swaps it in place in one atomic filesystem operation.
+ */
+export function writeAtomic(filePath: string, payload: string): void {
+  const tmpPath = `${filePath}.tmp-${process.pid}`;
+  fs.writeFileSync(tmpPath, payload);
+  fs.renameSync(tmpPath, filePath);
 }
 
 /**

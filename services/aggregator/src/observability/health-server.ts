@@ -25,6 +25,10 @@ export interface HealthSnapshot {
   circuitBreakerStates?: Record<string, SourceCBStatus>;
   // Issue #382 — seconds since last on-chain update, per asset.
   onChainHeartbeat?: Record<string, number>;
+  // Issue #579 — externally-settable readiness override. During graceful
+  // shutdown the flag is flipped before anything else stops, so the
+  // orchestrator drains this pod while it can still serve.
+  shutdownInProgress?: boolean;
 }
 
 export class HealthServer {
@@ -71,13 +75,15 @@ export class HealthServer {
           : [];
         const hasPrices = snap.lastAggregated.length > 0;
         const quarantined = snap.region?.quarantined === true;
-        const ready = hasPrices && !quarantined && openCircuits.length < Object.keys(snap.sourceHealth).length;
+        const shuttingDown = snap.shutdownInProgress === true;
+        const ready = hasPrices && !quarantined && !shuttingDown && openCircuits.length < Object.keys(snap.sourceHealth).length;
         const code = ready ? 200 : 503;
         res.writeHead(code, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           status: ready ? 'ready' : 'not_ready',
           hasPrices,
           quarantined,
+          shutdownInProgress: shuttingDown,
           startupTimeMs: snap.startupTimeMs ?? 0,
           openCircuitBreakers: openCircuits.length,
         }));
