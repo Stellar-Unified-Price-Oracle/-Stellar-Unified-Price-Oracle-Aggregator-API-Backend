@@ -7,14 +7,51 @@ import {
   oracleSourceLatency,
   oracleSourceRequestsTotal,
   oracleSourceSlaBreaches,
+  oracleSourceBudgetBlockedTotal,
   oracleApiCallsTotal,
   oracleApiCostTotal,
   oracleApiBudgetUtilization,
 } from '../observability/metrics';
-import { estimateCostUsd, recordCall, getBudgetUtilization } from '../infrastructure/cost-model';
+import {
+  estimateCostUsd,
+  recordCall,
+  getBudgetStatus,
+  BUDGET_WARN_RATIO,
+} from '../infrastructure/cost-model';
 import { sanitizeAssetLabel, sanitizeSourceLabel } from '../observability/cardinality';
 
 const SLA_THRESHOLD_SECONDS = 5;
+
+// #583 — throttled per-source budget warnings so a tight polling interval
+// cannot flood the logs while the budget state lasts.
+const budgetWarnTimestamps = new Map<string, number>();
+const BUDGET_WARN_THROTTLE_MS = 60_000;
+
+export function isBudgetBlocked(source: string): boolean {
+  return getBudgetStatus(source).state === 'exhausted';
+}
+
+function warnBudgetExhausted(source: string): void {
+  const now = Date.now();
+  const last = budgetWarnTimestamps.get(`exhausted:${source}`) ?? 0;
+  if (now - last >= BUDGET_WARN_THROTTLE_MS) {
+    budgetWarnTimestamps.set(`exhausted:${source}`, now);
+    logger.error(
+      `[${source}] Daily API budget exhausted (utilization ≥ 100%) — source polling stopped until UTC rollover`,
+    );
+  }
+}
+
+function warnBudgetApproaching(source: string, utilization: number): void {
+  const now = Date.now();
+  const last = budgetWarnTimestamps.get(`warn:${source}`) ?? 0;
+  if (now - last >= BUDGET_WARN_THROTTLE_MS) {
+    budgetWarnTimestamps.set(`warn:${source}`, now);      logger.warn(
+      `[${source}] Daily API budget ${(utilization * 100).toFixed(1)}% utilized (≥ ${BUDGET_WARN_RATIO * 100}%) — approaching exhaustion`,
+    );
+  }
+}
+
 
 export abstract class BaseSource {
   abstract name: OracleSourceName;
@@ -56,6 +93,17 @@ export abstract class BaseSource {
   }
 
   async fetchWithBackoff(asset: string, attempt = 1): Promise<NormalizedPrice | null> {
+    // #583 — a source whose daily budget is exhausted stops being polled. This
+    // deliberately degrades aggregation quality (fewer sources → wider median
+    // spread), so it is a loudly alerted state, not a silent skip.
+    if (isBudgetBlocked(this.name)) {
+      oracleSourceBudgetBlockedTotal.inc({ source: sanitizeSourceLabel(this.name) });
+      logger.error(
+        `[${this.name}] Daily API budget exhausted — skipping fetch for ${asset} until UTC rollover`,
+      );
+      return null;
+    }
+
     if (!sourceCircuitBreaker.isAllowed(this.name)) {
       logger.warn(`[${this.name}] Circuit breaker OPEN — skipping fetch for ${asset}`);
       return null;
@@ -75,7 +123,15 @@ export abstract class BaseSource {
     recordCall(safeSource);
     const costUsd = estimateCostUsd(safeSource);
     if (costUsd > 0) oracleApiCostTotal.inc({ source: safeSource }, costUsd);
-    oracleApiBudgetUtilization.set({ source: safeSource }, getBudgetUtilization(safeSource));
+    const budgetStatus = getBudgetStatus(safeSource);
+    oracleApiBudgetUtilization.set({ source: safeSource }, budgetStatus.utilization);
+    // #583 — approaching/exceeding the budget is logged (throttled per source)
+    // and mirrored into the Prometheus gauge; alerting rules fire off it.
+    if (budgetStatus.state === 'exhausted') {
+      warnBudgetExhausted(safeSource);
+    } else if (budgetStatus.state === 'warn') {
+      warnBudgetApproaching(safeSource, budgetStatus.utilization);
+    }
 
     try {
       this.health.totalRequests++;

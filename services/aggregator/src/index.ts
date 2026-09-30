@@ -28,6 +28,7 @@ import AlertManager from './observability/alert-manager';
 import { sourceCircuitBreaker } from './price-aggregation/source-circuit-breaker';
 import { eventBus } from './domain-events';
 import { decryptSecret } from './infrastructure/crypto';
+import { flushDailyCounts } from './infrastructure/cost-model';
 import { getVaultClient } from '@stellar-oracle/vault-client';
 import {
   enforceStartupCardinalityBudget,
@@ -432,6 +433,8 @@ async function main(): Promise<void> {
     isShuttingDown = true;
     if (pollTimeout) clearTimeout(pollTimeout);
     fileArchival.stop();
+    // #583 — flush persisted daily call counters so budgets survive restarts.
+    flushDailyCounts();
     wss.stop();
     healthServer.stop();
     if (publisher) {

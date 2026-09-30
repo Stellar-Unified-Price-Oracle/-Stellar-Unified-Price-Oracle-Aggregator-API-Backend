@@ -70,6 +70,15 @@ export const oracleSourceSlaBreaches = new client.Counter({
   registers: [register],
 });
 
+// #583 — budget-blocked fetches: a source whose daily budget is exhausted
+// stops being polled, which degrades aggregation quality and must stay visible.
+export const oracleSourceBudgetBlockedTotal = new client.Counter({
+  name: 'oracle_source_budget_blocked_total',
+  help: 'Fetches skipped because the source daily API budget was exhausted, by source',
+  labelNames: ['source'],
+  registers: [register],
+});
+
 // #65 — Cost tracking per oracle API call
 export const oracleApiCallsTotal = new client.Counter({
   name: 'oracle_api_calls_total',
