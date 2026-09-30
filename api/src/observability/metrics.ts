@@ -194,6 +194,15 @@ export const wsSubscribeEventsTotal = new client.Counter({
 });
 register.registerMetric(wsSubscribeEventsTotal);
 
+// Issue #586 — upgrade rejections counted by reason so header-spoofing
+// rate-limit bypass attempts and origin/auth failures are observable.
+export const wsUpgradeRejectionsTotal = new client.Counter({
+  name: 'ws_api_upgrade_rejections_total',
+  help: 'WebSocket upgrade rejections by reason (rate-limit, origin, csrf, hmac, ...)',
+  labelNames: ['service', 'reason'],
+});
+register.registerMetric(wsUpgradeRejectionsTotal);
+
 export const apiCallsByEndpoint = new client.Counter({
   name: 'api_calls_by_endpoint_total',
   help: 'Total API calls grouped by endpoint, method, and status',

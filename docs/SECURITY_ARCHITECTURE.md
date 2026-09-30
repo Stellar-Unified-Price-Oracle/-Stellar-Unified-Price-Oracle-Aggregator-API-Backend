@@ -160,13 +160,32 @@ The WebSocket endpoint (`PriceWebSocketServer`) enforces, in order:
    - `nonce` recorded to **reject replays** (a used nonce is refused);
    - **constant-time** signature comparison (`timingSafeEqual`).
 4. **Per-IP upgrade rate limiting & origin checks** — `WsUpgradeGuard`
-   buckets connection attempts per client IP and rejects excessive
-   handshakes; every rejected attempt is logged with the client IP.
+   (API) and `WsConnectionGuard` (aggregator) share one implementation
+   (`packages/ws-guard`, issue #586) so their policies cannot diverge:
+   - **Trusted-proxy-aware identity** — `X-Forwarded-For`/`Forwarded` are
+     honoured only when the direct socket peer is inside a configured
+     `WS_TRUSTED_PROXY_CIDRS` range; the client is the right-most untrusted
+     hop. From untrusted peers these headers are ignored entirely, so header
+     spoofing cannot mint fresh rate-limit buckets or forge abuse
+     attribution.
+   - **Fail-closed origins** — an empty `WS_ALLOWED_ORIGINS` rejects browser
+     connections in production unless `WS_ALLOW_ALL_ORIGINS=true` is set
+     explicitly; omitting the Origin header is not a bypass.
+   - **Rejection accounting** — every rejected upgrade increments
+     `ws_upgrade_rejections_total{reason}` (API:
+     `ws_api_upgrade_rejections_total`) and logs the same resolved identity
+     that rate limiting used.
+
+   **Threat-model note:** origin enforcement restrains browsers only. A
+   non-browser client can omit or forge the Origin header, so it must never
+   be treated as authentication — hence the API key, CSRF token and HMAC
+   signature layers above.
 
 **Threats mitigated:** cross-site WebSocket hijacking (CSRF tokens), replay
 of captured upgrade requests (nonce + TTL), unauthorized access to the price
-stream (API key), handshake flooding (per-IP rate limits), and forged
-upgrade signatures (HMAC + timing-safe compare).
+stream (API key), handshake flooding (per-IP rate limits), forged
+upgrade signatures (HMAC + timing-safe compare), and rate-limit bypass via
+spoofed forwarded headers (trusted-proxy identity, issue #586).
 
 ## 5. Input sanitization
 

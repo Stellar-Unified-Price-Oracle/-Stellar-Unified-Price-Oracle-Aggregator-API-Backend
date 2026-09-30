@@ -47,6 +47,15 @@ export const wsErrorsTotal = new client.Counter({
   registers: [register],
 });
 
+// Issue #586 — upgrade rejections counted by reason so rate-limit bypass
+// attempts, origin failures and auth failures are individually observable.
+export const wsUpgradeRejectionsTotal = new client.Counter({
+  name: 'ws_upgrade_rejections_total',
+  help: 'WebSocket upgrade rejections by reason (rate-limit, origin, csrf, hmac, ...)',
+  labelNames: ['service', 'reason'],
+  registers: [register],
+});
+
 // #64 — Oracle source latency tracking
 export const oracleSourceLatency = new client.Histogram({
   name: 'oracle_source_request_duration_seconds',

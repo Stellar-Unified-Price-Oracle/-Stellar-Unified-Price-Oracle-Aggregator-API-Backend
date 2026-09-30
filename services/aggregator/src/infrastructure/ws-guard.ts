@@ -1,76 +1,94 @@
-import type { IncomingMessage } from 'http';
-import { config } from './config';
 import { logger } from '../observability/logger';
+import { config } from './config';
+import {
+  WsGuardCore,
+  type VerifyClientCallback,
+  type VerifyClientInfo,
+  type WsGuardConfig,
+} from '@stellar-oracle/ws-guard';
+import { wsUpgradeRejectionsTotal } from '../observability/metrics';
 
 /**
  * Validates WebSocket upgrade requests for the aggregator broadcast server
- * (issue #40): origin allowlisting and per-IP connection rate limiting, with
- * failed attempts logged including the client IP.
+ * (issue #40). Since #586 this is a thin wrapper around the shared
+ * {@link WsGuardCore} from `@stellar-oracle/ws-guard`, which supplies
+ * trusted-proxy-aware client identity, fail-closed origin handling and the
+ * rejection-by-reason counter shared with the API guard.
  */
 
-interface RateBucket {
-  count: number;
-  resetAt: number;
+const SERVICE_LABEL = 'aggregator';
+
+function guardConfigFromEnv(): WsGuardConfig {
+  const ws = config.security.websocket;
+  return {
+    allowedOrigins: ws.allowedOrigins,
+    requireOrigin: ws.requireOrigin,
+    allowAllOrigins: process.env.WS_ALLOW_ALL_ORIGINS === 'true',
+    isProduction: process.env.NODE_ENV === 'production',
+    trustedProxyCidrs: commaList(process.env.WS_TRUSTED_PROXY_CIDRS),
+    maxForwardedHops: parseInt(process.env.WS_MAX_FORWARDED_HOPS || '64', 10),
+    rateLimitMax: ws.maxConnectionsPerWindow,
+    rateLimitWindowMs: ws.rateLimitWindowMs,
+  };
+}
+
+function commaList(value: string | undefined): string[] {
+  return (value || '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
 }
 
 export class WsConnectionGuard {
-  private buckets = new Map<string, RateBucket>();
+  private core = new WsGuardCore(guardConfigFromEnv());
 
   verifyClient = (
-    info: { origin?: string; req: IncomingMessage; secure: boolean },
-    cb: (allow: boolean, code?: number, message?: string) => void,
+    info: VerifyClientInfo,
+    cb: VerifyClientCallback,
   ): void => {
-    const ip = this.clientIp(info.req);
+    const ip = this.core.resolveClientIp(info.req);
     const origin = info.origin;
 
-    if (!this.checkRateLimit(ip)) {
-      logger.warn('[WS] Upgrade rejected — rate limit', { ip, origin: origin || '(none)' });
-      cb(false, 429, 'Too many connection attempts');
+    if (!this.core.checkRateLimit(ip)) {
+      const decision = this.core.reject({
+        reason: 'rate-limit',
+        code: 429,
+        message: 'Too many connection attempts',
+        clientIp: ip,
+        origin,
+      });
+      wsUpgradeRejectionsTotal.inc({ service: SERVICE_LABEL, reason: 'rate-limit' });
+      logger.warn('[WS] Upgrade rejected — rate limit', {
+        ip: decision.clientIp,
+        origin: origin || '(none)',
+      });
+      cb(false, decision.code, decision.message);
       return;
     }
 
-    if (!this.checkOrigin(origin)) {
-      logger.warn('[WS] Upgrade rejected — origin not allowed', { ip, origin: origin || '(none)' });
-      cb(false, 403, 'Origin not allowed');
+    const originCheck = this.core.checkOrigin(origin);
+    if (!originCheck.allowed) {
+      const decision = this.core.reject({
+        reason: originCheck.reason ?? 'origin',
+        code: 403,
+        message: originCheck.reason === 'origin-required' ? 'Origin header required' : 'Origin not allowed',
+        clientIp: ip,
+        origin,
+      });
+      wsUpgradeRejectionsTotal.inc({ service: SERVICE_LABEL, reason: decision.reason ?? 'origin' });
+      logger.warn('[WS] Upgrade rejected — origin', {
+        ip: decision.clientIp,
+        origin: origin || '(none)',
+        reason: decision.reason,
+      });
+      cb(false, decision.code, decision.message);
       return;
     }
 
     cb(true);
   };
 
-  private checkOrigin(origin: string | undefined): boolean {
-    const { allowedOrigins, requireOrigin } = config.security.websocket;
-    if (!origin) return !requireOrigin;
-    if (allowedOrigins.length === 0) return true;
-    return allowedOrigins.includes(origin);
-  }
-
-  private checkRateLimit(ip: string): boolean {
-    const now = Date.now();
-    const { maxConnectionsPerWindow, rateLimitWindowMs } = config.security.websocket;
-    const bucket = this.buckets.get(ip);
-
-    if (!bucket || now >= bucket.resetAt) {
-      this.buckets.set(ip, { count: 1, resetAt: now + rateLimitWindowMs });
-      return true;
-    }
-
-    bucket.count += 1;
-    return bucket.count <= maxConnectionsPerWindow;
-  }
-
-  private clientIp(req: IncomingMessage): string {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded.length > 0) {
-      return forwarded.split(',')[0].trim();
-    }
-    return req.socket.remoteAddress || 'unknown';
-  }
-
   sweep(): void {
-    const now = Date.now();
-    for (const [ip, bucket] of this.buckets) {
-      if (now >= bucket.resetAt) this.buckets.delete(ip);
-    }
+    this.core.sweep();
   }
 }

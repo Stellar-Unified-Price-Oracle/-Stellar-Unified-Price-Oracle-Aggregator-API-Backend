@@ -1,5 +1,5 @@
 import { WebSocketServer as WsServer, WebSocket } from 'ws';
-import { IncomingMessage } from 'http';
+import type { IncomingMessage } from 'http';
 import { logger } from '../observability/logger';
 import { validateWebSocketApiKey } from '../governance/auth';
 import { HybridCache } from '../price-serving/cache';
@@ -66,7 +66,7 @@ export class PriceWebSocketServer {
         return;
       }
 
-      const ip = this.clientIp(req);
+      const ip = this.guard.resolveClientIp(req);
       this.guard.onConnect(ip);
 
       const connectedAt = Date.now();
@@ -268,14 +268,6 @@ export class PriceWebSocketServer {
         logger.warn(`Cache invalidation failed for pattern ${pattern}: ${err}`);
       });
     });
-  }
-
-  private clientIp(req: IncomingMessage): string {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded.length > 0) {
-      return forwarded.split(',')[0].trim();
-    }
-    return req.socket.remoteAddress || 'unknown';
   }
 
   stop(): void {

@@ -121,7 +121,7 @@ export const config = {
       allowPrivateIps: process.env.SSRF_ALLOW_PRIVATE_IPS === 'true',
       requestTimeoutMs: parseInt(process.env.OUTBOUND_REQUEST_TIMEOUT_MS || '10000', 10),
     },
-    // WebSocket upgrade hardening (issue #40).
+    // WebSocket upgrade hardening (issue #40, #586).
     websocket: {
       allowedOrigins: commaList(process.env.WS_ALLOWED_ORIGINS),
       requireOrigin: process.env.WS_REQUIRE_ORIGIN !== 'false',

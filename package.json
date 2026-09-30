@@ -10,7 +10,8 @@
   "scripts": {
     "build:types": "cd packages/types && npm run build",
     "build:vault": "cd packages/vault-client && npm run build",
-    "build:packages": "npm run build:types && npm run build:vault",
+    "build:ws-guard": "cd packages/ws-guard && npm run build",
+    "build:packages": "npm run build:types && npm run build:vault && npm run build:ws-guard",
     "build:aggregator": "cd services/aggregator && npm run build",
     "build:api": "cd api && npm run build",
     "build:backend": "npm run build:packages && npm run build:aggregator && npm run build:api",
@@ -19,7 +20,7 @@
     "test:api": "cd api && npm test",
     "test:contract": "cd contracts/price-oracle && cargo test",
     "test:backend": "npm run test:aggregator && npm run test:api",
-    "typecheck:all": "cd packages/types && npx tsc --noEmit && cd ../../packages/vault-client && npx tsc --noEmit && cd ../../services/aggregator && npx tsc --noEmit && cd ../../api && npx tsc --noEmit",
+    "typecheck:all": "cd packages/types && npx tsc --noEmit && cd ../../packages/vault-client && npx tsc --noEmit && cd ../../packages/ws-guard && npx tsc --noEmit && cd ../../services/aggregator && npx tsc --noEmit && cd ../../api && npx tsc --noEmit",
     "verify:contract": "cd contracts/price-oracle && cargo test && cd ../.. && node scripts/generate-verification-report.mjs",
     "plugin:test": "node scripts/plugin-test.mjs",
     "capacity:report": "node scripts/capacity-model.mjs",
