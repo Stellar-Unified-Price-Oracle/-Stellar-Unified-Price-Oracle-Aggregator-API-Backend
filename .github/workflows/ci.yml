@@ -41,6 +41,30 @@ jobs:
       - name: Validate aggregated price correctness
         run: npm run validate:prices
 
+  config-contracts:
+    name: Configuration contract tests (env vars, ports, routes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Env-var contract — code reads vs .env.example
+        # Fails with actionable MISSING_DOC / UNUSED_DOC lines naming the
+        # variable and the file to update.  See scripts/check-env-contract.mjs.
+        run: node scripts/check-env-contract.mjs
+
+      - name: Route contract — Express mounts vs OpenAPI spec
+        # Fails with MOUNT_UNDOCUMENTED / OPENAPI_UNMOUNTED lines.
+        # See scripts/check-route-contract.mjs.
+        run: node scripts/check-route-contract.mjs
+
+      - name: Port contract — compose/k8s/docs vs real listeners
+        # Pre-existing check (issue #590); kept here for grouping clarity.
+        run: node scripts/check-port-consistency.mjs
+
   aggregator:
     name: Aggregator service build
     runs-on: ubuntu-latest

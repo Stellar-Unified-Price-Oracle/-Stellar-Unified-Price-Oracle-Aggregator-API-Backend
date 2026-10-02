@@ -1,4 +1,4 @@
-.PHONY: all build clean test deploy help deploy-soroban
+.PHONY: all build clean test deploy help deploy-soroban check-env check-routes check-ports check-contracts
 
 help:
 	@echo "Stellar Price Oracle Aggregator"
@@ -29,6 +29,12 @@ help:
 	@echo ""
 	@echo "  utility:"
 	@echo "  make clean            Clean build artifacts"
+	@echo ""
+	@echo "  contract checks (issue #620):"
+	@echo "  make check-env        Reconcile env vars: code reads vs .env.example"
+	@echo "  make check-routes     Reconcile Express mounts vs OpenAPI spec"
+	@echo "  make check-ports      Reconcile ports: compose/k8s/docs vs listeners"
+	@echo "  make check-contracts  Run all three contract checks"
 
 install:
 	cd services/aggregator && npm install
@@ -77,3 +83,14 @@ clean:
 	rm -rf data/
 	rm -rf logs/
 	rm -rf target/
+
+check-env:
+	node scripts/check-env-contract.mjs
+
+check-routes:
+	node scripts/check-route-contract.mjs
+
+check-ports:
+	node scripts/check-port-consistency.mjs
+
+check-contracts: check-env check-routes check-ports

@@ -71,16 +71,59 @@ To exercise the Soroban contract path against Stellar testnet:
    ```
 4. Set the returned contract ID as `CONTRACT_ID` in `.env` and restart the aggregator so it can push prices on-chain.
 
+## Configuration contract checks (issue #620)
+
+Three scripts keep documented configuration in sync with the code. Run them
+all at once from the repo root:
+
+```bash
+npm run check:contracts
+# or equivalently
+make check-contracts
+```
+
+They also run as the `config-contracts` CI job on every push and PR.
+
+### Env-var contract (`check:env` / `make check-env`)
+
+Compares every `process.env.VAR` read in `api/src/**` and
+`services/aggregator/src/**` (plus the aggregator's Zod schema keys) against
+every `KEY=` line in `.env.example`.
+
+| Output label | Meaning | Fix |
+|---|---|---|
+| `MISSING_DOC` | Variable read by code but not in `.env.example` | Add it to `.env.example` with a default and a comment, **or** add it to `IGNORE_READ_ONLY` in `scripts/check-env-contract.mjs` with a reason |
+| `UNUSED_DOC` | Variable in `.env.example` but not read by any source file | Read it in the relevant config module, remove it from `.env.example`, **or** add it to `IGNORE_DOC_ONLY` with a reason (e.g. dynamic read the static scanner cannot detect) |
+
+### Route contract (`check:routes` / `make check-routes`)
+
+Compares `app.use('/prefix', ...)` mounts in `api/src/index.ts` against the
+path groups in `api/openapi.json`.
+
+| Output label | Meaning | Fix |
+|---|---|---|
+| `MOUNT_UNDOCUMENTED` | Express mount with no matching OpenAPI path | Add the relevant paths to `api/openapi.json`, **or** add the prefix to `IGNORE_MOUNTED` in `scripts/check-route-contract.mjs` with a reason (e.g. infrastructure endpoints, static files) |
+| `OPENAPI_UNMOUNTED` | OpenAPI path with no matching Express mount | Mount the router at the right prefix in `api/src/index.ts`, **or** add the group to `IGNORE_OPENAPI` with a reason |
+
+### Port contract (`check:ports` / `make check-ports`)
+
+Pre-existing check (issue #590). Verifies that every declared port in
+`docker-compose.yml`, `k8s/`, Terraform and docs matches a listener derived
+from `PORT` in `.env.example`. Nothing should declare a listener on the base
+`PORT` itself — the aggregator binds `PORT + 1` (WS) and `PORT + 2`
+(health/metrics) only.
+
 ## Contributing
 
 1. Create a branch off `main`: `feature/<short-description>` or `fix/<short-description>`.
 2. Keep changes scoped to the linked issue — avoid unrelated refactors in the same PR.
 3. Run the relevant checks before opening a PR:
    ```bash
-   make test           # all components
-   make test-api        # or scope to the service you changed
+   make test              # all components
+   make test-api          # or scope to the service you changed
    make test-aggregator
    make test-soroban
+   make check-contracts   # env vars, routes, and ports — must pass before merge
    ```
 4. Follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages (e.g. `fix(api): ...`, `feat(aggregator): ...`, `docs: ...`).
 5. Open a PR against `main` with a concise summary, `Closes #<issue>` where applicable, and a note on what validation you ran.
