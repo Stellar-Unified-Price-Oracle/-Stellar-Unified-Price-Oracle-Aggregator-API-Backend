@@ -347,6 +347,72 @@ describe('Issue #609: API key store persistence', () => {
     });
   });
 
+  describe('Issue #751: cryptographic key inventory', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    function inventoryEntry(overrides: Partial<ApiKeyEntry> = {}): ApiKeyEntry {
+      return {
+        keyHash: 'f'.repeat(64),
+        keyPrefix: 'sk_pro_inv',
+        key: '',
+        tier: 'pro',
+        role: 'viewer',
+        rateLimitPerMin: 60,
+        createdAt: 1,
+        isActive: true,
+        owner: 'team-payments',
+        algorithm: 'ed25519',
+        purpose: 'signing',
+        rotationDueAt: Date.now() + 30 * DAY_MS,
+        ...overrides,
+      };
+    }
+
+    it('reports a complete inventory for a fully annotated key', () => {
+      const mgr = new ApiKeyManager();
+      const entry = inventoryEntry();
+      mgr.loadKeysFromVault({ [entry.keyHash]: entry });
+
+      const report = mgr.getKeyInventory();
+      expect(report.complete).toBe(true);
+      expect(report.issues).toEqual([]);
+      expect(report.entries).toHaveLength(1);
+      expect(report.entries[0].owner).toBe('team-payments');
+      expect(report.entries[0].algorithm).toBe('ed25519');
+      expect(report.entries[0].purpose).toBe('signing');
+      expect(report.entries[0].rotationDueAt).toBe(entry.rotationDueAt);
+    });
+
+    it('treats a key exactly at its rotation deadline as due for rotation', () => {
+      const mgr = new ApiKeyManager();
+      const now = Date.now();
+      const entry = inventoryEntry({ rotationDueAt: now });
+      mgr.loadKeysFromVault({ [entry.keyHash]: entry });
+
+      const report = mgr.getKeyInventory(now);
+      expect(report.complete).toBe(false);
+      expect(report.entries[0].rotationDue).toBe(true);
+      expect(report.issues).toContainEqual({ keyHash: entry.keyHash, reason: 'rotation_due' });
+
+      const justBefore = mgr.getKeyInventory(now - 1);
+      expect(justBefore.entries[0].rotationDue).toBe(false);
+      expect(justBefore.issues).toEqual([]);
+    });
+
+    it('flags missing owner and expired keys as inventory failures', () => {
+      const mgr = new ApiKeyManager();
+      const now = Date.now();
+      const noOwner = inventoryEntry({ keyHash: '1'.repeat(64), owner: undefined });
+      const expired = inventoryEntry({ keyHash: '2'.repeat(64), expiresAt: now - 1 });
+      mgr.loadKeysFromVault({ [noOwner.keyHash]: noOwner, [expired.keyHash]: expired });
+
+      const report = mgr.getKeyInventory(now);
+      expect(report.complete).toBe(false);
+      expect(report.issues).toContainEqual({ keyHash: noOwner.keyHash, reason: 'missing_owner' });
+      expect(report.issues).toContainEqual({ keyHash: expired.keyHash, reason: 'expired' });
+    });
+  });
+
   describe('admin API routes persist before responding', () => {
     let app: express.Express;
     let adminKey: string;

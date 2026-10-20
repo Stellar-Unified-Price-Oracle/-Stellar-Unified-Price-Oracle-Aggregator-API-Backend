@@ -175,6 +175,38 @@ OUTBOUND_REQUEST_TIMEOUT_MS=10000
 > Network-level egress controls (firewall/security-group egress rules limiting
 > the services to the oracle hosts) are recommended as defense in depth.
 
+### Deployment egress policy verification (#750)
+
+The API exposes a read-only view of the effective outbound egress policy so
+operators can prove that provider and integration destinations are constrained
+by the deployment's environment policy.
+
+- Policy source: `api/src/services/egress-policy.ts` builds the policy from
+  `EGRESS_ALLOWED_HOSTS` (comma-separated hostnames, optional `:port`),
+  `EGRESS_ALLOWED_PORTS`, and `EGRESS_POLICY_MODE` (`enforce` | `report`).
+- Endpoint: `GET /api/v1/admin/egress-policy` (admin auth required) returns the
+  allowed hosts/ports, the mode, and the resolved policy fingerprint.
+- Verification: `POST /api/v1/admin/egress-policy/verify` with
+  `{ "url": "https://..." }` returns `allowed: true|false` plus the reason
+  (`allowlist`, `protocol`, `private-ip`, `dns-rebinding`, `port`). The check
+  reuses the same SSRF guard as the aggregator, so redirects (`maxRedirects: 0`)
+  and DNS re-resolution at connect time cannot bypass the policy.
+- Monitoring: every blocked egress attempt is logged with the destination and
+  reason; alert on sustained `egress_blocked` events after a deployment.
+
+Configuration:
+
+```
+EGRESS_POLICY_MODE=enforce        # report = log-only, enforce = block
+EGRESS_ALLOWED_HOSTS=api.chain.link,api.redstone.finance
+EGRESS_ALLOWED_PORTS=443
+```
+
+Rollout: deploy with `EGRESS_POLICY_MODE=report`, compare logged destinations
+against `EGRESS_ALLOWED_HOSTS`, then flip to `enforce`. Rollback: set
+`EGRESS_POLICY_MODE=report` (no restart of the aggregator required) or remove
+the variable to fall back to the SSRF allowlist derived from source URLs.
+
 ---
 
 ## WebSocket Upgrade Hardening (#40)
@@ -302,3 +334,42 @@ Encrypted payloads carry a key id, so multiple keys can decrypt concurrently:
 - Enable disk-level/volume encryption on hosts as defense in depth.
 - AES-256-GCM is hardware-accelerated (AES-NI); the per-record overhead on
   history writes is negligible (low microseconds per value).
+
+---
+
+## Cryptographic Key Inventory & Lifecycle (#751)
+
+Every signing, encryption, and verification key has an owner, a purpose, and a
+rotation/retirement plan. The inventory is defined in
+`api/src/services/key-inventory.ts` and exposed read-only at
+`GET /api/v1/admin/key-inventory` (admin auth required).
+
+Each entry records:
+
+- `id` — stable key identifier (matches the `keyId` embedded in `enc:v1:` payloads)
+- `owner` — team or role accountable for rotation
+- `purpose` — `encryption` | `signing` | `verification`
+- `algorithm` — e.g. `aes-256-gcm`, `hmac-sha256`
+- `rotationDays` — maximum age before rotation is required
+- `retireBy` — date after which the key must no longer be used
+- `transitionTo` — algorithm/key id that replaces this key, if any
+
+The endpoint reports `status` per key (`active`, `due`, `overdue`, `retired`)
+computed from `rotationDays` and `retireBy`, so monitoring can alert on `due`
+and `overdue` entries.
+
+### Lifecycle procedure
+
+1. **Add** — register the new key in the inventory with owner and rotation
+   window before it is used.
+2. **Rotate** — for encryption keys follow the `ENCRYPTION_KEY_PREVIOUS`
+   procedure above; for signing keys publish the new key id and keep the old
+   verification key until all consumers have migrated.
+3. **Retire** — once no payloads or tokens reference the old key id, remove it
+   from the environment and mark it `retired` in the inventory.
+4. **Algorithm transition** — set `transitionTo` on the old entry and keep both
+   keys decryptable/verifiable until the transition completes.
+
+Rollout: deploy the inventory with existing keys marked `active`; review the
+`due`/`overdue` report weekly. Rollback: the endpoint is read-only and has no
+runtime effect, so reverting the code change does not affect key material.

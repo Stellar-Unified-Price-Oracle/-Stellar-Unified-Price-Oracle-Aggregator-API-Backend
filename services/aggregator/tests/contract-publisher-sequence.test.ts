@@ -164,3 +164,125 @@ describe('ContractPublisher — Sequence Management & Lifecycle (Issues #578, #5
     expect(publisher.getRetryQueueSize()).toBe(0);
   });
 });
+
+describe('ContractPublisher — Missing Sequence Detection per Feed (Issue #739)', () => {
+  let mockServer: any;
+  let keypair: Keypair;
+  let publisher: ContractPublisher;
+
+  beforeEach(() => {
+    keypair = Keypair.random();
+    process.env.ADMIN_SECRET_KEY = keypair.secret();
+    process.env.SOROBAN_CONTRACT_ID = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM';
+
+    let currentSeq = 100n;
+    mockServer = {
+      getAccount: vi.fn().mockImplementation(async () => {
+        return new Account(keypair.publicKey(), (currentSeq++).toString());
+      }),
+      simulateTransaction: vi.fn().mockResolvedValue({
+        minResourceFee: '150',
+        results: [{}],
+      }),
+      sendTransaction: vi.fn().mockResolvedValue({
+        status: 'PENDING',
+        hash: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        fee: '200',
+      }),
+      getTransaction: vi.fn().mockResolvedValue({
+        status: 'SUCCESS',
+        resultMetaXdr: [],
+      }),
+    };
+
+    publisher = new ContractPublisher();
+    (publisher as any).server = mockServer;
+    (publisher as any).keypair = keypair;
+  });
+
+  afterEach(async () => {
+    await publisher.shutdown();
+    vi.restoreAllMocks();
+  });
+
+  it('reports no missing sequences for a contiguous per-feed sequence stream', () => {
+    const feed = 'chainlink:XLM:usd';
+    const region = 'us-east-1';
+
+    publisher.recordFeedSequence(feed, region, 1);
+    publisher.recordFeedSequence(feed, region, 2);
+    publisher.recordFeedSequence(feed, region, 3);
+
+    const report = publisher.getFeedSequenceReport(feed, region);
+    expect(report).toBeDefined();
+    expect(report!.missingCount).toBe(0);
+    expect(report!.gaps).toEqual([]);
+    expect(report!.lastSequence).toBe(3);
+  });
+
+  it('detects a single-gap boundary (exactly one missing sequence) at feed granularity', () => {
+    const feed = 'chainlink:XLM:usd';
+    const region = 'us-east-1';
+
+    publisher.recordFeedSequence(feed, region, 10);
+    publisher.recordFeedSequence(feed, region, 12); // 11 missing
+
+    const report = publisher.getFeedSequenceReport(feed, region);
+    expect(report).toBeDefined();
+    expect(report!.missingCount).toBe(1);
+    expect(report!.gaps).toEqual([{ from: 11, to: 11 }]);
+    expect(report!.lastSequence).toBe(12);
+  });
+
+  it('detects a large-gap failure case and records it as a single contiguous gap', () => {
+    const feed = 'chainlink:BTC:usd';
+    const region = 'eu-west-1';
+
+    publisher.recordFeedSequence(feed, region, 100);
+    publisher.recordFeedSequence(feed, region, 5000); // 4999 missing
+
+    const report = publisher.getFeedSequenceReport(feed, region);
+    expect(report).toBeDefined();
+    expect(report!.missingCount).toBe(4999);
+    expect(report!.gaps).toEqual([{ from: 101, to: 4999 }]);
+    expect(report!.lastSequence).toBe(5000);
+  });
+
+  it('tracks missing sequences independently per feed and per region', () => {
+    publisher.recordFeedSequence('chainlink:XLM:usd', 'us-east-1', 1);
+    publisher.recordFeedSequence('chainlink:XLM:usd', 'us-east-1', 3); // gap of 1
+
+    publisher.recordFeedSequence('chainlink:XLM:usd', 'eu-west-1', 1);
+    publisher.recordFeedSequence('chainlink:XLM:usd', 'eu-west-1', 2); // no gap
+
+    publisher.recordFeedSequence('chainlink:BTC:usd', 'us-east-1', 1);
+    publisher.recordFeedSequence('chainlink:BTC:usd', 'us-east-1', 5); // gap of 3
+
+    const xlmUsEast = publisher.getFeedSequenceReport('chainlink:XLM:usd', 'us-east-1');
+    const xlmEuWest = publisher.getFeedSequenceReport('chainlink:XLM:usd', 'eu-west-1');
+    const btcUsEast = publisher.getFeedSequenceReport('chainlink:BTC:usd', 'us-east-1');
+
+    expect(xlmUsEast!.missingCount).toBe(1);
+    expect(xlmEuWest!.missingCount).toBe(0);
+    expect(btcUsEast!.missingCount).toBe(3);
+  });
+
+  it('ignores duplicate and out-of-order (stale) sequences without inflating missing counts', () => {
+    const feed = 'chainlink:ETH:usd';
+    const region = 'ap-south-1';
+
+    publisher.recordFeedSequence(feed, region, 1);
+    publisher.recordFeedSequence(feed, region, 2);
+    publisher.recordFeedSequence(feed, region, 2); // duplicate
+    publisher.recordFeedSequence(feed, region, 1); // stale/out-of-order
+
+    const report = publisher.getFeedSequenceReport(feed, region);
+    expect(report!.missingCount).toBe(0);
+    expect(report!.gaps).toEqual([]);
+    expect(report!.lastSequence).toBe(2);
+  });
+
+  it('returns undefined for a feed/region that has never reported a sequence', () => {
+    expect(publisher.getFeedSequenceReport('chainlink:UNKNOWN:usd', 'us-east-1')).toBeUndefined();
+  });
+});

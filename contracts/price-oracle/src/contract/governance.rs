@@ -11,10 +11,10 @@ use soroban_sdk::{Address, Env, Symbol, Vec};
 
 use crate::errors::OracleError;
 use crate::events::{
-    AdminTransferProposed, AssetDecimalsUpdated, DeviationThresholdSet, GovernanceExecuted, Paused,
-    ProposalApproved, ProposalCancelled, ProposalCreated, ProposalExpired, ReputationReset,
-    SignerAdded, SignerRemoved, SourceAdded, SourceRemoved, StakeTreasurySet, ThresholdSet,
-    Unpaused,
+    AdminTransferProposed, AssetDecimalsUpdated, DeviationThresholdSet, FeedCatalogCommitted,
+    GovernanceExecuted, Paused, ProposalApproved, ProposalCancelled, ProposalCreated,
+    ProposalExpired, ReputationReset, SignerAdded, SignerRemoved, SourceAdded, SourceRemoved,
+    StakeTreasurySet, ThresholdSet, Unpaused,
 };
 use crate::storage;
 use crate::types::{MultiSigConfig, MultiSigProposal, ProposalAction};
@@ -44,6 +44,7 @@ pub(crate) fn action_kind(env: &Env, action: &ProposalAction) -> Symbol {
         ProposalAction::UpdateGovernanceConfig(_) => Symbol::new(env, "update_gov_config"),
         ProposalAction::SetStakeTreasury(_) => Symbol::new(env, "set_stake_treasury"),
         ProposalAction::UpdateAssetDecimals(_, _) => Symbol::new(env, "update_decimals"),
+        ProposalAction::CommitFeedCatalog(_, _) => Symbol::new(env, "commit_catalog"),
     }
 }
 
@@ -416,7 +417,10 @@ fn ensure_action_supported(action: &ProposalAction) -> Result<(), OracleError> {
         | ProposalAction::RemoveSigner(_)
         | ProposalAction::SetThreshold(_)
         | ProposalAction::Pause
-        | ProposalAction::Unpause => Ok(()),
+        | ProposalAction::Unpause
+        | ProposalAction::SetStakeTreasury(_)
+        | ProposalAction::UpdateAssetDecimals(_, _)
+        | ProposalAction::CommitFeedCatalog(_, _) => Ok(()),
         // These are governance-token-path-only variants; reject at proposal
         // creation so they can never silently succeed here.
         ProposalAction::SetAdmin(_)
@@ -573,6 +577,30 @@ pub(crate) fn apply_proposal_action(
                 }
                 .publish(env);
             }
+        }
+        ProposalAction::CommitFeedCatalog(version, catalog_hash) => {
+            if *version == 0 {
+                return Err(OracleError::InvalidCatalogVersion);
+            }
+            if let Some(existing) = storage::get_feed_catalog_commitment(env) {
+                if *version <= existing.version {
+                    return Err(OracleError::InvalidCatalogVersion);
+                }
+            }
+            let commitment = crate::types::FeedCatalogCommitment {
+                version: *version,
+                catalog_hash: catalog_hash.clone(),
+                updated_at: env.ledger().timestamp(),
+                publisher: signer.clone(),
+            };
+            storage::set_feed_catalog_commitment(env, &commitment);
+            FeedCatalogCommitted {
+                publisher: signer.clone(),
+                version: *version,
+                catalog_hash: catalog_hash.clone(),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(env);
         }
         // #563 — governance-token-path variants are hard failures here
         ProposalAction::SetAdmin(_)

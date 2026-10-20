@@ -330,6 +330,58 @@ export const auditEntriesArchivedTotal = new client.Counter({
 });
 register.registerMetric(auditEntriesArchivedTotal);
 
+// ── Per-feed replication lag & feed health routing (issues #739, #740) ───────
+
+export const feedReplicationLagSeconds = new client.Histogram({
+  name: 'feed_replication_lag_seconds',
+  help: 'Replication lag per feed and region, measured as consumer-visible staleness',
+  labelNames: ['feed', 'region'],
+  buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600],
+});
+register.registerMetric(feedReplicationLagSeconds);
+
+export const feedLastSequence = new client.Gauge({
+  name: 'feed_last_sequence',
+  help: 'Highest sequence number observed per feed and region',
+  labelNames: ['feed', 'region'],
+});
+register.registerMetric(feedLastSequence);
+
+export const feedMissingSequencesTotal = new client.Counter({
+  name: 'feed_missing_sequences_total',
+  help: 'Total sequence gaps detected per feed and region',
+  labelNames: ['feed', 'region'],
+});
+register.registerMetric(feedMissingSequencesTotal);
+
+export const feedLagThresholdExceeded = new client.Gauge({
+  name: 'feed_lag_threshold_exceeded',
+  help: '1 when a feed/region lag exceeds its consumer-impact threshold, 0 otherwise',
+  labelNames: ['feed', 'region'],
+});
+register.registerMetric(feedLagThresholdExceeded);
+
+export const feedHealthState = new client.Gauge({
+  name: 'feed_health_state',
+  help: 'Per-feed health state (0=unhealthy, 1=degraded, 2=healthy)',
+  labelNames: ['feed', 'region'],
+});
+register.registerMetric(feedHealthState);
+
+export const feedRoutingDecisionsTotal = new client.Counter({
+  name: 'feed_routing_decisions_total',
+  help: 'Consumer routing decisions by feed, chosen region and reason (fresh, degraded, failover)',
+  labelNames: ['feed', 'region', 'reason'],
+});
+register.registerMetric(feedRoutingDecisionsTotal);
+
+export const feedFailoversTotal = new client.Counter({
+  name: 'feed_failovers_total',
+  help: 'Deterministic failovers triggered by feed health signals',
+  labelNames: ['feed', 'from_region', 'to_region'],
+});
+register.registerMetric(feedFailoversTotal);
+
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();
   res.on('finish', () => {

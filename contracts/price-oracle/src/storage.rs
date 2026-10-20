@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Bytes, BytesN, Env, String, Vec};
 
 use crate::errors::OracleError;
-use crate::types::{DataKey, GovernanceConfig, GovernanceProposal, MultiSigConfig, MultiSigProposal, PriceDataPoint, SourceReputation};
+use crate::types::{DataKey, FeedCatalogCommitment, GovernanceConfig, GovernanceProposal, MultiSigConfig, MultiSigProposal, PriceDataPoint, SourceReputation};
 
 // Maximum number of historical data points kept per asset.
 // Older entries beyond this cap are dropped on each write, keeping instance
@@ -808,3 +808,16 @@ pub fn set_slash_count(env: &Env, addr: &Address, count: &u32) {
         .instance()
         .set(&DataKey::SlashCount(addr.clone()), count);
 }
+
+// ── Feed catalog commitment (Issue #725) ─────────────────────────────────────
+
+pub fn get_feed_catalog_commitment(env: &Env) -> Option<FeedCatalogCommitment> {
+    env.storage().instance().get(&DataKey::FeedCatalogCommitment)
+}
+
+pub fn set_feed_catalog_commitment(env: &Env, commitment: &FeedCatalogCommitment) {
+    env.storage()
+        .instance()
+        .set(&DataKey::FeedCatalogCommitment, commitment);
+}
+

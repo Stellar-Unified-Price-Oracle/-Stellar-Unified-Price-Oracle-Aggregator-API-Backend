@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { logger } from '../observability/logger';
 import { config } from '../infrastructure/config';
 import type { Role } from './rbac';
@@ -759,7 +759,7 @@ export class ApiKeyManager {
   private loadKeysFromEnv(): void {
     const envKeys = process.env.API_KEYS ? decryptSecret(process.env.API_KEYS) : undefined;
     if (!envKeys || !envKeys.trim()) {
-      if (this.keys.size === 0 && allowEphemeralAdminKey()) {
+      if (this.keys.size === 0 && process.env.ALLOW_EPHEMERAL_ADMIN_KEY === 'true') {
         this.generateEphemeralAdminKey();
       } else if (this.keys.size === 0) {
         logger.warn(
@@ -805,6 +805,18 @@ export class ApiKeyManager {
     } catch (err) {
       logger.error('Failed to load API keys from environment', err);
     }
+  }
+
+  /** Generate a single ephemeral admin key for local/dev bootstrapping. */
+  private generateEphemeralAdminKey(): void {
+    const key = 'ephemeral-admin-' + crypto.randomBytes(16).toString('hex');
+    const keyHash = crypto.createHash('sha256').update(key).digest('hex');
+    this.keys.set(keyHash, {
+      keyHash,
+      tier: 'admin',
+      createdAt: Date.now(),
+      description: 'ephemeral admin key',
+    });
   }
 }
 

@@ -209,4 +209,138 @@ describe('Cost model budget enforcement (#583)', () => {
       vi.resetModules();
     });
   });
+
+  describe('surge limits and safe degradation (#744)', () => {
+    async function loadSurgeModule() {
+      vi.resetModules();
+      return import('../src/infrastructure/cost-model');
+    }
+
+    it('exposes surge configuration with sane defaults', async () => {
+      const mod = await loadSurgeModule();
+      expect(mod.SURGE_WINDOW_MS).toBeGreaterThan(0);
+      expect(mod.SURGE_MAX_CALLS_PER_WINDOW).toBeGreaterThan(0);
+      expect(mod.SURGE_DEGRADE_RATIO).toBeGreaterThan(0);
+      expect(mod.SURGE_DEGRADE_RATIO).toBeLessThan(1);
+    });
+
+    it('allows traffic below the surge limit', async () => {
+      const mod = await loadSurgeModule();
+      const limit = mod.SURGE_MAX_CALLS_PER_WINDOW;
+      for (let i = 0; i < limit; i++) {
+        expect(mod.checkSurgeLimit('chainlink').allowed).toBe(true);
+        mod.recordCall('chainlink');
+      }
+    });
+
+    it('blocks traffic at the surge limit boundary', async () => {
+      const mod = await loadSurgeModule();
+      const limit = mod.SURGE_MAX_CALLS_PER_WINDOW;
+      for (let i = 0; i < limit; i++) {
+        mod.recordCall('chainlink');
+      }
+      const decision = mod.checkSurgeLimit('chainlink');
+      expect(decision.allowed).toBe(false);
+      expect(decision.reason).toBe('surge');
+    });
+
+    it('degrades before the daily budget is breached', async () => {
+      process.env.ORACLE_BUDGET_DAILY_CALLS_CHAINLINK = '10';
+      const mod = await loadSurgeModule();
+      // Fill to the degrade threshold (e.g. 90% of 10 = 9 calls).
+      const threshold = Math.ceil(10 * mod.SURGE_DEGRADE_RATIO);
+      for (let i = 0; i < threshold; i++) mod.recordCall('chainlink');
+
+      const decision = mod.checkSurgeLimit('chainlink');
+      expect(decision.allowed).toBe(false);
+      expect(decision.reason).toBe('budget-degrade');
+      // Budget is not yet exhausted: we degraded early, on purpose.
+      expect(mod.getBudgetStatus('chainlink').state).not.toBe('exhausted');
+
+      delete process.env.ORACLE_BUDGET_DAILY_CALLS_CHAINLINK;
+      vi.resetModules();
+    });
+
+    it('recovers after the surge window rolls over', async () => {
+      const mod = await loadSurgeModule();
+      const limit = mod.SURGE_MAX_CALLS_PER_WINDOW;
+      for (let i = 0; i < limit; i++) mod.recordCall('chainlink');
+      expect(mod.checkSurgeLimit('chainlink').allowed).toBe(false);
+
+      vi.advanceTimersByTime(mod.SURGE_WINDOW_MS + 1);
+      expect(mod.checkSurgeLimit('chainlink').allowed).toBe(true);
+    });
+
+    it('emits an alert when the surge limit trips', async () => {
+      const mod = await loadSurgeModule();
+      const { eventBus } = await import('../src/domain-events');
+      const publish = vi.mocked(eventBus.publish);
+      publish.mockClear();
+
+      const limit = mod.SURGE_MAX_CALLS_PER_WINDOW;
+      for (let i = 0; i < limit; i++) mod.recordCall('chainlink');
+      mod.checkSurgeLimit('chainlink');
+
+      expect(publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'oracle.surge_limit_tripped',
+          source: 'chainlink',
+        }),
+      );
+    });
+
+    it('emits an alert once when entering early degradation', async () => {
+      process.env.ORACLE_BUDGET_DAILY_CALLS_CHAINLINK = '10';
+      const mod = await loadSurgeModule();
+      const { eventBus } = await import('../src/domain-events');
+      const publish = vi.mocked(eventBus.publish);
+      publish.mockClear();
+
+      const threshold = Math.ceil(10 * mod.SURGE_DEGRADE_RATIO);
+      for (let i = 0; i < threshold; i++) mod.recordCall('chainlink');
+      mod.checkSurgeLimit('chainlink');
+      mod.checkSurgeLimit('chainlink');
+
+      const degradeAlerts = publish.mock.calls.filter(
+        ([event]) => (event as { type?: string }).type === 'oracle.budget_degrade',
+      );
+      expect(degradeAlerts).toHaveLength(1);
+
+      delete process.env.ORACLE_BUDGET_DAILY_CALLS_CHAINLINK;
+      vi.resetModules();
+    });
+
+    it('does not contact the provider once surge-degraded', async () => {
+      const mod = await loadSurgeModule();
+      const { BaseSource } = await import('../src/oracle-sources/base');
+
+      class StubSource extends BaseSource {
+        name = 'chainlink' as const;
+        fetchCalls = 0;
+        async fetchPrice(): Promise<null> {
+          this.fetchCalls++;
+          return null;
+        }
+      }
+
+      const source = new StubSource();
+      const limit = mod.SURGE_MAX_CALLS_PER_WINDOW;
+      for (let i = 0; i < limit; i++) await source.fetchWithBackoff('XLM');
+      expect(source.fetchCalls).toBe(limit);
+
+      const blocked = await source.fetchWithBackoff('XLM');
+      expect(blocked).toBeNull();
+      expect(source.fetchCalls).toBe(limit);
+    });
+
+    it('resets surge counters at the UTC day boundary', async () => {
+      const mod = await loadSurgeModule();
+      const limit = mod.SURGE_MAX_CALLS_PER_WINDOW;
+      for (let i = 0; i < limit; i++) mod.recordCall('chainlink');
+      expect(mod.checkSurgeLimit('chainlink').allowed).toBe(false);
+
+      vi.setSystemTime(new Date('2024-01-16T00:00:00Z'));
+      expect(mod.checkSurgeLimit('chainlink').allowed).toBe(true);
+    });
+  });
 });

@@ -1,0 +1,11 @@
+{
+  "name": "audit-chain-verifier",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone verifier for the API audit log HMAC chain. No dependencies.",
+  "bin": { "audit-chain-verifier": "./cli.mjs" },
+  "scripts": {
+    "test": "node --test verify.test.mjs"
+  }
+}

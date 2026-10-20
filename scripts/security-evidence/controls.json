@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "controls": [
+    {
+      "id": "SEC-DISCLOSURE-POLICY",
+      "title": "Security disclosure policy is present",
+      "frequency": "quarterly",
+      "owner": "unspecified (assign in review)",
+      "checks": [{ "type": "file-exists", "path": "SECURITY.md" }]
+    },
+    {
+      "id": "SEC-LOCKFILE-PRESENT",
+      "title": "Dependency lockfiles are committed",
+      "frequency": "quarterly",
+      "owner": "unspecified (assign in review)",
+      "checks": [
+        { "type": "file-exists", "path": "package-lock.json" },
+        { "type": "file-exists", "path": "api/package-lock.json" }
+      ]
+    },
+    {
+      "id": "SEC-AUDIT-LOG-MODULE",
+      "title": "Audit logging module exists and changes are tracked",
+      "frequency": "quarterly",
+      "owner": "unspecified (assign in review)",
+      "checks": [
+        { "type": "file-exists", "path": "api/src/governance/audit-logger.ts" },
+        { "type": "git-history", "path": "api/src/governance/audit-logger.ts" }
+      ]
+    }
+  ]
+}

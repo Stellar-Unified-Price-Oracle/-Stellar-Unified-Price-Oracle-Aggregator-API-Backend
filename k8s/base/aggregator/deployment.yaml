@@ -1,3 +1,22 @@
+# Cell isolation (issue #736):
+# Each aggregator Deployment instance belongs to exactly one deployment cell,
+# identified by the `cell` label (e.g. cell-a, cell-b). A cell owns a bounded
+# set of feeds and their consumers, so a single deployment or dependency
+# failure is contained to that cell's feeds only. Other cells keep serving
+# their own feeds independently.
+#
+# Rollout guidance:
+#   - Deploy one Deployment per cell (e.g. aggregator-cell-a, aggregator-cell-b)
+#     by overriding metadata.name and the `cell` label via kustomize/overlay.
+#   - Roll out cells one at a time (canary a single cell first) so a bad release
+#     is observed in a bounded blast radius before widening.
+#   - Verify per-cell readiness and feed assignment before moving to the next cell.
+#
+# Rollback guidance:
+#   - Roll back only the affected cell's Deployment (kubectl rollout undo) to
+#     restore its previous revision without disturbing healthy cells.
+#   - Confirm the cell's feeds are reassigned/served after rollback and that
+#     CELL_ID matches the cell label.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -5,17 +24,20 @@ metadata:
   labels:
     app: aggregator
     version: stable
+    cell: cell-a
 spec:
   replicas: 2
   selector:
     matchLabels:
       app: aggregator
       version: stable
+      cell: cell-a
   template:
     metadata:
       labels:
         app: aggregator
         version: stable
+        cell: cell-a
     spec:
       securityContext:
         runAsNonRoot: true
@@ -33,19 +55,24 @@ spec:
                 labelSelector:
                   matchLabels:
                     app: aggregator
+                    cell: cell-a
       topologySpreadConstraints:
+        # Spread replicas of this cell across nodes and zones independently of
+        # other cells, so a node/zone failure only impacts this cell's feeds.
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
               app: aggregator
+              cell: cell-a
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels:
               app: aggregator
+              cell: cell-a
       containers:
         - name: aggregator
           image: oracle-aggregator:placeholder
@@ -71,6 +98,14 @@ spec:
           env:
             - name: PORT
               value: "4000"
+            # CELL_ID scopes this pod to its deployment cell. It is sourced from
+            # the pod's `cell` label so the runtime feed assignment always matches
+            # the scheduling/isolation boundary. A failure here only affects the
+            # feeds assigned to this cell.
+            - name: CELL_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['cell']
           startupProbe:
             httpGet:
               path: /health/live

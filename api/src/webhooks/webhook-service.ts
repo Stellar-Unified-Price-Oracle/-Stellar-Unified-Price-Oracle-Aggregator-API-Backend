@@ -258,15 +258,6 @@ class WebhookService {
     webhookCircuitsOpen.set(0);
   }
 
-  /**
-   * Clears all registrations and durable webhook state. Used by tests for
-   * isolation and available to operators who need to wipe webhook state.
-   */
-  async deliver(webhook: WebhookRegistration, payload: Record<string, unknown>): Promise<void> {
-    const body = buildWebhookBody(webhook.id, payload);
-    const signature = signWebhookPayload(webhook.secret, body);
-    let attempt = 0;
-
   private dropDestination(webhookId: string): void {
     const dest = this.dests.get(webhookId);
     if (!dest) return;
