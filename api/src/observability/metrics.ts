@@ -330,6 +330,63 @@ export const auditEntriesArchivedTotal = new client.Counter({
 });
 register.registerMetric(auditEntriesArchivedTotal);
 
+// ── Feed catalog (#671, #672, #673, #674) ────────────────────────────────────
+
+export const feedPolicySavedTotal = new client.Counter({
+  name: 'feed_policy_saved_total',
+  help: 'Feed policy writes by outcome (accepted, rejected)',
+  labelNames: ['result'],
+});
+register.registerMetric(feedPolicySavedTotal);
+
+export const feedPolicyValidationErrorsTotal = new client.Counter({
+  name: 'feed_policy_validation_errors_total',
+  help: 'Feed policy writes rejected by validation, by feed',
+  labelNames: ['feed'],
+});
+register.registerMetric(feedPolicyValidationErrorsTotal);
+
+export const feedQuorumEvaluatedTotal = new client.Counter({
+  name: 'feed_quorum_evaluated_total',
+  help: 'Quorum evaluations by feed and outcome',
+  labelNames: ['feed', 'result'],
+});
+register.registerMetric(feedQuorumEvaluatedTotal);
+
+export const feedQuorumReportingSources = new client.Gauge({
+  name: 'feed_quorum_reporting_sources',
+  help: 'Eligible sources that reported towards the last quorum evaluation',
+  labelNames: ['feed'],
+});
+register.registerMetric(feedQuorumReportingSources);
+
+export const feedTransitionsTotal = new client.Counter({
+  name: 'feed_transitions_total',
+  help: 'Feed lifecycle transitions applied, by transition and target state',
+  labelNames: ['transition', 'to'],
+});
+register.registerMetric(feedTransitionsTotal);
+
+export const feedTransitionDeniedTotal = new client.Counter({
+  name: 'feed_transition_denied_total',
+  help: 'Feed lifecycle transitions refused, by reason code',
+  labelNames: ['code'],
+});
+register.registerMetric(feedTransitionDeniedTotal);
+
+export const feedAliasHitsTotal = new client.Counter({
+  name: 'feed_alias_hits_total',
+  help: 'Requests served through a feed alias, by alias kind and expiry state',
+  labelNames: ['kind', 'expired'],
+});
+register.registerMetric(feedAliasHitsTotal);
+
+export const feedAliasExpiredTotal = new client.Counter({
+  name: 'feed_alias_expired_total',
+  help: 'Feed aliases past their sunset date that are still registered',
+});
+register.registerMetric(feedAliasExpiredTotal);
+
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();
   res.on('finish', () => {

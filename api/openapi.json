@@ -43,6 +43,10 @@
     {
       "name": "Webhooks",
       "description": "Webhook registration and delivery for price updates"
+    },
+    {
+      "name": "Feed Catalog",
+      "description": "Feed catalog policies, lifecycle, aliases and canonical asset identity"
     }
   ],
   "paths": {
@@ -543,6 +547,209 @@
         "responses": {
           "200": {
             "description": "Delivery log entries"
+          }
+        }
+      }
+    },
+    "/api/v1/catalog/feeds": {
+      "get": {
+        "operationId": "listCatalogFeeds",
+        "tags": [
+          "Feed Catalog"
+        ],
+        "summary": "List feed catalog entries",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalog/feeds/{feedId}": {
+      "get": {
+        "operationId": "getCatalogFeed",
+        "tags": [
+          "Feed Catalog"
+        ],
+        "summary": "Get a feed catalog entry with its policy and change log",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalog/feeds/{feedId}/policy": {
+      "put": {
+        "operationId": "putCatalogFeedPolicy",
+        "tags": [
+          "Feed Catalog"
+        ],
+        "summary": "Create or replace a feed participation policy",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalog/feeds/{feedId}/transitions": {
+      "post": {
+        "operationId": "postCatalogFeedTransition",
+        "tags": [
+          "Feed Catalog"
+        ],
+        "summary": "Apply a governed lifecycle transition to a feed",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalog/feeds/{feedId}/aliases": {
+      "post": {
+        "operationId": "postCatalogFeedAlias",
+        "tags": [
+          "Feed Catalog"
+        ],
+        "summary": "Register a rename, merge or retirement alias for a feed",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalog/feeds/{feedId}/quorum": {
+      "get": {
+        "operationId": "getCatalogFeedQuorum",
+        "tags": [
+          "Feed Catalog"
+        ],
+        "summary": "Evaluate a feed quorum against reported source contributions",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/catalog/assets/{alias}": {
+      "get": {
+        "operationId": "resolveCatalogAsset",
+        "tags": [
+          "Feed Catalog"
+        ],
+        "summary": "Resolve an asset alias to its canonical asset id",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
