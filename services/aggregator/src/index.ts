@@ -84,7 +84,8 @@ try {
   }
 }
 
-const aggregator = new PriceAggregator();
+const aggregator = new PriceAggregator(undefined, process.env.VOLATILITY_FRESHNESS_POLICY
+  ? JSON.parse(process.env.VOLATILITY_FRESHNESS_POLICY) : undefined);
 const fileArchival = new FileArchivalService();
 const regionReplicator = new RegionPriceReplicator();
 const regionQuarantine = new RegionQuarantineManager();
@@ -500,6 +501,7 @@ async function main(): Promise<void> {
   });
 
   const healthServer = new HealthServer(config.port + 2, () => ({
+    evidence: (asset: string) => aggregator.getEvidence(asset),
     sourceHealth: {
       chainlink: persistentSources.chainlink.health,
       redstone: persistentSources.redstone.health,

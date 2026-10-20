@@ -1,0 +1,25 @@
+{
+  "version": "1",
+  "owner": "Price quality and explainability maintainers",
+  "sha256": "87def83d9a7ccf1d199b6b6f3400c59e1a839d8840571bdea58325a0d817c1c5",
+  "start": 1704153600,
+  "end": 1767312000,
+  "intervalSeconds": 86400,
+  "assets": [
+    "BTC",
+    "ETH"
+  ],
+  "provenance": [
+    {
+      "url": "https://raw.githubusercontent.com/coinmetrics/data/f1a36afb962731c387bb03982758ab0103063da5/csv/btc.csv",
+      "sha256": "06495ff8e643432e6948b7b4686ce44fc106217287dabdc1b38351d9ddec46c3"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/coinmetrics/data/f1a36afb962731c387bb03982758ab0103063da5/csv/eth.csv",
+      "sha256": "46b18f3df967405374b1f6ee8a3d11ee1b7a5b176ac9fb4342caf6bf8648f2cc"
+    }
+  ],
+  "selection": "BTC and ETH selected by liquidity and availability before examining aggregator errors; all daily UTC PriceUSD rows (day labels shifted +86400 seconds to the actual UTC close) in calendar 2024 and 2025. Independent of the four configured oracle adapters, not independent venues within Coin Metrics.",
+  "coverageNotes": "Daily USD reference grid only; no intraday, XLM, stablecoins, illiquid assets or venue independence claim. Exact UTC closing timestamps only (+86400 seconds from source day label). Coin Metrics methodology governs reference timestamps; no interpolation or forward fill.",
+  "license": "Coin Metrics data: CC BY-NC 4.0; attribution Coin Metrics, Inc. Noncommercial benchmark use only; not a production price feed. See LICENSE.reference.txt."
+}
