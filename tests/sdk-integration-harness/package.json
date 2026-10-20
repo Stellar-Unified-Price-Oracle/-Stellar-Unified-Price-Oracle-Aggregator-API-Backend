@@ -1,0 +1,7 @@
+{
+  "name": "sdk-integration-harness",
+  "private": true,
+  "type": "module",
+  "description": "Local deterministic API/WebSocket fixture server with failure injection for SDK integration tests",
+  "scripts": { "test": "node --test" }
+}
