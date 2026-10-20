@@ -5,6 +5,7 @@ import { logger } from './observability/logger';
 import { ChainlinkSource, RedstoneSource, BandSource, ReflectorSource } from './oracle-sources';
 import { PriceAggregator } from './price-aggregation/aggregator';
 import { anomalyDetector } from './price-aggregation/anomaly-detector';
+import { driftDetector } from './price-aggregation/drift-detector';
 import { AggregatedPrice, type OracleSourceName } from './infrastructure/types';
 import { ContractPublisher } from './contract-publishing/publisher';
 import { appendHistoricalPrice } from './persistence/history';
@@ -24,6 +25,10 @@ import {
   pollCycleDurationMs,
   pollCycleOverrunsTotal,
   regionDriftKnown,
+  providerDriftDetected,
+  providerDriftMeanPriceChangePercent,
+  providerDriftObservedAtCoverageChange,
+  providerDriftReportingLagChangeSeconds,
   regionDriftPercent,
   regionPeersConfigured,
   regionPeersReporting,
@@ -261,6 +266,39 @@ async function poll(): Promise<AggregatedPrice[]> {
 
     // Check price against alert thresholds (critical: always runs)
     await alertManager.checkPrice(ap);
+
+    // Issue #707 — detect provider semantic drift against versioned baselines
+    const driftResult = driftDetector.detectDrift(ap.asset, [
+      ...aggregator.getSourcePrices(ap.asset),
+    ]);
+    for (const comparison of driftResult.comparisons) {
+      providerDriftDetected.set(
+        { asset: comparison.asset, source: comparison.source, baseline_version: comparison.baselineVersion },
+        comparison.driftDetected ? 1 : 0,
+      );
+      providerDriftMeanPriceChangePercent.set(
+        { asset: comparison.asset, source: comparison.source, baseline_version: comparison.baselineVersion },
+        comparison.meanPriceChangePercent,
+      );
+      providerDriftObservedAtCoverageChange.set(
+        { asset: comparison.asset, source: comparison.source, baseline_version: comparison.baselineVersion },
+        comparison.observedAtCoverageChange,
+      );
+      providerDriftReportingLagChangeSeconds.set(
+        { asset: comparison.asset, source: comparison.source, baseline_version: comparison.baselineVersion },
+        comparison.reportingLagChangeSeconds ?? 0,
+      );
+      if (comparison.driftDetected) {
+        eventBus.publish({
+          type: 'provider_drift_detected',
+          payload: comparison,
+          timestamp: Date.now(),
+        });
+        logger.warn(
+          `[Drift] ${comparison.asset}/${comparison.source} drift detected vs baseline ${comparison.baselineVersion}: ${comparison.driftReasons.join('; ')}`,
+        );
+      }
+    }
 
     // Check for disagreement between live oracle sources — non-essential
     // webhook fan-out is shed under brownout, but the check itself is kept.
