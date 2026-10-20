@@ -1,5 +1,6 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { isSsrfError } from '@stellar-oracle/ssrf-guard';
 import {
   webhookService,
   WEBHOOK_SIGNATURE_ALGORITHM,
@@ -9,8 +10,24 @@ import {
 } from './webhook-service';
 import { links, withLinks } from '../price-serving/hypermedia';
 import { sendError } from '../infrastructure/error';
+import { describeUrlRejection } from './ssrf';
 
 const router = Router();
+
+function asyncRoute(
+  handler: (req: Request, res: Response) => Promise<void>,
+): (req: Request, res: Response, next: NextFunction) => void {
+  return (req, res, next) => {
+    handler(req, res).catch(next);
+  };
+}
+
+function notFound(res: Response): void {
+  res.status(404).json({
+    success: false,
+    error: { code: 'NOT_FOUND', message: 'Webhook resource not found' },
+  });
+}
 
 const RegisterSchema = z.object({
   url: z.string().url(),
@@ -29,9 +46,12 @@ function keyPrefixOf(req: Request): string {
   return req.apiKey ? req.apiKey.substring(0, 8) : 'anonymous';
 }
 
-function publicView(webhook: WebhookRegistration): Omit<WebhookRegistration, 'secret'> {
+function publicView(
+  webhook: WebhookRegistration,
+): Omit<WebhookRegistration, 'secret' | 'verificationKey'> {
   const view = { ...webhook };
   delete (view as Partial<WebhookRegistration>).secret;
+  delete (view as Partial<WebhookRegistration>).verificationKey;
   return view;
 }
 

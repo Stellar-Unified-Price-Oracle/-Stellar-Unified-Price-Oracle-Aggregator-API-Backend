@@ -211,7 +211,7 @@ router.put('/keys/:keyHash/rate-limit', requireRole('operator', 'keys:write'), k
       clamped: decision.clamped,
     },
   });
-});
+}));
 
 router.post('/keys/:keyHash/revoke', requireRole('operator', 'keys:write'), keyMutation(async (req: Request, res: Response) => {
   const existing = guardTargetKey(req, res);

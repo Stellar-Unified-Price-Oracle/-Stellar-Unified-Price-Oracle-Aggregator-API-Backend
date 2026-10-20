@@ -330,6 +330,38 @@ export const auditEntriesArchivedTotal = new client.Counter({
 });
 register.registerMetric(auditEntriesArchivedTotal);
 
+export const webhookDeliveriesTotal = new client.Counter({
+  name: 'webhook_deliveries_total',
+  help: 'Total webhook delivery attempts by outcome',
+  labelNames: ['result'],
+});
+register.registerMetric(webhookDeliveriesTotal);
+
+export const webhookJobsDroppedTotal = new client.Counter({
+  name: 'webhook_jobs_dropped_total',
+  help: 'Total queued webhook deliveries dropped, by reason',
+  labelNames: ['reason'],
+});
+register.registerMetric(webhookJobsDroppedTotal);
+
+export const webhookQueueDepth = new client.Gauge({
+  name: 'webhook_queue_depth',
+  help: 'Number of webhook deliveries waiting in per-destination queues',
+});
+register.registerMetric(webhookQueueDepth);
+
+export const webhookDeliveriesInFlight = new client.Gauge({
+  name: 'webhook_deliveries_in_flight',
+  help: 'Webhook deliveries currently being attempted',
+});
+register.registerMetric(webhookDeliveriesInFlight);
+
+export const webhookCircuitsOpen = new client.Gauge({
+  name: 'webhook_circuits_open',
+  help: 'Webhook destinations currently parked behind an open circuit',
+});
+register.registerMetric(webhookCircuitsOpen);
+
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();
   res.on('finish', () => {

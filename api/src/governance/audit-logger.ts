@@ -5,6 +5,8 @@ import path from 'path';
 import { decryptSecret } from './crypto';
 import { logger } from '../observability/logger';
 import {
+  auditAppendDuration,
+  auditAppendsTotal,
   auditChainValid,
   auditChainVerificationTotal,
   auditEventsTotal,
@@ -38,7 +40,20 @@ export type AuditEvent =
   | 'governance.emergency_execute'
   | 'multisig.proposal_created'
   | 'multisig.proposal_approved'
-  | 'multisig.proposal_executed';
+  | 'multisig.proposal_executed'
+  | 'governance.catalog_proposal_created'
+  | 'governance.catalog_proposal_reviewed'
+  | 'governance.catalog_policy_activated'
+  | 'governance.catalog_rollback_proposed'
+  | 'governance.impact_simulated'
+  | 'governance.coi_disclosed'
+  | 'governance.coi_withdrawn'
+  | 'governance.coi_attested'
+  | 'governance.emergency_opened'
+  | 'governance.emergency_reviewed'
+  | 'governance.emergency_renewed'
+  | 'governance.emergency_revoked'
+  | 'governance.emergency_disclosed';
 
 /**
  * Every entry carries the writer and key that produced it. Entries form one
@@ -69,21 +84,7 @@ export const AUDIT_LOG_FILE = process.env.AUDIT_LOG_FILE
 
 const EMIT_STDOUT = process.env.AUDIT_STDOUT !== 'false';
 
-function openAuditLogger(file: string): winston.Logger {
-  return winston.createLogger({
-    level: 'info',
-    format: winston.format.combine(
-      winston.format.timestamp(),
-      winston.format.json(),
-    ),
-    transports: [
-      new winston.transports.File({ filename: file }),
-    ],
-  });
-}
-
 let activeAuditLogFile = AUDIT_LOG_FILE;
-let auditFileLogger = openAuditLogger(activeAuditLogFile);
 
 export function getAuditLogFile(): string {
   return activeAuditLogFile;
@@ -289,7 +290,6 @@ export function initializeAuditIntegrity(): void {
         'utf8',
       );
       activeAuditLogFile = `${AUDIT_LOG_FILE}.${stamp}.forked`;
-      auditFileLogger = openAuditLogger(activeAuditLogFile);
       forked = true;
     }
   }
@@ -329,36 +329,6 @@ export function startAuditChainVerification(
   const timer = setInterval(run, intervalMs);
   timer.unref?.();
   return timer;
-}
-
-export function enforceAuditRetention(retentionDays = auditRetentionDays): number {
-  try {
-    if (!fs.existsSync(activeAuditLogFile)) return 0;
-    const contents = fs.readFileSync(activeAuditLogFile, 'utf8');
-    const entries = contents
-      .split('\n')
-      .filter((line) => line.trim())
-      .map((line) => {
-        try {
-          return JSON.parse(line) as AuditEntry;
-        } catch {
-          return null;
-        }
-      })
-      .filter((entry): entry is AuditEntry => !!entry)
-      .filter((entry) => {
-        const timestampMs = new Date(entry.timestamp).getTime();
-        if (Number.isNaN(timestampMs)) return true;
-        const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-        return timestampMs >= cutoffMs;
-      });
-
-    const output = entries.map((entry) => JSON.stringify(entry)).join('\n') + (entries.length ? '\n' : '');
-    fs.writeFileSync(activeAuditLogFile, output, 'utf8');
-    return entries.length;
-  } catch {
-    /* a stale lock is recovered by the staleness check on the next run */
-  }
 }
 
 function acquireRetentionLock(): void {
@@ -661,26 +631,28 @@ export function auditLog(
   writerSeq = seq;
 
   const entry: AuditEntry = { ...data, hmac };
-  auditFileLogger.info('audit', entry);
-  if (EMIT_STDOUT) process.stdout.write(`${JSON.stringify(entry)}\n`);
-  auditEventsTotal.inc({ result: 'appended' });
-  enforceAuditRetention();
-}
+  const startedAt = performance.now();
+  let status: 'ok' | 'failed' = 'ok';
 
   try {
     ensureAuditLogDir();
-    fs.appendFileSync(AUDIT_LOG_FILE, `${JSON.stringify(entry)}\n`, 'utf8');
+    fs.appendFileSync(activeAuditLogFile, `${JSON.stringify(entry)}\n`, 'utf8');
     auditAppendsTotal.inc({ status: 'ok' });
   } catch (err) {
+    status = 'failed';
     auditAppendsTotal.inc({ status: 'failed' });
     logger.error('Failed to append audit entry', {
       event,
-      file: AUDIT_LOG_FILE,
+      file: activeAuditLogFile,
       error: err instanceof Error ? err.message : String(err),
       severity: 'error',
       alert: 'audit-write',
     });
   } finally {
-    auditAppendDuration.observe({ status: 'ok' }, (performance.now() - startedAt) / 1000);
+    auditAppendDuration.observe({ status }, (performance.now() - startedAt) / 1000);
   }
+
+  if (EMIT_STDOUT) process.stdout.write(`${JSON.stringify(entry)}\n`);
+  auditEventsTotal.inc({ result: 'appended' });
+  enforceAuditRetention();
 }
