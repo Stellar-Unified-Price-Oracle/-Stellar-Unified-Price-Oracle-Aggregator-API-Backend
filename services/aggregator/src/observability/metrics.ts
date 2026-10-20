@@ -394,3 +394,10 @@ export const maintenanceWindowActive = new client.Gauge({
 
 export { register };
 
+
+export const oracleProviderFailuresTotal = new client.Counter({
+  name: 'oracle_provider_failures_total',
+  help: 'Provider fetch failures by stable category, including local policy skips',
+  labelNames: ['source', 'category'],
+  registers: [register],
+});

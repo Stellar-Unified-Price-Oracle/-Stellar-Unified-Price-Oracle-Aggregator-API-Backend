@@ -52,6 +52,7 @@ const IGNORE_READ_ONLY = new Map([
  * directories.  Each entry MUST explain where the variable is actually consumed.
  */
 const IGNORE_DOC_ONLY = new Map([
+  ['SANDBOX_PROVIDER_LEASE_FILE', 'read through the env parameter of providerApiKey in oracle-sources/sandbox-credentials.ts'],
   // Consumed by the PostgreSQL Docker image entrypoint, not by our config.ts.
   ['POSTGRES_USER',              'Docker image entrypoint; not read by service source code'],
   ['POSTGRES_PASSWORD',          'Docker image entrypoint; not read by service source code'],

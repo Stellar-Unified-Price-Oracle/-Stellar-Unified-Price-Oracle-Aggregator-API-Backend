@@ -1,3 +1,4 @@
+import { assertSandboxIsolation } from '../oracle-sources/sandbox-credentials';
 import dotenv from 'dotenv';
 import path from 'path';
 import { decryptSecret } from './crypto';
@@ -58,6 +59,7 @@ function buildFeedOwnership(
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
+  assertSandboxIsolation(env);
   const parsed = parseConfigEnv(env);
 
   const regionId = parsed.REGION_ID ?? parsed.AWS_REGION?.trim() ?? 'local';
