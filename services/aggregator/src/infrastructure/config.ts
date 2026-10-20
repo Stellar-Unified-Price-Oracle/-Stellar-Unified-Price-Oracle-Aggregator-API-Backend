@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { decryptSecret } from './crypto';
 import { parseConfigEnv, redactConfig } from './config-schema';
+import { logger } from '../observability/logger';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
@@ -13,16 +14,124 @@ function deriveSourceHosts(urls: string[]): string[] {
   return Array.from(hosts);
 }
 
+export interface FeedOwnership {
+  primary: string;
+  failover: string;
+}
+
+function buildFeedOwnership(
+  parsed: ReturnType<typeof parseConfigEnv>,
+  regionId: string,
+): Record<string, FeedOwnership> {
+  const ownership: Record<string, FeedOwnership> = {};
+
+  // Lowest precedence: per-asset env vars.
+  for (const asset of parsed.WATCHED_ASSETS) {
+    const key = asset.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    const primary = parsed.FEED_PRIMARY_REGION[asset] ?? parsed.FEED_PRIMARY_REGION[key];
+    const failover = parsed.FEED_FAILOVER_REGION[asset] ?? parsed.FEED_FAILOVER_REGION[key];
+    if (primary || failover) {
+      ownership[asset] = {
+        primary: (primary ?? regionId).toLowerCase(),
+        failover: (failover ?? primary ?? regionId).toLowerCase(),
+      };
+    }
+  }
+
+  // Highest precedence: explicit JSON map.
+  for (const [asset, entry] of Object.entries(parsed.FEED_OWNERSHIP_JSON)) {
+    ownership[asset] = {
+      primary: (entry.primary ?? regionId).toLowerCase(),
+      failover: (entry.failover ?? entry.primary ?? regionId).toLowerCase(),
+    };
+  }
+
+  // Default any unconfigured asset to the local region for both roles so every
+  // feed always has exactly one authorized publisher.
+  for (const asset of parsed.WATCHED_ASSETS) {
+    if (!ownership[asset]) {
+      ownership[asset] = { primary: regionId.toLowerCase(), failover: regionId.toLowerCase() };
+    }
+  }
+
+  return ownership;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   const parsed = parseConfigEnv(env);
 
   const regionId = parsed.REGION_ID ?? parsed.AWS_REGION?.trim() ?? 'local';
-  const sourceUrls = [
-    parsed.CHAINLINK_BASE_URL,
-    parsed.REDSTONE_BASE_URL,
-    parsed.BAND_BASE_URL,
-    parsed.REFLECTOR_BASE_URL,
-  ];
+
+  // Issue #685 — region-scoped provider configuration.
+  //
+  // Endpoint and credential configuration can be scoped by deployment region
+  // by setting `{VAR}_{REGION}` (e.g. `CHAINLINK_BASE_URL_US_EAST` for region
+  // `us-east`). Resolution prefers the region-scoped value and falls back to
+  // the global value, so a region never reads another region's credentials
+  // (no cross-environment leakage). Region-scoped URLs are validated; an
+  // invalid region-scoped URL falls back to the global endpoint with a loud
+  // warning (validated failover) rather than crashing or silently sending
+  // traffic to a malformed host.
+  const regionSuffix = `_${regionId.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+  const regionScoped = <T extends string>(envs: NodeJS.ProcessEnv, varName: string): T | undefined =>
+    envs[`${varName}${regionSuffix}`] as T | undefined;
+
+  const isHttpUrl = (value: string | undefined): boolean => {
+    if (!value) return false;
+    try {
+      const u = new URL(value);
+      return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
+  const resolveBaseUrl = (globalUrl: string, varName: string): string => {
+    const scoped = regionScoped(env, varName);
+    if (scoped && isHttpUrl(scoped)) return scoped;
+    if (scoped) {
+      logger.warn(
+        `[RegionConfig] Ignoring invalid region-scoped ${varName} for region ${regionId} — falling back to global endpoint`,
+      );
+    }
+    return globalUrl;
+  };
+
+  const resolveApiKey = (globalKey: string, varName: string): string => {
+    const scoped = regionScoped(env, varName);
+    return scoped && scoped.length > 0 ? scoped : globalKey;
+  };
+
+  // Collect every source host (global + region-scoped) so the SSRF allowlist
+  // covers the endpoints this region will actually call out to.
+  const sourceUrls: string[] = [];
+  for (const varName of [
+    'CHAINLINK_BASE_URL',
+    'REDSTONE_BASE_URL',
+    'BAND_BASE_URL',
+    'REFLECTOR_BASE_URL',
+  ] as const) {
+    sourceUrls.push(parsed[varName]);
+    const scoped = regionScoped(env, varName);
+    if (scoped && isHttpUrl(scoped)) sourceUrls.push(scoped);
+  }
+
+  // Issue #685 — no cross-environment leakage: a region-scoped credential must
+  // not silently reuse the global credential, because that would mean a region
+  // is operating with another environment's secret.
+  for (const varName of ['CHAINLINK_API_KEY'] as const) {
+    const scoped = regionScoped(env, varName);
+    if (
+      scoped &&
+      scoped.length > 0 &&
+      parsed[varName] &&
+      scoped === parsed[varName]
+    ) {
+      logger.warn(
+        `[RegionConfig] Region ${regionId} ${varName} equals the global value — potential cross-environment leakage; use a region-scoped secret`,
+      );
+    }
+  }
 
   return {
     port: parsed.PORT,
@@ -43,12 +152,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
 
     sources: {
       chainlink: {
-        baseUrl: parsed.CHAINLINK_BASE_URL,
-        apiKey: decryptSecret(parsed.CHAINLINK_API_KEY),
+        baseUrl: resolveBaseUrl(parsed.CHAINLINK_BASE_URL, 'CHAINLINK_BASE_URL'),
+        apiKey: decryptSecret(resolveApiKey(parsed.CHAINLINK_API_KEY, 'CHAINLINK_API_KEY')),
       },
-      redstone: { baseUrl: parsed.REDSTONE_BASE_URL },
-      band: { baseUrl: parsed.BAND_BASE_URL },
-      reflector: { baseUrl: parsed.REFLECTOR_BASE_URL },
+      redstone: { baseUrl: resolveBaseUrl(parsed.REDSTONE_BASE_URL, 'REDSTONE_BASE_URL') },
+      band: { baseUrl: resolveBaseUrl(parsed.BAND_BASE_URL, 'BAND_BASE_URL') },
+      reflector: { baseUrl: resolveBaseUrl(parsed.REFLECTOR_BASE_URL, 'REFLECTOR_BASE_URL') },
     },
 
     assets: parsed.WATCHED_ASSETS,
@@ -64,6 +173,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       quarantineEnabled: parsed.REGION_QUARANTINE_ENABLED,
       quarantineRecoverPercent: parsed.REGION_QUARANTINE_RECOVER_PERCENT,
       maxReplicationLagMs: parsed.REGION_MAX_REPLICATION_LAG_MS,
+    },
+
+    // Issue #744 — surge limits applied during failover and recovery so
+    // traffic/cost spikes cannot exhaust provider quotas or budgets before
+    // alerts fire and safe degradation kicks in.
+    surge: {
+      enabled: parsed.SURGE_LIMITS_ENABLED,
+      // Hard ceiling on outbound provider requests per window.
+      maxRequestsPerWindow: parsed.SURGE_MAX_REQUESTS_PER_WINDOW,
+      windowMs: parsed.SURGE_WINDOW_MS,
+      // Fraction of the normal request rate allowed while recovering (0-1).
+      recoveryRateLimit: parsed.SURGE_RECOVERY_RATE_LIMIT,
+      // Estimated cost ceiling (USD) per window before degradation.
+      maxCostPerWindowUsd: parsed.SURGE_MAX_COST_PER_WINDOW_USD,
+      // Estimated per-request cost (USD) used by the cost model.
+      costPerRequestUsd: parsed.SURGE_COST_PER_REQUEST_USD,
+      // Alert thresholds as a fraction of the configured limits (0-1).
+      alertThresholdPercent: parsed.SURGE_ALERT_THRESHOLD_PERCENT,
+      // When limits are exceeded, degrade instead of failing hard.
+      degradeOnLimit: parsed.SURGE_DEGRADE_ON_LIMIT,
     },
   },
 
@@ -119,12 +248,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       chunkIntervalSeconds: parsed.TIMESCALE_CHUNK_INTERVAL_SECONDS,
       retentionDays: parsed.HISTORY_RETENTION_DAYS,
     },
-    // WebSocket upgrade hardening (issue #40, #586).
+
+    history: {
+      maxEntries: parsed.HISTORY_MAX_ENTRIES,
+      retentionSeconds: parsed.HISTORY_RETENTION_SECONDS,
+      archival: {
+        enabled: parsed.FILE_ARCHIVAL_ENABLED,
+        archiveAfterDays: parsed.FILE_ARCHIVE_AFTER_DAYS,
+        retentionDays: parsed.FILE_RETENTION_DAYS,
+        coldStorageDir: parsed.FILE_COLD_STORAGE_DIR,
+        intervalMs: parsed.FILE_ARCHIVAL_INTERVAL_MS,
+      },
+      database: {
+        url: decryptSecret(parsed.DATABASE_URL),
+        useTimescale: parsed.USE_TIMESCALEDB,
+        chunkIntervalSeconds: parsed.TIMESCALE_CHUNK_INTERVAL_SECONDS,
+        retentionDays: parsed.HISTORY_RETENTION_DAYS,
+      },
+    },
+
     websocket: {
-      allowedOrigins: commaList(process.env.WS_ALLOWED_ORIGINS),
-      requireOrigin: process.env.WS_REQUIRE_ORIGIN !== 'false',
-      maxConnectionsPerWindow: parseInt(process.env.WS_RATE_LIMIT_MAX || '20', 10),
-      rateLimitWindowMs: parseInt(process.env.WS_RATE_LIMIT_WINDOW_MS || '60000', 10),
+      maxSubscriptions: parsed.WS_MAX_SUBSCRIPTIONS,
+      dropBufferBytes: parsed.WS_BACKPRESSURE_DROP_BYTES,
+      pingIntervalMs: parsed.WS_PING_INTERVAL_MS,
+      pingTimeoutMs: parsed.WS_PING_TIMEOUT_MS,
+      maxClientMessageBytes: parsed.WS_MAX_CLIENT_MESSAGE_BYTES,
     },
 
     security: {
@@ -132,6 +280,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
         enabled: parsed.SSRF_PROTECTION_ENABLED,
         allowedHosts: [...deriveSourceHosts(sourceUrls), ...parsed.ORACLE_ALLOWED_HOSTS],
         allowPrivateIps: parsed.SSRF_ALLOW_PRIVATE_IPS,
+        requestTimeoutMs: parsed.OUTBOUND_REQUEST_TIMEOUT_MS,
+      },
+      // Issue #750 — outbound egress policy. Every provider/integration
+      // destination must match this allowlist; redirects are re-validated
+      // against it and DNS answers are pinned to the resolved address so a
+      // DNS change cannot silently widen egress. The allowlist is derived from
+      // the configured source hosts plus ORACLE_ALLOWED_HOSTS, so it is
+      // environment-specific by construction (dev/staging/prod each set their
+      // own source URLs). See docs/EGRESS_POLICY.md for rollout/rollback.
+      egress: {
+        enabled: parsed.EGRESS_POLICY_ENABLED,
+        allowedHosts: [...deriveSourceHosts(sourceUrls), ...parsed.ORACLE_ALLOWED_HOSTS],
+        allowPrivateIps: parsed.SSRF_ALLOW_PRIVATE_IPS,
+        // Redirects are followed only when the new destination is also allowed.
+        followRedirects: parsed.EGRESS_FOLLOW_REDIRECTS,
+        maxRedirects: parsed.EGRESS_MAX_REDIRECTS,
+        // Pin DNS resolution for the lifetime of a request to defeat rebinding.
+        pinDns: parsed.EGRESS_PIN_DNS,
         requestTimeoutMs: parsed.OUTBOUND_REQUEST_TIMEOUT_MS,
       },
       websocket: {
@@ -145,14 +311,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
         previousKey: parsed.ENCRYPTION_KEY_PREVIOUS,
         encryptHistory: parsed.ENCRYPT_HISTORY,
       },
-    },
-
-    websocket: {
-      maxSubscriptions: parsed.WS_MAX_SUBSCRIPTIONS,
-      dropBufferBytes: parsed.WS_BACKPRESSURE_DROP_BYTES,
-      pingIntervalMs: parsed.WS_PING_INTERVAL_MS,
-      pingTimeoutMs: parsed.WS_PING_TIMEOUT_MS,
-      maxClientMessageBytes: parsed.WS_MAX_CLIENT_MESSAGE_BYTES,
     },
   };
 }

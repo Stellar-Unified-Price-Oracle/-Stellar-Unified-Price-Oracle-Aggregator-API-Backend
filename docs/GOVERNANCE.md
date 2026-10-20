@@ -171,3 +171,13 @@ The most recent 100 denials are also kept in an in-memory buffer
    `api/tests/admin/rbac-route-matrix.test.ts` — the test enumerates the
    router and fails if a route lacks a guard or declares a different role
    than the frozen matrix.
+
+## Decentralization and accountability reporting
+
+Signer independence, decentralization stage gates, proposal execution
+reconciliation and grant outcome tracking live under
+`/api/v1/governance/decentralization` and are administered with the same admin
+key as the governance proposals API. See
+[GOVERNANCE_ACCOUNTABILITY.md](./GOVERNANCE_ACCOUNTABILITY.md) for the
+measurement definitions, reporting cadence, metrics, and rollout/rollback
+guidance.

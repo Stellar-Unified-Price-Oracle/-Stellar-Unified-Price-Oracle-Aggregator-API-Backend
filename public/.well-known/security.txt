@@ -1,0 +1,8 @@
+# Stellar Unified Price Oracle — Security Contact (RFC 9116)
+Contact: mailto:security@stellar-unified-oracle.example
+Expires: 2027-12-31T23:59:59.000Z
+Encryption: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/security/pgp-key.asc
+Preferred-Languages: en
+Canonical: https://api.stellar-oracle.org/.well-known/security.txt
+Policy: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/security/vulnerability-disclosure-policy.md
+Acknowledgments: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/security/hall-of-fame.md

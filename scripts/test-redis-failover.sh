@@ -7,6 +7,9 @@ SENTINEL_PORT=26379
 MAX_WAIT=30
 RATE_LIMIT_KEY="rate-limit:test-client:$(date +%s)"
 RATE_LIMIT_VALUE="42"
+# Structured recovery evidence (consumed by the chaos report generator).
+RECOVERY_RECORD_FILE="${RECOVERY_RECORD_FILE:-redis-failover-recovery.json}"
+RTO_BUDGET_SECONDS="${RTO_BUDGET_SECONDS:-30}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -16,6 +19,31 @@ NC='\033[0m'
 pass() { echo -e "${GREEN}[PASS]${NC} $*"; }
 fail() { echo -e "${RED}[FAIL]${NC} $*"; exit 1; }
 info() { echo -e "${YELLOW}[INFO]${NC} $*"; }
+
+# Emit a structured recovery record for the chaos report generator.
+# Args: outcome, rto_seconds, data_loss (true|false), detail
+emit_recovery_record() {
+  local outcome="$1" rto_seconds="$2" data_loss="$3" detail="$4"
+  local rto_ok="false"
+  if [ "$rto_seconds" -le "$RTO_BUDGET_SECONDS" ] 2>/dev/null; then
+    rto_ok="true"
+  fi
+  cat > "$RECOVERY_RECORD_FILE" <<EOF
+{
+  "scenario": "redis-failover",
+  "dependency": "cache",
+  "outcome": "${outcome}",
+  "rto_seconds": ${rto_seconds},
+  "rto_budget_seconds": ${RTO_BUDGET_SECONDS},
+  "rto_within_budget": ${rto_ok},
+  "data_loss_observed": ${data_loss},
+  "rate_limit_key": "${RATE_LIMIT_KEY}",
+  "detail": "${detail}",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+  info "Recovery record written to $RECOVERY_RECORD_FILE"
+}
 
 cleanup() {
   info "Stopping Redis HA services..."
@@ -63,6 +91,7 @@ info "Waiting for replication to propagate to replicas..."
 sleep 2
 
 info "Killing redis-master container to trigger failover..."
+FAILOVER_START_EPOCH=$(date +%s)
 docker kill redis-master >/dev/null
 info "redis-master killed"
 
@@ -72,10 +101,14 @@ for i in $(seq 1 $MAX_WAIT); do
   NEW_MASTER=$(docker exec redis-sentinel-2 redis-cli -p $SENTINEL_PORT \
     sentinel get-master-addr-by-name mymaster 2>/dev/null | head -1 | tr -d '[:space:]') || true
   if [ -n "$NEW_MASTER" ] && [ "$NEW_MASTER" != "redis-master" ]; then
-    info "New master elected: $NEW_MASTER (after ${i}s)"
+    FAILOVER_END_EPOCH=$(date +%s)
+    FAILOVER_SECONDS=$((FAILOVER_END_EPOCH - FAILOVER_START_EPOCH))
+    info "New master elected: $NEW_MASTER (after ${FAILOVER_SECONDS}s)"
     break
   fi
   if [ "$i" -eq $MAX_WAIT ]; then
+    FAILOVER_SECONDS=$(( $(date +%s) - FAILOVER_START_EPOCH ))
+    emit_recovery_record "failed" "$FAILOVER_SECONDS" "unknown" "no new master elected within ${MAX_WAIT}s"
     fail "No new master elected within ${MAX_WAIT}s"
   fi
   sleep 1
@@ -105,7 +138,7 @@ done
 if [ -z "$READ_VALUE" ]; then
   info "Replica read returned empty — key may not have replicated before master failure."
   info "This is expected with async replication (RPO up to ~1s)."
-  info "Verifying the new master is writable..."
+  info "Verifying the new master is writable and re-establishing the rate-limit key..."
   for replica in redis-replica-1 redis-replica-2; do
     container_running=$(docker inspect -f '{{.State.Running}}' "$replica" 2>/dev/null || echo "false")
     if [ "$container_running" = "true" ]; then
@@ -113,18 +146,33 @@ if [ -z "$READ_VALUE" ]; then
         SET "failover-probe" "ok" EX 10 2>/dev/null | tr -d '[:space:]') || true
       if [ "$NEW_WRITE" = "OK" ]; then
         info "New master ($replica) is writable after failover"
-        pass "FAILOVER SUCCEEDED — new master is writable within ${MAX_WAIT}s"
+        # Re-establish the rate-limit key and confirm the cache dependency recovered.
+        REESTABLISHED=$(docker exec "$replica" redis-cli -a "$REDIS_PASSWORD" \
+          SET "$RATE_LIMIT_KEY" "$RATE_LIMIT_VALUE" EX 300 2>/dev/null | tr -d '[:space:]') || true
+        if [ "$REESTABLISHED" = "OK" ]; then
+          info "Rate-limit key re-established on new master ($replica)"
+        else
+          info "Warning: could not re-establish rate-limit key on new master ($replica)"
+        fi
+        emit_recovery_record "recovered_with_data_loss" "$FAILOVER_SECONDS" "true" \
+          "key lost in failover; new master $replica writable and key re-established"
+        pass "FAILOVER SUCCEEDED — new master is writable within ${FAILOVER_SECONDS}s (RTO budget ${RTO_BUDGET_SECONDS}s)"
         exit 0
       fi
     fi
   done
+  emit_recovery_record "failed" "$FAILOVER_SECONDS" "true" "no promoted replica became writable after failover"
   fail "No promoted replica became writable after failover"
 fi
 
 if [ "$READ_VALUE" = "$RATE_LIMIT_VALUE" ]; then
-  pass "FAILOVER SUCCEEDED — rate-limit key survived failover (value=$READ_VALUE)"
+  emit_recovery_record "recovered" "$FAILOVER_SECONDS" "false" \
+    "rate-limit key survived failover with value=$READ_VALUE"
+  pass "FAILOVER SUCCEEDED — rate-limit key survived failover (value=$READ_VALUE, RTO ${FAILOVER_SECONDS}s)"
 else
   info "Key existed on new master but value differed (got='$READ_VALUE', expected='$RATE_LIMIT_VALUE')"
   info "This may indicate partial replication. Failover mechanics are working."
-  pass "FAILOVER SUCCEEDED — new master is reachable after failover"
+  emit_recovery_record "recovered_with_data_loss" "$FAILOVER_SECONDS" "true" \
+    "key value differed after failover (got=$READ_VALUE, expected=$RATE_LIMIT_VALUE)"
+  pass "FAILOVER SUCCEEDED — new master is reachable after failover (RTO ${FAILOVER_SECONDS}s)"
 fi

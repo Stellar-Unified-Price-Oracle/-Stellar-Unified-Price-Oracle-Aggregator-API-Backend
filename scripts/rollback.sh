@@ -22,6 +22,14 @@ usage() {
   echo "    CONFIRM_PRODUCTION=yes  Required to run against production"
   echo "    REGISTRY                Container registry (default: ghcr.io)"
   echo "    REPO                    Image repository path (e.g. myorg/stellar-oracle)"
+  echo ""
+  echo "  Release train (see docs/release-train.md):"
+  echo "    This script rolls back a SINGLE region/environment. To halt the"
+  echo "    staged release train across regions, set the train halt flag first:"
+  echo "      scripts/release-train.sh halt --reason \"<why>\""
+  echo "    Then roll back the affected region(s) here, verify health, and only"
+  echo "    resume promotion after the region reports healthy:"
+  echo "      scripts/release-train.sh resume --region <region>"
   exit 1
 }
 
@@ -40,6 +48,32 @@ kube() {
 record_event() {
   mkdir -p "$(dirname "$LOG_FILE")"
   log "$*"
+}
+
+# Release train coordination: a regional rollback must not race ahead of the
+# train. If the train is mid-promotion, halt it before mutating a region so
+# downstream regions are not promoted on top of an unverified rollout.
+TRAIN_STATE_FILE="${TRAIN_STATE_FILE:-logs/release-train-state.json}"
+
+train_is_active() {
+  [[ -f "$TRAIN_STATE_FILE" ]] || return 1
+  grep -q '"status"[[:space:]]*:[[:space:]]*"promoting"' "$TRAIN_STATE_FILE" 2>/dev/null
+}
+
+halt_train_if_active() {
+  local env="$1"
+  if train_is_active; then
+    log "Release train is promoting — halting train before rolling back ${env}"
+    if [[ "$DRY_RUN" == "true" ]]; then
+      log "[dry-run] scripts/release-train.sh halt --reason \"rollback:${env}\""
+    else
+      bash "$(dirname "$0")/release-train.sh" halt --reason "rollback:${env}" \
+        || log "WARNING: failed to halt release train; proceed with caution"
+    fi
+    record_event "TRAIN_HALTED env=${env} reason=rollback:${env}"
+  else
+    log "Release train not actively promoting — no halt required"
+  fi
 }
 
 validate_env() {
@@ -159,6 +193,9 @@ main() {
   mkdir -p logs
   record_event "ROLLBACK_START env=${env} freeze_only=${freeze_only} dry_run=${DRY_RUN}"
 
+  log "Step 0: Coordinate with release train (halt promotion if active)"
+  halt_train_if_active "$env"
+
   log "Step 1: Freeze — scaling aggregator to 0"
   freeze_aggregator "$namespace"
 
@@ -210,6 +247,14 @@ main() {
   if [[ "$ttr" -gt 600 ]]; then
     log "WARNING: TTR exceeded 10-minute target (${ttr}s > 600s)"
   fi
+
+  log "Step 6: Release train resume guidance"
+  log "  Region ${env} rolled back to ${short_sha} and verified healthy."
+  log "  The release train remains HALTED. Before resuming promotion:"
+  log "    1. Confirm ${env} health is green for the soak window (see docs/release-train.md)."
+  log "    2. Re-run the promotion criteria checks for the next region."
+  log "    3. Resume with: scripts/release-train.sh resume --region ${env}"
+  record_event "TRAIN_RESUME_PENDING env=${env} sha=${sha}"
 }
 
 main "$@"

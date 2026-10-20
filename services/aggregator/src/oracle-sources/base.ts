@@ -24,6 +24,7 @@ import {
   scaleValidatedPrice,
   type ProviderFetchResult,
 } from './response-validation';
+import { capabilityRegistry, type ProviderCapabilities } from './capabilities';
 import AlertManager from '../observability/alert-manager';
 
 const SLA_THRESHOLD_SECONDS = 5;
@@ -77,6 +78,8 @@ export interface SourceFetchOutcome {
 export abstract class BaseSource {
   abstract name: OracleSourceName;
   abstract fetchPrice(asset: string): Promise<NormalizedPrice | null>;
+  /** Issue #684 — capability profile this source negotiates against. */
+  abstract capabilities: ProviderCapabilities;
 
   health: SourceHealthStatus = {
     healthy: true,
@@ -188,6 +191,14 @@ export abstract class BaseSource {
     if (!sourceCircuitBreaker.isAllowed(this.name)) {
       logger.warn(`[${this.name}] Circuit breaker OPEN — skipping fetch for ${asset}`);
       return { price: null, failureKind: 'transport-error' };
+    }
+
+    // Issue #684 — reject incompatible feed assignments before any network
+    // call: if this provider does not carry the asset, skip it as `no-price`
+    // instead of fetching and discarding the quote.
+    if (!capabilityRegistry.supportsAsset(this.name, asset)) {
+      logger.debug(`[${this.name}] Asset ${asset} not in supported capability set — skipping fetch`);
+      return { price: null, failureKind: 'no-price' };
     }
 
     const maxAttempts = 3;

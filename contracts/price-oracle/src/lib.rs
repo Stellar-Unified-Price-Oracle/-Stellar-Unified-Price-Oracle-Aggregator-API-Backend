@@ -12,6 +12,7 @@ mod governance;
 mod merkle;
 mod multisig;
 mod proxy;
+pub mod samples;
 pub mod storage;
 mod types;
 mod utils;
@@ -50,6 +51,10 @@ mod test;
 mod timestamp_monotonicity_test;
 #[cfg(test)]
 mod upgrade_migration_test;
+#[cfg(test)]
+mod feed_catalog_test;
+#[cfg(test)]
+mod upgrade_rehearsal_test;
 
 pub use contract::PriceOracleContract;
 pub use governance::GovernanceContract;

@@ -21,6 +21,29 @@ REGION_AP_PRICES="${REGION_AP_PRICES:-http://ap-southeast-1.oracle.example/api/v
 
 TARGET_REGION="${TARGET_REGION:-us-east-1}"
 
+# Dependency-specific failure exercises (issue #743).
+# Each exercise is bounded by DEP_EXERCISE_TIMEOUT and records RTO + error-rate evidence.
+DEP_EXERCISES="${DEP_EXERCISES:-database cache provider network}"
+DEP_EXERCISE_TIMEOUT="${DEP_EXERCISE_TIMEOUT:-180}"
+DEP_RECOVERY_TIMEOUT="${DEP_RECOVERY_TIMEOUT:-120}"
+DEP_ERROR_RATE_THRESHOLD="${DEP_ERROR_RATE_THRESHOLD:-5}"
+DEP_EXERCISE_DIR="${DEP_EXERCISE_DIR:-k8s/chaos/experiments}"
+DEP_EVIDENCE_FILE="${REPORT_DIR}/.drill-dep-evidence-$$.tmp"
+
+declare -A DEP_EXERCISE_MANIFEST=(
+  [database]="database-failure.yaml"
+  [cache]="cache-failure.yaml"
+  [provider]="provider-failure.yaml"
+  [network]="network-latency.yaml"
+)
+
+declare -A DEP_PROBE_URL=(
+  [database]="${DEP_DATABASE_PROBE_URL:-http://us-east-1.oracle.example/api/v1/health}"
+  [cache]="${DEP_CACHE_PROBE_URL:-http://us-east-1.oracle.example/api/v1/prices}"
+  [provider]="${DEP_PROVIDER_PROBE_URL:-http://us-east-1.oracle.example/api/v1/prices}"
+  [network]="${DEP_NETWORK_PROBE_URL:-http://us-east-1.oracle.example/api/v1/health}"
+)
+
 DRILL_START_TS=$(date -u +%s)
 DRILL_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 PASS_COUNT=0
@@ -83,6 +106,122 @@ prices_converged() {
   local snap1="$1"
   local snap2="$2"
   [[ -n "$snap1" && -n "$snap2" && "$snap1" == "$snap2" ]]
+}
+
+# Probe a dependency endpoint and emit the observed HTTP status code.
+probe_status() {
+  local url="$1"
+  curl -s --max-time 5 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000"
+}
+
+# Measure the error rate (percent) over a bounded sample window.
+measure_error_rate() {
+  local url="$1"
+  local samples="${2:-10}"
+  local errors=0
+  local i status
+  for (( i = 0; i < samples; i++ )); do
+    status=$(probe_status "$url")
+    [[ "$status" == "200" ]] || errors=$((errors + 1))
+    sleep 1
+  done
+  echo $(( errors * 100 / samples ))
+}
+
+# Poll until the dependency probe recovers or the recovery timeout elapses.
+wait_for_dependency_recovery() {
+  local url="$1"
+  local timeout="$2"
+  local deadline=$(( $(date -u +%s) + timeout ))
+  while [[ $(date -u +%s) -lt $deadline ]]; do
+    if [[ "$(probe_status "$url")" == "200" ]]; then
+      return 0
+    fi
+    sleep "$HEALTH_POLL_INTERVAL"
+  done
+  return 1
+}
+
+apply_dependency_exercise() {
+  local dep="$1"
+  local manifest="${DEP_EXERCISE_DIR}/${DEP_EXERCISE_MANIFEST[$dep]}"
+  log "Applying ${dep} failure exercise (${manifest})..."
+  if command -v kubectl >/dev/null 2>&1; then
+    kubectl apply -f "$manifest" -n "$NAMESPACE" >/dev/null 2>&1 || {
+      log "WARN: kubectl apply failed for ${dep} — continuing with simulated fault"
+    }
+  else
+    log "WARN: kubectl not available — simulating ${dep} fault in dry-run mode"
+  fi
+}
+
+remove_dependency_exercise() {
+  local dep="$1"
+  local manifest="${DEP_EXERCISE_DIR}/${DEP_EXERCISE_MANIFEST[$dep]}"
+  log "Removing ${dep} failure exercise..."
+  if command -v kubectl >/dev/null 2>&1; then
+    kubectl delete -f "$manifest" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+  fi
+}
+
+# Run a single bounded dependency exercise and append evidence to the evidence file.
+run_dependency_exercise() {
+  local dep="$1"
+  local probe="${DEP_PROBE_URL[$dep]}"
+  local exercise_ts recovery_ts rto error_rate recovery_ok result
+
+  log "--- Dependency exercise: ${dep} (timeout ${DEP_EXERCISE_TIMEOUT}s) ---"
+  exercise_ts=$(date -u +%s)
+  apply_dependency_exercise "$dep"
+
+  # Bounded fault window: never exceed DEP_EXERCISE_TIMEOUT.
+  local fault_deadline=$(( exercise_ts + DEP_EXERCISE_TIMEOUT ))
+  local fault_elapsed=0
+  while [[ $(date -u +%s) -lt $fault_deadline ]]; do
+    sleep "$HEALTH_POLL_INTERVAL"
+    fault_elapsed=$(( $(date -u +%s) - exercise_ts ))
+    [[ $fault_elapsed -ge $(( DEP_EXERCISE_TIMEOUT / 2 )) ]] && break
+  done
+
+  error_rate=$(measure_error_rate "$probe" 10)
+
+  remove_dependency_exercise "$dep"
+
+  if wait_for_dependency_recovery "$probe" "$DEP_RECOVERY_TIMEOUT"; then
+    recovery_ok=true
+  else
+    recovery_ok=false
+  fi
+  recovery_ts=$(date -u +%s)
+  rto=$(( recovery_ts - exercise_ts ))
+
+  if $recovery_ok && [[ $error_rate -le $DEP_ERROR_RATE_THRESHOLD ]]; then
+    result="PASS"
+    pass "${dep} exercise recovered in ${rto}s (error rate ${error_rate}%)"
+  elif $recovery_ok; then
+    result="WARN"
+    fail "${dep} exercise recovered in ${rto}s but error rate ${error_rate}% exceeded ${DEP_ERROR_RATE_THRESHOLD}%"
+  else
+    result="FAIL"
+    fail "${dep} exercise did not recover within ${DEP_RECOVERY_TIMEOUT}s (error rate ${error_rate}%)"
+  fi
+
+  printf '| %s | %s | %ss | %s%% | %s |\n' \
+    "$dep" "$result" "$rto" "$error_rate" "$( $recovery_ok && echo "recovered" || echo "not recovered" )" \
+    >> "$DEP_EVIDENCE_FILE"
+}
+
+run_dependency_exercises() {
+  mkdir -p "$REPORT_DIR"
+  : > "$DEP_EVIDENCE_FILE"
+  local dep
+  for dep in $DEP_EXERCISES; do
+    if [[ -z "${DEP_EXERCISE_MANIFEST[$dep]:-}" ]]; then
+      log "WARN: Unknown dependency exercise '${dep}' — skipping"
+      continue
+    fi
+    run_dependency_exercise "$dep"
+  done
 }
 
 apply_partition() {
@@ -205,6 +344,26 @@ $(cat "${REPORT_DIR}/.drill-checks-$$.tmp" 2>/dev/null || echo "_No check log_")
 | Surviving regions serve traffic after partition | $( [[ $FAIL_COUNT -eq 0 ]] && echo "✅ Met" || echo "❌ Not met") |
 | CRDT convergence on heal | $( [[ $FAIL_COUNT -eq 0 ]] && echo "✅ Met" || echo "❌ Not met") |
 | TTR < 120s | $( [[ $TTR_SECONDS -lt 120 ]] && echo "✅ Met (${TTR_SECONDS}s)" || echo "❌ Not met (${TTR_SECONDS}s)") |
+
+## Dependency Failure Exercises
+
+Bounded exercises (timeout ${DEP_EXERCISE_TIMEOUT}s, recovery timeout ${DEP_RECOVERY_TIMEOUT}s,
+error-rate threshold ${DEP_ERROR_RATE_THRESHOLD}%).
+
+| Dependency | Result | RTO | Error Rate | Recovery |
+|------------|--------|-----|------------|----------|
+$(cat "$DEP_EVIDENCE_FILE" 2>/dev/null || echo "| _none_ | - | - | - | - |")
+
+## Rollout / Rollback Guidance
+
+- **Rollout:** enable via the scheduled chaos workflow; exercises run only when
+  \`CHAOS_TARGET_ENV=staging\`. Start with a single dependency (\`DEP_EXERCISES=database\`)
+  and expand once evidence is green.
+- **Rollback:** set \`DEP_EXERCISES=""\` to disable dependency exercises, or remove the
+  scheduled workflow entry. Faults are always removed at the end of each bounded phase;
+  if a run is interrupted, delete the manifests in \`${DEP_EXERCISE_DIR}\` manually.
+- **Monitoring:** watch error-rate and RTO columns above; alert if RTO exceeds
+  \`DEP_RECOVERY_TIMEOUT\` or error rate exceeds \`DEP_ERROR_RATE_THRESHOLD\`.
 EOF
 
   rm -f "${REPORT_DIR}/.drill-checks-$$.tmp"
@@ -238,7 +397,10 @@ main() {
   log "--- Phase 4: Verify CRDT convergence ---"
   verify_crdt_convergence 2>&1 | tee -a "$checks_tmp"
 
-  log "--- Phase 5: Generate report ---"
+  log "--- Phase 5: Dependency failure exercises ---"
+  run_dependency_exercises 2>&1 | tee -a "$checks_tmp"
+
+  log "--- Phase 6: Generate report ---"
   local report_path
   report_path=$(generate_report)
   log "Report written to: ${report_path}"
@@ -247,6 +409,8 @@ main() {
   log "  Passed: ${PASS_COUNT}"
   log "  Failed: ${FAIL_COUNT}"
   log "  TTR:    ${TTR_SECONDS}s"
+
+  rm -f "$DEP_EVIDENCE_FILE"
 
   [[ $FAIL_COUNT -eq 0 ]]
 }

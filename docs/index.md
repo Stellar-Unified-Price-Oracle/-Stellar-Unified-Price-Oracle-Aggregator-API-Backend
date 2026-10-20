@@ -15,7 +15,7 @@ Welcome to the Stellar Unified Price Oracle Aggregator API documentation.
 - [Threat Model](./THREAT_MODEL.md) — mainnet trust boundaries, attacker profiles, mitigations
 - [Security Architecture](./SECURITY_ARCHITECTURE.md) — controls-level deep dive: SSRF protection, encryption at rest, API auth, WebSocket signing, sanitization, secrets management
 - [Governance](./GOVERNANCE.md) — branch protection, signed commits, CODEOWNERS
-- [Catalog Governance](./CATALOG_GOVERNANCE.md) — governed feed-catalog policy, pre-approval impact analysis, conflict-of-interest register, emergency action bounds
+- [Governance transparency](./governance/README.md) — participation/quorum health, release review windows, testnet rehearsal, treasury dashboard
 - [Multi-Sig Administration & Operations](./MULTISIG_ADMINISTRATION.md) — signer setup, thresholds, proposal lifecycle, emergency procedures
 - [Sandbox Security Review](./SANDBOX_SECURITY_REVIEW.md) — programmable feed / plugin sandbox review
 
