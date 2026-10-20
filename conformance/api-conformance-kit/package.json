@@ -1,0 +1,9 @@
+{
+  "name": "@stellar-oracle/api-conformance-kit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Versioned conformance kit for third-party implementations of the oracle API contract",
+  "bin": { "oracle-conformance": "./src/cli.mjs" },
+  "scripts": { "test": "node --test test/" }
+}
