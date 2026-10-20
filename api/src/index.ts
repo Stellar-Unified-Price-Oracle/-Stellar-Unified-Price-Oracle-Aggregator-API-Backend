@@ -38,6 +38,7 @@ import sandboxRoutes, { initializeSandboxCache } from './routes/sandbox';
 import featureFlagRoutes from './routes/featureFlags';
 import eventRoutes from './routes/events';
 import governanceRoutes from './governance/proposal-routes';
+import decentralizationRoutes from './governance/decentralization/routes';
 import { uptimeTracker } from './observability/uptime-tracker';
 import { getVaultClient } from '@stellar-oracle/vault-client';
 import { apiKeyManager } from './governance/api-key-manager';
@@ -238,6 +239,7 @@ app.use('/api/v1', v1DeprecationHeaders, v1Routes);
 app.use('/api/v1', v1DeprecationHeaders, platformRoutes);
 app.use('/api/v1/sandbox', sandboxRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/governance/decentralization', decentralizationRoutes);
 app.use('/api/v1/governance', governanceRoutes);
 // Public status page — no authentication required (#66)
 app.use('/api/v1/status', statusRoutes);

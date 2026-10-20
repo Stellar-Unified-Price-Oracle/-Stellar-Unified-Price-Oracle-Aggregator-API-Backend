@@ -330,6 +330,46 @@ export const auditEntriesArchivedTotal = new client.Counter({
 });
 register.registerMetric(auditEntriesArchivedTotal);
 
+export const decentralizationTop1Share = new client.Gauge({
+  name: 'oracle_decentralization_top1_share',
+  help: 'Largest single entity share of a concentration dimension (0..1)',
+  labelNames: ['dimension'],
+});
+register.registerMetric(decentralizationTop1Share);
+
+export const decentralizationNakamotoCoefficient = new client.Gauge({
+  name: 'oracle_decentralization_nakamoto_coefficient',
+  help: 'Entities required to exceed 50% of a concentration dimension',
+  labelNames: ['dimension'],
+});
+register.registerMetric(decentralizationNakamotoCoefficient);
+
+export const decentralizationStageGatePassed = new client.Gauge({
+  name: 'oracle_decentralization_stage_gate_passed',
+  help: 'Whether every dimension gate for a stage passed in the latest snapshot (1 = pass)',
+  labelNames: ['stage'],
+});
+register.registerMetric(decentralizationStageGatePassed);
+
+export const governanceAuditDiscrepancies = new client.Gauge({
+  name: 'oracle_governance_audit_discrepancies',
+  help: 'Open governance execution discrepancies in the latest reconciliation',
+  labelNames: ['kind', 'severity'],
+});
+register.registerMetric(governanceAuditDiscrepancies);
+
+export const grantObjectiveAttainmentRatio = new client.Gauge({
+  name: 'oracle_grant_objective_attainment_ratio',
+  help: 'Share of published grant objectives met across recorded outcomes (0..1)',
+});
+register.registerMetric(grantObjectiveAttainmentRatio);
+
+export const grantOutcomesOverdue = new client.Gauge({
+  name: 'oracle_grant_outcomes_overdue',
+  help: 'Completed grants missing a post-completion outcome report past the policy window',
+});
+register.registerMetric(grantOutcomesOverdue);
+
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();
   res.on('finish', () => {
