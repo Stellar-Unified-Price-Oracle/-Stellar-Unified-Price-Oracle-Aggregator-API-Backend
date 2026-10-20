@@ -263,6 +263,7 @@ app.use('/portal/governance', express.static(path.join(__dirname, '..', 'public'
 // Developer portal: API explorer, key management, usage/billing UI
 app.use('/portal', express.static(path.join(__dirname, '..', 'public', 'portal')));
 app.use('/docs/marketplace', express.static(path.join(__dirname, '..', '..', 'docs', 'marketplace')));
+app.use('/.well-known', express.static(path.join(__dirname, '..', 'public', '.well-known')));
 
 app.use(notFoundHandler);
 app.use(errorHandler);
