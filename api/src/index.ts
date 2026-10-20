@@ -244,6 +244,7 @@ app.use('/api/v1/admin', adminRoutes);
 // it can be rolled back independently of the wider admin surface.
 app.use('/api/v1/catalog', feedCatalogRoutes);
 app.use('/api/v1/governance', governanceRoutes);
+app.use('/api/v1/governance', createCatalogGovernanceRouter().router);
 // Public status page — no authentication required (#66)
 app.use('/api/v1/status', statusRoutes);
 app.use('/api/v2', v2Headers, v2Routes);

@@ -1,8 +1,18 @@
 import crypto, { randomUUID } from 'crypto';
-import { validateOutboundUrl } from '@stellar-oracle/ssrf-guard';
+import Redis from 'ioredis';
 import { config } from '../infrastructure/config';
 import { logger } from '../observability/logger';
 import { getVaultClient } from '@stellar-oracle/vault-client';
+import { validateOutboundUrl } from '@stellar-oracle/ssrf-guard';
+import { getWebhookDispatcher, webhookSsrfPolicy } from './ssrf';
+import { FileWebhookStore } from './file-webhook-store';
+import { RedisWebhookStore } from './redis-webhook-store';
+import {
+  webhookPropagationMs,
+  type DeadLetterEntry,
+  type DeliveryQuery,
+  type WebhookStore,
+} from './webhook-store';
 import {
   webhookCircuitsOpen,
   webhookDeliveriesInFlight,
@@ -10,6 +20,8 @@ import {
   webhookJobsDroppedTotal,
   webhookQueueDepth,
 } from '../observability/metrics';
+
+export type { DeadLetterEntry, DeliveryQuery } from './webhook-store';
 
 export type WebhookTriggerType = 'threshold' | 'interval';
 
@@ -29,6 +41,8 @@ export interface WebhookRegistration {
   trigger: WebhookTrigger;
   /** Per-registration HMAC secret. Returned exactly once, in the registration response. */
   secret: string;
+  /** Hash of the secret stored with the registration; never leaves the service. */
+  verificationKey: string;
   active: boolean;
   status: 'healthy' | 'degraded' | 'dead-letter';
   circuit: WebhookCircuitState;
@@ -51,10 +65,19 @@ export interface WebhookDeliveryLog {
   timestamp: number;
 }
 
+export type ReplayStatus = 'replayed' | 'duplicate' | 'missing' | 'failed' | 'in-flight';
+
+export interface ReplayResult {
+  status: ReplayStatus;
+  entry?: DeadLetterEntry;
+  failure?: string;
+}
+
 interface DeliveryJob {
   webhookId: string;
   payload: Record<string, unknown>;
   attempt: number;
+  succeeded: boolean;
   done: Promise<void>;
   resolve: () => void;
 }
@@ -66,6 +89,19 @@ interface DestinationQueue {
   timer?: NodeJS.Timeout;
   timerKind?: 'retry' | 'probe';
   consecutiveFailures: number;
+}
+
+function createWebhookStore(): WebhookStore {
+  if (config.redisUrl) {
+    return new RedisWebhookStore(
+      new Redis(config.redisUrl, {
+        lazyConnect: true,
+        maxRetriesPerRequest: 1,
+        enableOfflineQueue: false,
+      }),
+    );
+  }
+  return new FileWebhookStore();
 }
 
 function backoffDelayMs(attempt: number): number {
@@ -108,26 +144,130 @@ export function verifyWebhookSignature(secret: string, body: string, signature: 
 }
 
 /**
- * Delivery runs through an in-process queue (consistent with webhook
- * registrations, which are in-memory): per-destination FIFO with at most one
- * job in flight per destination, a global bound of WEBHOOK_MAX_CONCURRENT
- * concurrent deliveries, queue- scheduled retries with exponential backoff,
- * and a per-destination circuit breaker that parks persistently failing
- * endpoints until a cool-down probe succeeds. The broadcast path only
+ * Delivery runs through an in-process queue with per-destination FIFO ordering,
+ * a global bound on concurrent deliveries, queued retries with exponential
+ * backoff, and a per-destination circuit breaker that parks persistently
+ * failing endpoints until a cool-down probe succeeds. The broadcast path only
  * enqueues — it never waits for a fetch, a backoff timer, or a queue slot.
+ *
+ * Registrations, delivery history and dead letters live in a shared
+ * `WebhookStore` (Redis when `REDIS_URL` is set, otherwise files under
+ * `WEBHOOK_DATA_DIR`). Each replica keeps a local mirror for synchronous
+ * lookups and writes through to the store, so the propagation window for a
+ * registration change seen by another replica is `WEBHOOK_PROPAGATION_MS`.
  */
 class WebhookService {
   private webhooks = new Map<string, WebhookRegistration>();
-  private deliveryLog: WebhookDeliveryLog[] = [];
-  private readonly maxLogEntries = 2000;
+  private deliveryRing: WebhookDeliveryLog[] = [];
+  private readonly maxRingEntries = 2000;
   private dests = new Map<string, DestinationQueue>();
   private inFlight = 0;
+  private pendingWrites: Promise<unknown>[] = [];
+  private replaying = new Set<string>();
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private storeWarned = false;
+  private store: WebhookStore;
+
+  constructor(store: WebhookStore = createWebhookStore()) {
+    this.store = store;
+  }
+
+  /**
+   * Reads registrations from the shared store into the local mirror. Called at
+   * startup and after a simulated restart; a failed read leaves the mirror
+   * untouched rather than dropping registrations.
+   */
+  async load(): Promise<void> {
+    await this.flush();
+    try {
+      await this.store.init();
+      const records = await this.store.listRegistrations();
+      this.mergeIntoMirror(records);
+      await this.store.prune();
+      this.storeWarned = false;
+      logger.info(`Loaded ${records.length} webhook registrations from the shared store`);
+    } catch (err) {
+      logger.warn('Webhook store unavailable at startup; registrations start empty', err);
+    }
+  }
+
+  /**
+   * Re-reads registrations on an interval so registration and removal converge
+   * across replicas. Runtime-only fields are kept from the mirror so a refresh
+   * never resets delivery pacing or an open circuit.
+   */
+  startRefresh(): void {
+    if (this.refreshTimer) return;
+    this.refreshTimer = setInterval(() => {
+      void this.refreshFromStore();
+    }, webhookPropagationMs());
+    this.refreshTimer.unref?.();
+  }
+
+  stopRefresh(): void {
+    if (!this.refreshTimer) return;
+    clearInterval(this.refreshTimer);
+    this.refreshTimer = null;
+  }
+
+  private async refreshFromStore(): Promise<void> {
+    try {
+      await this.flush();
+      const records = await this.store.listRegistrations();
+      this.mergeIntoMirror(records);
+      this.storeWarned = false;
+    } catch (err) {
+      if (!this.storeWarned) {
+        this.storeWarned = true;
+        logger.warn('Webhook store unreachable; registrations are not converging across replicas', err);
+      }
+    }
+  }
+
+  private mergeIntoMirror(records: Awaited<ReturnType<WebhookStore['listRegistrations']>>): void {
+    const next = new Map<string, WebhookRegistration>();
+    for (const record of records) {
+      const existing = this.webhooks.get(record.id);
+      next.set(record.id, {
+        ...record,
+        verificationKey: record.verificationKey,
+        circuit: existing?.circuit ?? 'closed',
+        nextProbeAt: existing?.nextProbeAt,
+        status: existing?.status ?? record.status,
+        failureCount: existing?.failureCount ?? record.failureCount,
+        lastFailure: existing?.lastFailure ?? record.lastFailure,
+        lastPrice: existing?.lastPrice ?? record.lastPrice,
+        lastTriggeredAt: existing?.lastTriggeredAt ?? record.lastTriggeredAt,
+      });
+    }
+    this.webhooks = next;
+  }
+
+  /**
+   * Awaits every store write that is still in flight, so a subsequent `load()`
+   * observes them. Exposed for tests and for graceful shutdown.
+   */
+  async flush(): Promise<void> {
+    while (this.pendingWrites.length > 0) {
+      const batch = this.pendingWrites;
+      this.pendingWrites = [];
+      await Promise.all(batch);
+    }
+  }
+
+  private persist(registration: WebhookRegistration): void {
+    const write = this.store.saveRegistration(registration).catch((err: unknown) => {
+      logger.warn(`Failed to persist webhook ${registration.id} to the shared store`, err);
+    });
+    this.pendingWrites.push(write);
+  }
 
   register(
     url: string,
     apiKeyPrefix: string,
     trigger: WebhookTrigger,
   ): WebhookRegistration {
+    validateOutboundUrl(url, webhookSsrfPolicy(apiKeyPrefix));
     const secret = crypto.randomBytes(32).toString('hex');
     const webhook: WebhookRegistration = {
       id: randomUUID(),
@@ -135,6 +275,7 @@ class WebhookService {
       apiKeyPrefix,
       trigger,
       secret,
+      verificationKey: crypto.createHash('sha256').update(secret).digest('hex'),
       active: true,
       status: 'healthy',
       circuit: 'closed',
@@ -144,7 +285,6 @@ class WebhookService {
     this.webhooks.set(webhook.id, webhook);
     this.persist(webhook);
 
-    // Persist webhook secret to Vault asynchronously
     this.persistWebhookToVault(webhook).catch((err) => {
       logger.warn(`Failed to persist webhook ${webhook.id} to Vault`, err);
     });
@@ -182,6 +322,10 @@ class WebhookService {
     if (deleted && webhook) {
       this.dropDestination(id);
       this.refreshCircuitGauge();
+      const write = this.store.deleteRegistration(id).catch((err: unknown) => {
+        logger.warn(`Failed to remove webhook ${id} from the shared store`, err);
+      });
+      this.pendingWrites.push(write);
       this.removeWebhookFromVault(webhook).catch((err) => {
         logger.warn(`Failed to remove webhook ${id} from Vault`, err);
       });
@@ -241,21 +385,74 @@ class WebhookService {
   }
 
   /**
-   * Clears all registrations, queued jobs, and delivery history. Used by tests
-   * for isolation and available for operators who need to wipe webhook state.
+   * Replays a dead-lettered payload exactly once. A successful replay resolves
+   * the entry, so any later replay of the same entry — with any idempotency
+   * key — returns `duplicate` without delivering again.
    */
-  reset(): void {
+  async replay(deadLetterId: string, idempotencyKey: string): Promise<ReplayResult> {
+    const entry = await this.getDeadLetter(deadLetterId);
+    if (!entry) return { status: 'missing' };
+    if (entry.resolvedAt) return { status: 'duplicate', entry };
+    if (this.replaying.has(deadLetterId)) return { status: 'in-flight', entry };
+
+    const webhook = this.webhooks.get(entry.webhookId);
+    if (!webhook) {
+      return { status: 'failed', failure: 'Webhook is no longer registered', entry };
+    }
+
+    this.replaying.add(deadLetterId);
+    try {
+      const job = this.enqueue(webhook, entry.payload);
+      await job.done;
+      if (!job.succeeded) {
+        return { status: 'failed', failure: webhook.lastFailure || 'Delivery failed', entry };
+      }
+      const resolved: DeadLetterEntry = {
+        ...entry,
+        resolvedAt: Date.now(),
+        replayId: idempotencyKey,
+      };
+      await this.store.updateDeadLetter(resolved);
+      return { status: 'replayed', entry: resolved };
+    } catch (err) {
+      return { status: 'failed', failure: err instanceof Error ? err.message : String(err), entry };
+    } finally {
+      this.replaying.delete(deadLetterId);
+    }
+  }
+
+  private async logDelivery(entry: WebhookDeliveryLog): Promise<void> {
+    this.deliveryRing.push(entry);
+    if (this.deliveryRing.length > this.maxRingEntries) this.deliveryRing.shift();
+    const write = this.store.appendDelivery(entry).catch((err: unknown) => {
+      logger.warn(`Failed to persist delivery ${entry.id} to the shared store`, err);
+    });
+    this.pendingWrites.push(write);
+  }
+
+  /**
+   * Clears all registrations, queued jobs, delivery history and durable
+   * webhook state. Used by tests for isolation and by operators who need to
+   * wipe webhook state.
+   */
+  async reset(): Promise<void> {
     for (const dest of this.dests.values()) {
       if (dest.timer) clearTimeout(dest.timer);
       dest.pending.forEach((job) => job.resolve());
     }
     this.dests.clear();
     this.webhooks.clear();
-    this.deliveryLog = [];
+    this.deliveryRing = [];
+    this.replaying.clear();
     this.inFlight = 0;
     webhookQueueDepth.set(0);
     webhookDeliveriesInFlight.set(0);
     webhookCircuitsOpen.set(0);
+    try {
+      await this.store.clear();
+    } catch (err) {
+      logger.warn('Failed to clear the webhook store', err);
+    }
   }
 
   private dropDestination(webhookId: string): void {
@@ -265,6 +462,15 @@ class WebhookService {
     dest.pending.forEach((job) => job.resolve());
     this.dests.delete(webhookId);
     webhookQueueDepth.set(this.totalPending());
+  }
+
+  private destination(webhookId: string): DestinationQueue {
+    let dest = this.dests.get(webhookId);
+    if (!dest) {
+      dest = { webhookId, pending: [], running: false, consecutiveFailures: 0 };
+      this.dests.set(webhookId, dest);
+    }
+    return dest;
   }
 
   private totalPending(): number {
@@ -284,7 +490,7 @@ class WebhookService {
     const done = new Promise<void>((r) => {
       resolve = r;
     });
-    return { webhookId: webhook.id, payload, attempt: 0, done, resolve };
+    return { webhookId: webhook.id, payload, attempt: 0, succeeded: false, done, resolve };
   }
 
   private enqueue(webhook: WebhookRegistration, payload: Record<string, unknown>): DeliveryJob {
@@ -369,6 +575,7 @@ class WebhookService {
       webhook.nextProbeAt = undefined;
       this.refreshCircuitGauge();
       webhookDeliveriesTotal.inc({ result: 'success' });
+      job.succeeded = true;
       job.resolve();
     } else if (attempt < config.webhooks.maxRetries) {
       retryDelayMs = backoffDelayMs(attempt);
@@ -378,6 +585,7 @@ class WebhookService {
       webhook.status = 'dead-letter';
       dest.consecutiveFailures += 1;
       webhookDeliveriesTotal.inc({ result: 'failed' });
+      this.deadLetter(webhook, job, attempt);
       job.resolve();
       if (dest.consecutiveFailures >= config.webhooks.circuitFailureThreshold && webhook.circuit !== 'open') {
         webhook.circuit = 'open';
@@ -400,6 +608,24 @@ class WebhookService {
     } else {
       this.schedule(dest);
     }
+  }
+
+  private deadLetter(webhook: WebhookRegistration, job: DeliveryJob, attempts: number): void {
+    const entry: DeadLetterEntry = {
+      id: randomUUID(),
+      webhookId: webhook.id,
+      apiKeyPrefix: webhook.apiKeyPrefix,
+      url: webhook.url,
+      trigger: webhook.trigger,
+      payload: job.payload,
+      attempts,
+      failure: webhook.lastFailure || 'Delivery failed',
+      createdAt: Date.now(),
+    };
+    const write = this.store.appendDeadLetter(entry).catch((err: unknown) => {
+      logger.warn(`Failed to dead-letter delivery for webhook ${webhook.id}`, err);
+    });
+    this.pendingWrites.push(write);
   }
 
   private async attemptOnce(
@@ -430,7 +656,7 @@ class WebhookService {
           dispatcher: getWebhookDispatcher(),
         });
 
-        this.logDelivery({
+        await this.logDelivery({
           id: randomUUID(),
           webhookId: webhook.id,
           url: webhook.url,
@@ -460,7 +686,7 @@ class WebhookService {
       webhook.lastFailure = message;
       webhook.status = 'degraded';
       webhook.failureCount += 1;
-      this.logDelivery({
+      await this.logDelivery({
         id: randomUUID(),
         webhookId: webhook.id,
         url: webhook.url,

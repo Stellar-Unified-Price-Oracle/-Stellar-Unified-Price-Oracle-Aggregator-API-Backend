@@ -163,7 +163,6 @@ function openAuditLogger(file: string): winston.Logger {
 }
 
 let activeAuditLogFile = AUDIT_LOG_FILE;
-let auditFileLogger = openAuditLogger(activeAuditLogFile);
 
 export function getAuditLogFile(): string {
   return activeAuditLogFile;
@@ -395,7 +394,6 @@ export function initializeAuditIntegrity(): void {
         'utf8',
       );
       activeAuditLogFile = `${AUDIT_LOG_FILE}.${stamp}.forked`;
-      auditFileLogger = openAuditLogger(activeAuditLogFile);
       forked = true;
     }
   }
@@ -754,6 +752,7 @@ export function auditLog(
     fs.appendFileSync(activeAuditLogFile, `${JSON.stringify(entry)}\n`, 'utf8');
     auditAppendsTotal.inc({ status: 'ok' });
   } catch (err) {
+    status = 'failed';
     auditAppendsTotal.inc({ status: 'failed' });
     logger.error('Failed to append audit entry', {
       event,
@@ -763,7 +762,7 @@ export function auditLog(
       alert: 'audit-write',
     });
   } finally {
-    auditAppendDuration.observe({ status: 'ok' }, (performance.now() - startedAt) / 1000);
+    auditAppendDuration.observe({ status }, (performance.now() - startedAt) / 1000);
   }
 
   auditEventsTotal.inc({ result: 'appended' });
