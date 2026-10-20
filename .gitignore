@@ -1,4 +1,5 @@
 .env
+.env.vault
 node_modules/
 dist/
 coverage/
