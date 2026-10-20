@@ -152,6 +152,98 @@ describe('audit log chain', () => {
     }
   });
 
+  it('records key inventory lifecycle events (rotation, retirement, algorithm transition) in the chain', () => {
+    const keyRegistered = makeEntry({
+      event: 'admin.key_registered',
+      writerId: 'replica-a',
+      seq: 1,
+      prevHmac: '',
+      details: {
+        keyId: 'audit-hmac-v1',
+        purpose: 'audit-hmac',
+        algorithm: 'sha256',
+        owner: 'security-team',
+      },
+    });
+    const keyRotated = makeEntry({
+      event: 'admin.key_rotated',
+      writerId: 'replica-a',
+      seq: 2,
+      prevHmac: keyRegistered.hmac,
+      details: {
+        keyId: 'audit-hmac-v2',
+        previousKeyId: 'audit-hmac-v1',
+        purpose: 'audit-hmac',
+        algorithm: 'sha256',
+        owner: 'security-team',
+      },
+    });
+    const algorithmTransition = makeEntry({
+      event: 'admin.key_algorithm_transitioned',
+      writerId: 'replica-a',
+      seq: 3,
+      prevHmac: keyRotated.hmac,
+      details: {
+        keyId: 'audit-hmac-v3',
+        previousKeyId: 'audit-hmac-v2',
+        fromAlgorithm: 'sha256',
+        toAlgorithm: 'sha512',
+        owner: 'security-team',
+      },
+    });
+    const keyRetired = makeEntry({
+      event: 'admin.key_retired',
+      writerId: 'replica-a',
+      seq: 4,
+      prevHmac: algorithmTransition.hmac,
+      details: {
+        keyId: 'audit-hmac-v1',
+        reason: 'superseded',
+        owner: 'security-team',
+      },
+    });
+
+    const lifecycle = [keyRegistered, keyRotated, algorithmTransition, keyRetired];
+    expect(verifyAuditLogChain(lifecycle)).toEqual({ valid: true, firstInvalidIndex: null });
+
+    const tamperedTransition = lifecycle.map((entry, index) =>
+      index === 2
+        ? { ...entry, details: { ...entry.details, toAlgorithm: 'md5' } }
+        : entry,
+    );
+    const invalid = verifyAuditLogChain(tamperedTransition);
+    expect(invalid.valid).toBe(false);
+    expect(invalid.firstInvalidIndex).toBe(2);
+  });
+
+  it('detects a dropped key retirement event in the lifecycle chain', () => {
+    const registered = makeEntry({
+      event: 'admin.key_registered',
+      writerId: 'replica-a',
+      seq: 1,
+      prevHmac: '',
+      details: { keyId: 'audit-hmac-v1', owner: 'security-team' },
+    });
+    const rotated = makeEntry({
+      event: 'admin.key_rotated',
+      writerId: 'replica-a',
+      seq: 2,
+      prevHmac: registered.hmac,
+      details: { keyId: 'audit-hmac-v2', previousKeyId: 'audit-hmac-v1', owner: 'security-team' },
+    });
+    const retired = makeEntry({
+      event: 'admin.key_retired',
+      writerId: 'replica-a',
+      seq: 3,
+      prevHmac: rotated.hmac,
+      details: { keyId: 'audit-hmac-v1', reason: 'superseded', owner: 'security-team' },
+    });
+
+    const result = verifyAuditLogChain([registered, retired]);
+    expect(result.valid).toBe(false);
+    expect(result.firstInvalidIndex).toBe(1);
+  });
+
   it('refuses to append to an unverifiable chain when AUDIT_CHAIN_ON_BREAK=throw', () => {
     const file = getAuditLogFile();
     const existed = fs.existsSync(file);

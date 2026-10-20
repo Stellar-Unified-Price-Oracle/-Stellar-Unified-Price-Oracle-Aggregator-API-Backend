@@ -6,6 +6,7 @@ import {
   isForbiddenHostname,
   isPrivateIp,
   validateOutboundUrl,
+  verifyOutboundDestination,
 } from '@stellar-oracle/ssrf-guard';
 
 afterEach(() => {
@@ -260,5 +261,123 @@ describe('createSecureLookup (connect-time pinning)', () => {
       second = err;
     });
     expect(second).toBeNull();
+  });
+});
+
+describe('verifyOutboundDestination (deployment policy)', () => {
+  function stubResolution(addresses: Array<{ address: string; family: number }>): void {
+    vi.spyOn(dns, 'lookup').mockImplementation(((
+      _hostname: string,
+      _options: unknown,
+      callback: (err: unknown, addrs: unknown, family: number) => void,
+    ) => {
+      callback(null, addresses, 0);
+    }) as never);
+  }
+
+  const deploymentPolicy = {
+    requireHttps: true,
+    allowedHosts: ['hooks.example.com', 'api.partner.io'],
+    allowedPorts: [443],
+  };
+
+  it('accepts an allowlisted host that resolves to a public address', async () => {
+    stubResolution([{ address: '93.184.216.34', family: 4 }]);
+
+    const result = await verifyOutboundDestination('https://hooks.example.com/events', {
+      policy: deploymentPolicy,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.url).toBe('https://hooks.example.com/events');
+    expect(result.host).toBe('hooks.example.com');
+    expect(result.addresses).toEqual([{ address: '93.184.216.34', family: 4 }]);
+    expect(result.reason).toBeUndefined();
+  });
+
+  it('rejects a redirect that lands on a private address', async () => {
+    stubResolution([{ address: '169.254.169.254', family: 4 }]);
+
+    const result = await verifyOutboundDestination('https://hooks.example.com/events', {
+      policy: deploymentPolicy,
+      redirectChain: [
+        'https://hooks.example.com/events',
+        'https://hooks.example.com/moved',
+        'https://169.254.169.254/latest/meta-data/',
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('private-ip');
+    expect(result.blockedUrl).toBe('https://169.254.169.254/latest/meta-data/');
+    expect(result.addresses).toEqual([]);
+  });
+
+  it('rejects a redirect that leaves the allowlist', async () => {
+    stubResolution([{ address: '93.184.216.34', family: 4 }]);
+
+    const result = await verifyOutboundDestination('https://hooks.example.com/events', {
+      policy: deploymentPolicy,
+      redirectChain: ['https://hooks.example.com/events', 'https://evil.example.com/collect'],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('not-allowlisted');
+    expect(result.blockedUrl).toBe('https://evil.example.com/collect');
+  });
+
+  it('rejects DNS rebinding where the answer changes to a private address', async () => {
+    stubResolution([{ address: '10.0.0.7', family: 4 }]);
+
+    const result = await verifyOutboundDestination('https://api.partner.io/hook', {
+      policy: deploymentPolicy,
+      // The host was validated earlier when it resolved publicly.
+      previousAddresses: [{ address: '93.184.216.34', family: 4 }],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('dns-rebinding');
+    expect(result.addresses).toEqual([]);
+  });
+
+  it('rejects a destination on a port outside the deployment policy', async () => {
+    stubResolution([{ address: '93.184.216.34', family: 4 }]);
+
+    const result = await verifyOutboundDestination('https://hooks.example.com:8443/events', {
+      policy: deploymentPolicy,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('port-not-allowed');
+    expect(result.port).toBe(8443);
+  });
+
+  it('rejects plain http when the deployment requires https', async () => {
+    stubResolution([{ address: '93.184.216.34', family: 4 }]);
+
+    const result = await verifyOutboundDestination('http://hooks.example.com/events', {
+      policy: deploymentPolicy,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('insecure-protocol');
+  });
+
+  it('fails closed when DNS resolution errors', async () => {
+    vi.spyOn(dns, 'lookup').mockImplementation(((
+      _hostname: string,
+      _options: unknown,
+      callback: (err: unknown, addrs: unknown, family: number) => void,
+    ) => {
+      callback(new Error('ENOTFOUND'), [], 0);
+    }) as never);
+
+    const result = await verifyOutboundDestination('https://hooks.example.com/events', {
+      policy: deploymentPolicy,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('dns-error');
+    expect(result.addresses).toEqual([]);
   });
 });

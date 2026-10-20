@@ -20,6 +20,107 @@ interface ChaosHypothesis {
   recoveryTime?: number; // milliseconds
 }
 
+type DependencyKind = 'database' | 'cache' | 'provider' | 'network';
+
+interface DependencyExercise {
+  name: string;
+  dependency: DependencyKind;
+  description: string;
+  // Bounded fault duration: exercises must never run longer than this.
+  maxFaultDurationMs: number;
+  // Blast radius: the set of invariants allowed to degrade during the fault.
+  // Any invariant outside this set must remain within its steady-state threshold.
+  blastRadius: string[];
+  // Per-invariant thresholds for this specific dependency exercise.
+  duringFaultThresholds: Record<string, number>;
+  // Maximum acceptable time to return to baseline after the fault ends.
+  maxRecoveryMs: number;
+  // Owner accountable for the exercise and its evidence.
+  owner: string;
+  // How often the exercise should run on the schedule.
+  schedule: string;
+}
+
+interface DependencyExerciseEvidence {
+  exercise: string;
+  dependency: DependencyKind;
+  owner: string;
+  startedAt: string;
+  faultDurationMs: number;
+  faultWithinBound: boolean;
+  blastRadiusRespected: boolean;
+  recoveryMetricsCaptured: boolean;
+  recoveryTimeMs: number;
+  recoveryWithinBound: boolean;
+  verdictPass: boolean;
+  notes: string[];
+}
+
+const dependencyExercises: DependencyExercise[] = [
+  {
+    name: 'database-primary-failover',
+    dependency: 'database',
+    description: 'Primary database becomes unavailable; failover to replica',
+    maxFaultDurationMs: 60000,
+    blastRadius: ['price-latency-p99', 'error-rate'],
+    duringFaultThresholds: {
+      availability: 95,
+      'price-latency-p99': 5000,
+      'error-rate': 10,
+      'cross-region-consistency': 99.0,
+    },
+    maxRecoveryMs: 30000,
+    owner: 'data-platform',
+    schedule: 'weekly',
+  },
+  {
+    name: 'cache-cluster-flush',
+    dependency: 'cache',
+    description: 'Cache cluster flushed; system must serve from origin without collapse',
+    maxFaultDurationMs: 30000,
+    blastRadius: ['price-latency-p99', 'price-freshness'],
+    duringFaultThresholds: {
+      availability: 99.0,
+      'price-latency-p99': 3000,
+      'price-freshness': 60000,
+      'error-rate': 5,
+    },
+    maxRecoveryMs: 20000,
+    owner: 'platform-caching',
+    schedule: 'weekly',
+  },
+  {
+    name: 'provider-outage',
+    dependency: 'provider',
+    description: 'External price provider unavailable; fallback to cached/stale data',
+    maxFaultDurationMs: 120000,
+    blastRadius: ['price-freshness', 'error-rate'],
+    duringFaultThresholds: {
+      availability: 99.0,
+      'price-freshness': 120000,
+      'error-rate': 5,
+    },
+    maxRecoveryMs: 60000,
+    owner: 'integrations',
+    schedule: 'daily',
+  },
+  {
+    name: 'network-partition-cross-region',
+    dependency: 'network',
+    description: 'Cross-region network partition; CRDT convergence must hold',
+    maxFaultDurationMs: 90000,
+    blastRadius: ['cross-region-consistency', 'price-latency-p99'],
+    duringFaultThresholds: {
+      availability: 99.0,
+      'cross-region-consistency': 95.0,
+      'price-latency-p99': 4000,
+    },
+    maxRecoveryMs: 45000,
+    owner: 'sre',
+    schedule: 'weekly',
+  },
+];
+
 const systemInvariants: SteadyStateInvariant[] = [
   {
     name: 'availability',
@@ -299,6 +400,170 @@ export async function runChaosExperimentTest(
   return hypothesis;
 }
 
+function isLowerIsBetter(invariantName: string): boolean {
+  return invariantName.includes('freshness') || invariantName.includes('latency') || invariantName.includes('error-rate');
+}
+
+async function assertBlastRadius(
+  metrics: Record<string, number>,
+  exercise: DependencyExercise,
+  invariants: SteadyStateInvariant[]
+): Promise<void> {
+  for (const invariant of invariants) {
+    const value = metrics[invariant.name];
+    assert.ok(value !== undefined, `Blast-radius check missing metric: ${invariant.name}`);
+
+    const inBlastRadius = exercise.blastRadius.includes(invariant.name);
+    if (inBlastRadius) {
+      // Degradation is permitted but must stay within the exercise-specific bound.
+      const bound = exercise.duringFaultThresholds[invariant.name];
+      if (bound !== undefined) {
+        if (isLowerIsBetter(invariant.name)) {
+          assert.ok(
+            value <= bound,
+            `${exercise.name}: ${invariant.name} ${value}${invariant.unit} exceeded during-fault bound ${bound}${invariant.unit}`
+          );
+        } else {
+          assert.ok(
+            value >= bound,
+            `${exercise.name}: ${invariant.name} ${value}${invariant.unit} fell below during-fault bound ${bound}${invariant.unit}`
+          );
+        }
+      }
+    } else {
+      // Outside the blast radius the invariant must remain within steady-state threshold.
+      if (isLowerIsBetter(invariant.name)) {
+        assert.ok(
+          value <= invariant.threshold,
+          `${exercise.name}: ${invariant.name} ${value}${invariant.unit} outside blast radius exceeded steady-state threshold ${invariant.threshold}${invariant.unit}`
+        );
+      } else {
+        assert.ok(
+          value >= invariant.threshold * 0.95,
+          `${exercise.name}: ${invariant.name} ${value}${invariant.unit} outside blast radius fell below steady-state threshold ${invariant.threshold}${invariant.unit}`
+        );
+      }
+    }
+  }
+}
+
+export async function runDependencyExercise(
+  exercise: DependencyExercise
+): Promise<DependencyExerciseEvidence> {
+  const startedAt = new Date().toISOString();
+  const notes: string[] = [];
+  const evidence: DependencyExerciseEvidence = {
+    exercise: exercise.name,
+    dependency: exercise.dependency,
+    owner: exercise.owner,
+    startedAt,
+    faultDurationMs: 0,
+    faultWithinBound: false,
+    blastRadiusRespected: false,
+    recoveryMetricsCaptured: false,
+    recoveryTimeMs: 0,
+    recoveryWithinBound: false,
+    verdictPass: false,
+    notes,
+  };
+
+  console.log(`\nRunning dependency exercise: ${exercise.name} (${exercise.dependency}, owner=${exercise.owner})`);
+
+  // Phase 1: Baseline
+  const baseline = await captureBaseline();
+  await assertBaseline(baseline, systemInvariants);
+  notes.push('baseline captured and validated');
+
+  // Phase 2: Inject bounded fault
+  const faultStart = Date.now();
+  const faultInjected = await verifyFaultInjection();
+  if (!faultInjected) {
+    notes.push('fault injection verification failed');
+    return evidence;
+  }
+
+  // Phase 3: During-fault assertions (blast radius)
+  const duringFaultMetrics = await captureMetricsDuringFault();
+  const faultDurationMs = Date.now() - faultStart;
+  evidence.faultDurationMs = faultDurationMs;
+  evidence.faultWithinBound = faultDurationMs <= exercise.maxFaultDurationMs;
+  notes.push(`fault duration ${faultDurationMs}ms (bound ${exercise.maxFaultDurationMs}ms)`);
+
+  try {
+    await assertBlastRadius(duringFaultMetrics, exercise, systemInvariants);
+    evidence.blastRadiusRespected = true;
+    notes.push('blast radius respected');
+  } catch (error) {
+    notes.push(`blast radius violation: ${error}`);
+    return evidence;
+  }
+
+  // Phase 4: Recovery evidence
+  const recoveryStart = Date.now();
+  const recoveredMetrics = await captureMetricsPostRecovery();
+  const recoveryTimeMs = await assertRecovery(recoveredMetrics, baseline, systemInvariants);
+  const measuredRecoveryMs = Date.now() - recoveryStart + recoveryTimeMs;
+
+  evidence.recoveryMetricsCaptured = Object.keys(recoveredMetrics).length > 0;
+  evidence.recoveryTimeMs = measuredRecoveryMs;
+  evidence.recoveryWithinBound = measuredRecoveryMs <= exercise.maxRecoveryMs;
+  notes.push(`recovery ${measuredRecoveryMs}ms (bound ${exercise.maxRecoveryMs}ms)`);
+
+  evidence.verdictPass =
+    evidence.faultWithinBound &&
+    evidence.blastRadiusRespected &&
+    evidence.recoveryMetricsCaptured &&
+    evidence.recoveryWithinBound;
+
+  console.log(
+    `  ${evidence.verdictPass ? '✓' : '✗'} ${exercise.name}: fault=${faultDurationMs}ms, recovery=${measuredRecoveryMs}ms`
+  );
+
+  return evidence;
+}
+
+export async function runAllDependencyExercises(): Promise<DependencyExerciseEvidence[]> {
+  console.log('=== DEPENDENCY FAILURE EXERCISES ===\n');
+  const results: DependencyExerciseEvidence[] = [];
+
+  for (const exercise of dependencyExercises) {
+    try {
+      results.push(await runDependencyExercise(exercise));
+    } catch (error) {
+      results.push({
+        exercise: exercise.name,
+        dependency: exercise.dependency,
+        owner: exercise.owner,
+        startedAt: new Date().toISOString(),
+        faultDurationMs: 0,
+        faultWithinBound: false,
+        blastRadiusRespected: false,
+        recoveryMetricsCaptured: false,
+        recoveryTimeMs: 0,
+        recoveryWithinBound: false,
+        verdictPass: false,
+        notes: [`errored: ${error}`],
+      });
+    }
+  }
+
+  const passCount = results.filter((r) => r.verdictPass).length;
+  console.log(`\n=== DEPENDENCY EXERCISE SUMMARY ===`);
+  console.log(`Passed: ${passCount}/${results.length}`);
+  for (const r of results) {
+    console.log(
+      `${r.verdictPass ? '✓' : '✗'} ${r.exercise} [${r.dependency}] owner=${r.owner} fault=${r.faultDurationMs}ms recovery=${r.recoveryTimeMs}ms`
+    );
+  }
+
+  const failed = results.filter((r) => !r.verdictPass);
+  if (failed.length > 0) {
+    throw new Error(`Dependency exercises failed for ${failed.length} exercise(s): ${failed.map((r) => r.exercise).join(', ')}`);
+  }
+
+  return results;
+}
+
 export async function runAllChaosExperiments(): Promise<ChaosHypothesis[]> {
   const experiments = [
     'pod-crash-aggregator',
@@ -351,9 +616,28 @@ export async function runAllChaosExperiments(): Promise<ChaosHypothesis[]> {
 }
 
 if (require.main === module) {
-  runAllChaosExperiments()
+  // Repeatable review procedure:
+  //  1. Run on schedule (see dependencyExercises[].schedule) via CI cron.
+  //  2. Each exercise records baseline, bounded fault duration, blast-radius
+  //     compliance, and post-recovery metrics as evidence.
+  //  3. Reviewers compare recorded evidence against the exercise bounds and
+  //     file follow-ups for any failed or borderline exercise.
+  //  4. Rollback: disable the schedule entry for the failing exercise; no
+  //     production config is mutated by this harness.
+  const mode = process.argv[2] ?? 'all';
+
+  const run =
+    mode === 'dependencies'
+      ? runAllDependencyExercises().then(() => undefined)
+      : mode === 'chaos'
+        ? runAllChaosExperiments().then(() => undefined)
+        : runAllDependencyExercises()
+            .then(() => runAllChaosExperiments())
+            .then(() => undefined);
+
+  run
     .then(() => {
-      console.log('\n✓ All chaos experiments passed');
+      console.log('\n✓ All chaos experiments and dependency exercises passed');
       process.exit(0);
     })
     .catch((error) => {
@@ -362,4 +646,11 @@ if (require.main === module) {
     });
 }
 
-export { SteadyStateInvariant, ChaosHypothesis };
+export {
+  SteadyStateInvariant,
+  ChaosHypothesis,
+  DependencyKind,
+  DependencyExercise,
+  DependencyExerciseEvidence,
+  dependencyExercises,
+};

@@ -3,11 +3,13 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 use crate::contract::API_VERSION;
 use crate::errors::OracleError;
 use crate::events::{
-    CanaryPromoted, CanarySet, ImplementationUpdated, PriceSubmitted, UpgradeApproved,
-    UpgradeExecuted, UpgradeProposed,
+    CanaryPromoted, CanarySet, FeedCatalogCommitted, ImplementationUpdated, PriceSubmitted,
+    UpgradeApproved, UpgradeExecuted, UpgradeProposed,
 };
 use crate::storage;
-use crate::types::{AssetPrice, MultiSigConfig, PriceDataPoint, SourceReputation};
+use crate::types::{
+    AssetPrice, FeedCatalogCommitment, MultiSigConfig, PriceDataPoint, SourceReputation,
+};
 use crate::utils::{append_history, apply_reputation_decay, calculate_usd_price, deviation_exceeds, update_reputation, vec_contains_address};
 
 // Issue #375 — minimum delay between a queued WASM upgrade and its execution.
@@ -478,5 +480,55 @@ impl ProxyContract {
         storage::verify_admin(&env, &admin)?;
         storage::set_trusted_asset(&env, &asset, trusted);
         Ok(())
+    }
+
+    // ── Issue #725 — Feed catalog commitment ───────────────────────────────
+
+    pub fn commit_feed_catalog(
+        env: Env,
+        admin: Address,
+        version: u32,
+        catalog_hash: BytesN<32>,
+    ) -> Result<(), OracleError> {
+        admin.require_auth();
+        storage::verify_admin(&env, &admin)?;
+
+        if version == 0 {
+            return Err(OracleError::InvalidCatalogVersion);
+        }
+
+        if let Some(existing) = storage::get_feed_catalog_commitment(&env) {
+            if version <= existing.version {
+                return Err(OracleError::InvalidCatalogVersion);
+            }
+        }
+
+        let commitment = FeedCatalogCommitment {
+            version,
+            catalog_hash: catalog_hash.clone(),
+            updated_at: env.ledger().timestamp(),
+            publisher: admin.clone(),
+        };
+        storage::set_feed_catalog_commitment(&env, &commitment);
+
+        FeedCatalogCommitted {
+            publisher: admin.clone(),
+            version,
+            catalog_hash,
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    pub fn get_feed_catalog_commitment(env: Env) -> Option<FeedCatalogCommitment> {
+        storage::get_feed_catalog_commitment(&env)
+    }
+
+    pub fn get_feed_catalog_version(env: Env) -> u32 {
+        storage::get_feed_catalog_commitment(&env)
+            .map(|c| c.version)
+            .unwrap_or(0)
     }
 }

@@ -1,0 +1,81 @@
+{
+  "generatedFrom": "api/openapi.json",
+  "openapiVersion": "1.0.0",
+  "schemas": {
+    "AssetPrice": {
+      "valid": {
+        "asset": "XLM",
+        "price": "10000000000",
+        "decimals": 7,
+        "source": "chainlink",
+        "timestamp": 1719000000
+      },
+      "empty_object": {}
+    },
+    "HistoryEntry": {
+      "valid": {
+        "price": "10000000000",
+        "decimals": 7,
+        "source": "chainlink",
+        "timestamp": 1719000000
+      },
+      "empty_object": {}
+    },
+    "HistoryData": {
+      "valid": {
+        "asset": "XLM",
+        "to": null,
+        "prices": [
+          {
+            "price": "10000000000",
+            "decimals": 7,
+            "source": "chainlink",
+            "timestamp": 1719000000
+          }
+        ],
+        "pagination": {
+          "limit": 100,
+          "nextCursor": null,
+          "hasMore": false
+        }
+      },
+      "empty_object": {},
+      "empty_prices": {
+        "asset": "XLM",
+        "to": null,
+        "prices": [],
+        "pagination": {
+          "limit": 100,
+          "nextCursor": null,
+          "hasMore": false
+        }
+      }
+    },
+    "PaginationMeta": {
+      "valid": {
+        "page": 1,
+        "limit": 100,
+        "total": 1,
+        "totalPages": 1,
+        "hasNext": false,
+        "hasPrev": false
+      },
+      "empty_object": {}
+    },
+    "CursorPaginationMeta": {
+      "valid": {
+        "limit": 100,
+        "nextCursor": null,
+        "hasMore": false
+      },
+      "empty_object": {}
+    },
+    "ErrorResponse": {
+      "valid": {
+        "code": "NOT_FOUND",
+        "message": "Asset not found"
+      },
+      "empty_object": {}
+    }
+  }
+}

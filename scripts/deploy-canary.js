@@ -14,6 +14,7 @@
 //   node scripts/deploy-canary.js promote            [--dry-run]
 //   node scripts/deploy-canary.js rollback           [--dry-run]
 //   node scripts/deploy-canary.js status
+//   node scripts/deploy-canary.js train-status
 //
 // Environment:
 //   CONTRACT_ID       Proxy contract id the canary is registered against
@@ -21,8 +22,18 @@
 //   SOROBAN_RPC_URL   RPC endpoint (defaults to testnet)
 //   NETWORK_PASSPHRASE
 //   --mainnet         Switch to the mainnet passphrase / RPC defaults
+//   RELEASE_REGION    Region this invocation acts on (default: global)
+//   RELEASE_TRAIN_MANIFEST  Path to the release-train manifest
+//   RELEASE_TRAIN_STATE     Path to the persisted train state
 //
-// See docs/CANARY_DEPLOYMENTS.md for the full runbook.
+// Issue #735: deploy/promote are gated by a staged release-train manifest
+// (config/release-train.json) that defines region ordering, promotion
+// criteria, and automatic halt conditions. Promotions respect cross-region
+// ordering and halt automatically on health regression. Rollback guidance:
+// run `rollback` for the affected region, then re-run `train-status` to
+// confirm ordering before resuming the train.
+//
+// See docs/CANARY_DEPLOYMENTS.md and docs/RELEASE_TRAIN.md for the runbook.
 
 import { execSync } from 'child_process';
 import path from 'path';
@@ -30,6 +41,13 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import {
+  loadReleaseTrain,
+  evaluateRegionPromotion,
+  evaluateAutoHalt,
+  recordRegionPromotion,
+  readTrainState,
+} from './release-train.js';
 import {
   Keypair,
   SorobanRpc,
@@ -56,6 +74,12 @@ const PASSPHRASE =
 const SECRET = process.env.ADMIN_SECRET_KEY;
 const PROXY_CONTRACT_ID = process.env.CONTRACT_ID;
 const DRY_RUN = process.argv.includes('--dry-run');
+// Region this invocation is acting on (issue #735 staged release train).
+const REGION = process.env.RELEASE_REGION || 'global';
+const TRAIN_MANIFEST =
+  process.env.RELEASE_TRAIN_MANIFEST || path.resolve(__dirname, '../config/release-train.json');
+const TRAIN_STATE =
+  process.env.RELEASE_TRAIN_STATE || path.resolve(__dirname, '../.release-train-state.json');
 
 if (!SECRET) {
   console.error('ERROR: ADMIN_SECRET_KEY not set in .env');
@@ -199,7 +223,60 @@ async function checkSloReleaseGate(actionName) {
   }
 }
 
+/**
+ * Load the release-train manifest and enforce cross-region ordering for the
+ * current region. Returns the manifest (or null when no manifest is present,
+ * preserving the pre-#735 single-region behaviour).
+ */
+function enforceReleaseTrainOrdering(actionName) {
+  if (!fs.existsSync(TRAIN_MANIFEST)) {
+    console.warn(`[Release Train] No manifest at ${TRAIN_MANIFEST}; skipping region ordering checks.`);
+    return null;
+  }
+  const train = loadReleaseTrain(TRAIN_MANIFEST);
+  const state = readTrainState(TRAIN_STATE);
+  const verdict = evaluateRegionPromotion(train, state, REGION);
+  console.log(`[Release Train] ${actionName} for region "${REGION}": ${verdict.decision}`);
+  for (const r of verdict.reasons) {
+    console.log(`  - ${r}`);
+  }
+  if (verdict.decision === 'BLOCK') {
+    console.error(`\nERROR: ${actionName} for region "${REGION}" is BLOCKED by release-train ordering (#735).`);
+    console.error('A prior region in the train has not met its promotion criteria. Halting.');
+    process.exit(1);
+  }
+  return train;
+}
+
+/**
+ * Check automatic halt conditions for the current region against live SLO
+ * metrics. Halts (exits non-zero) when a halt condition fires.
+ */
+async function enforceAutoHalt(actionName) {
+  if (!fs.existsSync(TRAIN_MANIFEST)) return;
+  const train = loadReleaseTrain(TRAIN_MANIFEST);
+  const prometheusUrl = process.env.PROMETHEUS_URL || 'http://localhost:9090';
+  let metrics = null;
+  try {
+    const { fetchLiveSloMetrics } = await import('./slo-release-gate.ts');
+    metrics = await fetchLiveSloMetrics(prometheusUrl);
+  } catch (err) {
+    console.warn(`[Release Train] Could not fetch live metrics for auto-halt (${err.message}).`);
+  }
+  const halt = evaluateAutoHalt(train, REGION, metrics);
+  if (halt.halt) {
+    console.error(`\nERROR: Automatic halt triggered for region "${REGION}" during ${actionName}.`);
+    for (const r of halt.reasons) {
+      console.error(`  - ${r}`);
+    }
+    console.error('Release train halted. Investigate health regression before resuming.');
+    process.exit(1);
+  }
+}
+
 async function deploy(shareBps) {
+  enforceReleaseTrainOrdering('canary deploy');
+  await enforceAutoHalt('canary deploy');
   const gateResult = await checkSloReleaseGate('canary deploy');
   if (gateResult && gateResult.decision === 'DEGRADED_PERMIT' && shareBps > 500) {
     console.warn(`\n[SLO Gate Notice] Gate is in DEGRADED_PERMIT mode (elevated 24h burn rate).`);
@@ -268,6 +345,8 @@ async function deploy(shareBps) {
 }
 
 async function promote() {
+  const train = enforceReleaseTrainOrdering('canary promote');
+  await enforceAutoHalt('canary promote');
   const gateResult = await checkSloReleaseGate('canary promote');
   if (gateResult && gateResult.decision === 'DEGRADED_PERMIT' && !process.env.SLO_OVERRIDE_REASON) {
     console.error('\nERROR: Automatic promotion blocked while SLO gate is in DEGRADED_PERMIT mode.');
@@ -278,6 +357,10 @@ async function promote() {
   await buildAndSend('promote_canary', [nativeToScVal(keypair.publicKey(), { type: 'address' })]);
   console.log(`Canary promoted on proxy ${PROXY_CONTRACT_ID}.`);
   console.log('Implementation version was incremented; canary registration cleared.');
+  if (train) {
+    recordRegionPromotion(TRAIN_STATE, REGION, { promotedAt: new Date().toISOString() });
+    console.log(`[Release Train] Recorded promotion of region "${REGION}" in ${TRAIN_STATE}.`);
+  }
 }
 
 async function rollback() {
@@ -358,8 +441,25 @@ async function main() {
     case 'status':
       await status();
       break;
+    case 'train-status': {
+      if (!fs.existsSync(TRAIN_MANIFEST)) {
+        console.error(`No release-train manifest at ${TRAIN_MANIFEST}`);
+        process.exit(1);
+      }
+      const train = loadReleaseTrain(TRAIN_MANIFEST);
+      const state = readTrainState(TRAIN_STATE);
+      console.log(`Release train: ${train.name || '(unnamed)'}`);
+      for (const region of train.regions) {
+        const verdict = evaluateRegionPromotion(train, state, region.name);
+        console.log(`  ${region.name}: ${verdict.decision}`);
+        for (const r of verdict.reasons) console.log(`    - ${r}`);
+      }
+      break;
+    }
     default:
-      console.error(`Unknown command "${cmd}". Use: deploy [share-bps] | promote | rollback | status`);
+      console.error(
+        `Unknown command "${cmd}". Use: deploy [share-bps] | promote | rollback | status | train-status`,
+      );
       process.exit(1);
   }
 }

@@ -477,6 +477,8 @@ export interface CostModelIntegrityResult {
  * Alerts if runtime assumptions diverge from the approved capacity model beyond tolerance.
  */
 export function verifyRuntimeCostModelIntegrity(customModelPath?: string): CostModelIntegrityResult {
+  // NOTE (#734): regional capacity forecasts are derived from the same
+  // budgets/rates reconciled here; drift in this model invalidates forecasts.
   const defaultPath = path.resolve(__dirname, '../../../../config/cost-model.json');
   const targetPath = customModelPath || defaultPath;
 

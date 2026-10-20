@@ -1,0 +1,36 @@
+name: SDK release compatibility gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: SDK tag to check (sdk-vX.Y.Z)
+        required: true
+  push:
+    tags:
+      - 'sdk-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  compat-gate:
+    name: Verify SDK/server/contract compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run compatibility gate and generate release notes
+        env:
+          SDK_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: node scripts/sdk-release-compat-check.mjs --tag="$SDK_TAG" --out=sdk-release-notes.md
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-release-notes
+          path: sdk-release-notes.md

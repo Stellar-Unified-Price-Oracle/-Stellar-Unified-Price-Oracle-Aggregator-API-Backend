@@ -9,7 +9,7 @@
 //           explicit `admin` parameter, call storage::verify_admin, and
 //           return Result<(), OracleError> so rejection surfaces an error code.
 
-use soroban_sdk::{token, Address, Env, String};
+use soroban_sdk::{token, Address, BytesN, Env, String};
 
 use crate::errors::OracleError;
 use crate::events::{
@@ -18,6 +18,7 @@ use crate::events::{
     TrustedAssetSet, WritePathPaused, WritePathUnpaused,
 };
 use crate::storage;
+use crate::types::FeedCatalogCommitment;
 
 pub(crate) fn initialize(env: &Env, admin: &Address) -> Result<(), OracleError> {
     if storage::has_admin(env) {

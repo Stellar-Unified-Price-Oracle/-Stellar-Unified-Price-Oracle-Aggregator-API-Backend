@@ -19,7 +19,9 @@ export type Permission =
   | 'consistency:write'
   | 'circuit:write'
   | 'system:read'
-  | 'dr:read';
+  | 'dr:read'
+  | 'feeds:read'
+  | 'feeds:write';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -44,13 +46,15 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'keys:read', 'keys:write', 'keys:delete', 'keys:rotate', 'roles:write', 'metrics:read',
     'cors:read', 'cors:write', 'backup:read', 'backup:write', 'archival:write',
     'consistency:write', 'circuit:write', 'system:read', 'dr:read',
+    'feeds:read', 'feeds:write',
   ],
   operator: [
     'keys:read', 'keys:write', 'keys:rotate', 'metrics:read', 'cors:read',
     'backup:read', 'backup:write', 'archival:write', 'consistency:write', 'circuit:write',
     'system:read', 'dr:read',
+    'feeds:read', 'feeds:write',
   ],
-  viewer: ['keys:read', 'metrics:read', 'cors:read', 'backup:read', 'system:read', 'dr:read'],
+  viewer: ['keys:read', 'metrics:read', 'cors:read', 'backup:read', 'system:read', 'dr:read', 'feeds:read'],
 };
 
 const ROLE_LEVEL: Record<Role, number> = {

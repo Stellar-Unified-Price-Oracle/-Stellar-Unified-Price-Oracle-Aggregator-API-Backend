@@ -14,6 +14,26 @@ export interface CircuitBreakerMetrics {
   suspiciousSourcesList: Array<{ key: string; deviations: number }>;
 }
 
+// #736 — a deployment cell bounds the blast radius of a single deployment or
+// dependency failure to a fixed set of feeds and consumers.
+export interface CellStatus {
+  id: string;
+  feeds: string[];
+  dependencies: Record<string, boolean>;
+  degraded: boolean;
+  reason?: string;
+}
+
+// #737 — explicit per-feed ownership: primary/failover region and the epoch of
+// the single authorized publisher.
+export interface FeedOwnership {
+  feed: string;
+  primaryRegion: string;
+  failoverRegion: string;
+  ownerRegion: string;
+  publisherEpoch: number;
+}
+
 export interface HealthSnapshot {
   sourceHealth: Record<string, SourceHealthStatus>;
   lastAggregated: AggregatedPrice[];
@@ -118,6 +138,21 @@ export class HealthServer {
             ? { active: snap.maintenance.active, phase: snap.maintenance.phase, publisherFenced: snap.maintenance.publisherFenced }
             : { active: false, phase: 'idle', publisherFenced: false },
         }));
+        return;
+      }
+
+      // #736 — cell boundaries, assigned feeds and dependency reachability.
+      if (url.pathname === '/health/cells') {
+        const snap = this.getSnapshot();
+        const cells = (snap.cells ?? []).map((c) => ({
+          id: c.id,
+          feeds: c.feeds,
+          dependencies: c.dependencies,
+          degraded: c.degraded,
+          reason: c.reason,
+        }));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ cells }));
         return;
       }
 

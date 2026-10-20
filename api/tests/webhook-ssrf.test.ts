@@ -342,6 +342,167 @@ describe('Issue #600: redirects cannot escape the validation', () => {
   });
 });
 
+describe('Issue #750: egress destinations are constrained by deployment policy', () => {
+  it('pins the default deployment policy to https, no private IPs and no allowlist widening', () => {
+    // The shipped defaults are the policy of record; a change here is a policy change.
+    expect(config.webhooks.requireHttps).toBe(true);
+    expect(config.webhooks.allowPrivateIps).toBe(false);
+    expect(config.webhooks.allowedHosts).toEqual([]);
+    expect(config.webhooks.allowedHostsByTenant).toEqual({});
+  });
+
+  it('accepts a boundary allowlisted destination and rejects its near-misses', () => {
+    config.webhooks.allowedHosts = ['hooks.example.com'];
+
+    // Exact host match is the only accepted form.
+    expect(webhookService.register('https://hooks.example.com/hook', 'key-1', trigger)).toBeDefined();
+    expect(webhookService.register('https://hooks.example.com:8443/hook', 'key-1', trigger)).toBeDefined();
+
+    const nearMisses = [
+      'https://hooks.example.com.evil.test/hook',
+      'https://evil.test/hooks.example.com',
+      'https://sub.hooks.example.com/hook',
+      'https://hooks.example.com@evil.test/hook',
+      'https://evil.test#@hooks.example.com/hook',
+      'https://evil.test?next=https://hooks.example.com/hook',
+    ];
+
+    for (const url of nearMisses) {
+      let thrown: unknown;
+      try {
+        webhookService.register(url, 'key-1', trigger);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown, url).toBeInstanceOf(SsrfError);
+      expect((thrown as SsrfError).reason, url).toBe('not-allowlisted');
+    }
+  });
+
+  it('keeps the allowlist authoritative over the private-IP opt-in', () => {
+    config.webhooks.allowPrivateIps = true;
+    config.webhooks.allowedHosts = ['hooks.example.com'];
+
+    // The development opt-in must not widen the allowlist.
+    expect(() =>
+      webhookService.register('https://127.0.0.1/hook', 'key-1', trigger),
+    ).toThrow(/allowlist/i);
+    expect(() =>
+      webhookService.register('https://169.254.169.254/', 'key-1', trigger),
+    ).toThrow(/allowlist/i);
+  });
+
+  it('re-validates the destination on every delivery, not just at registration', async () => {
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response('{}', { status: 200 })));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const webhook = webhookService.register('https://hooks.example.com/hook', 'key-1', trigger);
+    await webhookService.deliver(webhook, { asset: 'XLM', price: 0.5 });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Policy tightens after registration: the stored URL is re-checked.
+    config.webhooks.allowedHosts = ['other.example.com'];
+    await webhookService.deliver(webhook, { asset: 'XLM', price: 0.5 });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(webhook.lastFailure).toBe('blocked-url');
+  });
+});
+
+describe('Issue #750: redirects and DNS rebinding cannot bypass egress policy', () => {
+  let server: http.Server;
+  let port = 0;
+  const hits: string[] = [];
+
+  beforeAll(async () => {
+    server = http.createServer((req, res) => {
+      hits.push(req.url ?? '');
+      if (req.url === '/redirect-private') {
+        res.writeHead(302, { Location: `http://127.0.0.1:${port}/internal` });
+        res.end();
+        return;
+      }
+      if (req.url === '/redirect-metadata') {
+        res.writeHead(307, { Location: 'http://169.254.169.254/latest/meta-data/' });
+        res.end();
+        return;
+      }
+      if (req.url === '/redirect-allowlisted') {
+        res.writeHead(302, { Location: 'https://hooks.example.com/hook' });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{}');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as AddressInfo).port;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  beforeEach(() => {
+    hits.length = 0;
+    config.webhooks.requireHttps = false;
+    config.webhooks.allowPrivateIps = true;
+    config.webhooks.maxRetries = 1;
+  });
+
+  it('does not follow a redirect to a private destination', async () => {
+    const webhook = webhookService.register(`http://127.0.0.1:${port}/redirect-private`, 'key-1', trigger);
+
+    await webhookService.deliver(webhook, { asset: 'XLM', price: 0.5 });
+
+    expect(hits).toContain('/redirect-private');
+    expect(hits).not.toContain('/internal');
+    expect(webhook.lastFailure).toBe('redirect-not-followed');
+  });
+
+  it('does not follow a redirect to the metadata endpoint', async () => {
+    const webhook = webhookService.register(`http://127.0.0.1:${port}/redirect-metadata`, 'key-1', trigger);
+
+    await webhookService.deliver(webhook, { asset: 'XLM', price: 0.5 });
+
+    expect(hits).toContain('/redirect-metadata');
+    expect(webhook.lastFailure).toBe('redirect-not-followed');
+    const [delivery] = webhookService.deliveries(webhook.id);
+    expect(delivery.error).not.toMatch(/169\.254|meta-data/);
+  });
+
+  it('does not follow a redirect even to an allowlisted destination', async () => {
+    config.webhooks.allowedHosts = ['hooks.example.com'];
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response('{}', { status: 200 })));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const webhook = registration(`http://127.0.0.1:${port}/redirect-allowlisted`);
+    await webhookService.deliver(webhook, { asset: 'XLM', price: 0.5 });
+
+    // Redirects are never followed; the policy is evaluated once per delivery.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(webhook.lastFailure).toBe('redirect-not-followed');
+  });
+
+  it('blocks a host whose DNS answer changes to a private address (rebinding)', async () => {
+    const fetchSpy = vi.fn(() => Promise.resolve(new Response('{}', { status: 200 })));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    // Registration resolves the host to a public address.
+    const webhook = webhookService.register('https://rebind.example.com/hook', 'key-1', trigger);
+    expect(webhook.url).toBe('https://rebind.example.com/hook');
+
+    // The name now resolves to loopback; delivery must re-resolve and refuse.
+    const resolve = vi.fn(async () => ['127.0.0.1']);
+    const rebound = registration('https://rebind.example.com/hook');
+    await webhookService.deliver(rebound, { asset: 'XLM', price: 0.5 }, { resolve } as never);
+
+    expect(resolve).toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(rebound.lastFailure).toBe('blocked-url');
+  });
+});
+
 describe('Issue #600: error surfaces do not reveal topology', () => {
   beforeEach(() => {
     config.webhooks.maxRetries = 1;

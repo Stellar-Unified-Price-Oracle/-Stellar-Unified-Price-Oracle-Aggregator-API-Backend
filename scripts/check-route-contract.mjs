@@ -48,6 +48,7 @@ const IGNORE_MOUNTED = new Map([
   ['/portal',                'Static developer portal HTML; not an API route'],
   ['/portal/governance',     'Static governance dashboard HTML; not an API route'],
   ['/docs/marketplace',      'Static marketplace HTML; not an API route'],
+  ['/.well-known',           'RFC 9116 security contact information; static file endpoint'],
   ['/api/v1/docs',           'Swagger UI; describes the API but is not itself an API endpoint'],
   ['/api/feature-flags',     'Internal feature-flag read surface; not yet in the public OpenAPI spec'],
   ['/api/events',            'Internal event-store read surface; not yet in the public OpenAPI spec'],

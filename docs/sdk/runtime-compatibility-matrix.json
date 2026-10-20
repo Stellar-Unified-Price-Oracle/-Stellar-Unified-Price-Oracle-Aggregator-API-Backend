@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "owner": "Developer ecosystem and integration",
+  "reviewCadence": "quarterly",
+  "lastReviewed": "2026-10-20",
+  "supportedServer": ">=1.0.0 <2.0.0",
+  "schemaVersions": [1],
+  "contractAbi": "1",
+  "sdks": [
+    {
+      "name": "@stellar-oracle/sdk",
+      "language": "typescript",
+      "versionLine": "1.x",
+      "runtimes": [
+        { "runtime": "node", "version": "18", "status": "deprecated", "tested": "2026-10-20", "supportEnds": "2026-12-31" },
+        { "runtime": "node", "version": "20", "status": "supported", "tested": "2026-10-20", "supportEnds": "2027-04-30" },
+        { "runtime": "node", "version": "22", "status": "supported", "tested": "2026-10-20", "supportEnds": "2028-04-30" },
+        { "runtime": "node", "version": "24", "status": "supported", "tested": "2026-10-20", "supportEnds": "2029-04-30" },
+        { "runtime": "bun", "version": "1.x", "status": "best-effort", "tested": null, "supportEnds": null },
+        { "runtime": "browser", "version": "evergreen", "status": "supported", "tested": "2026-10-20", "supportEnds": null }
+      ]
+    },
+    {
+      "name": "stellar-oracle-sdk",
+      "language": "python",
+      "versionLine": "1.x",
+      "runtimes": [
+        { "runtime": "cpython", "version": "3.9", "status": "deprecated", "tested": "2026-10-20", "supportEnds": "2026-10-31" },
+        { "runtime": "cpython", "version": "3.11", "status": "supported", "tested": "2026-10-20", "supportEnds": "2027-10-31" },
+        { "runtime": "cpython", "version": "3.12", "status": "supported", "tested": "2026-10-20", "supportEnds": "2028-10-31" },
+        { "runtime": "cpython", "version": "3.13", "status": "supported", "tested": "2026-10-20", "supportEnds": "2029-10-31" }
+      ]
+    }
+  ]
+}
