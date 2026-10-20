@@ -38,6 +38,7 @@ import sandboxRoutes, { initializeSandboxCache } from './routes/sandbox';
 import featureFlagRoutes from './routes/featureFlags';
 import eventRoutes from './routes/events';
 import governanceRoutes from './governance/proposal-routes';
+import governanceTransparencyRoutes from './governance/transparency/routes';
 import { uptimeTracker } from './observability/uptime-tracker';
 import { getVaultClient } from '@stellar-oracle/vault-client';
 import { apiKeyManager } from './governance/api-key-manager';
@@ -238,6 +239,10 @@ app.use('/api/v1', v1DeprecationHeaders, v1Routes);
 app.use('/api/v1', v1DeprecationHeaders, platformRoutes);
 app.use('/api/v1/sandbox', sandboxRoutes);
 app.use('/api/v1/admin', adminRoutes);
+// Public governance transparency reads (#777, #779, #780, #781). Mounted
+// before the admin-authenticated proposal router so publication is not gated
+// behind adminAuthMiddleware.
+app.use('/api/v1/governance', governanceTransparencyRoutes);
 app.use('/api/v1/governance', governanceRoutes);
 // Public status page — no authentication required (#66)
 app.use('/api/v1/status', statusRoutes);

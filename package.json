@@ -25,6 +25,8 @@
     "check:routes": "node scripts/check-route-contract.mjs",
     "check:ports": "node scripts/check-port-consistency.mjs",
     "check:contracts": "npm run check:env && npm run check:routes && npm run check:ports",
+    "check:release-windows": "cd api && npm run check:release-windows",
+    "rehearsal:governance": "cd api && npm run rehearsal:governance",
     "typecheck:all": "cd packages/types && npx tsc --noEmit && cd ../../packages/vault-client && npx tsc --noEmit && cd ../../services/aggregator && npx tsc --noEmit && cd ../../api && npx tsc --noEmit",
     "verify:tools": "node scripts/install-verification-tools.mjs",
     "verify:contract": "node scripts/install-verification-tools.mjs && node scripts/generate-verification-report.mjs --cargo",

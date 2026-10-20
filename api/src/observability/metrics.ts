@@ -330,6 +330,80 @@ export const auditEntriesArchivedTotal = new client.Counter({
 });
 register.registerMetric(auditEntriesArchivedTotal);
 
+// ── Governance transparency (#777, #779, #781) ───────────────────────────────
+
+export const governanceVoterTurnoutRatio = new client.Gauge({
+  name: 'governance_voter_turnout_ratio',
+  help: 'Mean share of eligible wallets that voted on closed proposals (0..1)',
+});
+register.registerMetric(governanceVoterTurnoutRatio);
+
+export const governancePowerTurnoutRatio = new client.Gauge({
+  name: 'governance_power_turnout_ratio',
+  help: 'Mean share of eligible voting power cast on closed proposals (0..1)',
+});
+register.registerMetric(governancePowerTurnoutRatio);
+
+export const governanceQuorumAttainmentRatio = new client.Gauge({
+  name: 'governance_quorum_attainment_ratio',
+  help: 'Share of closed proposals that reached the configured quorum (0..1)',
+});
+register.registerMetric(governanceQuorumAttainmentRatio);
+
+export const governanceDelegationHhi = new client.Gauge({
+  name: 'governance_delegation_hhi',
+  help: 'Herfindahl-Hirschman index of delegate voting power (suppressed cohorts emit no sample)',
+});
+register.registerMetric(governanceDelegationHhi);
+
+export const governanceTopDelegateShare = new client.Gauge({
+  name: 'governance_top_delegate_share',
+  help: 'Voting-power share held by the largest delegate (0..1)',
+});
+register.registerMetric(governanceTopDelegateShare);
+
+export const governanceAbstentionRate = new client.Gauge({
+  name: 'governance_abstention_rate',
+  help: 'Mean share of eligible voting power that did not vote for or against (0..1)',
+});
+register.registerMetric(governanceAbstentionRate);
+
+export const governanceSnapshotAgeSeconds = new client.Gauge({
+  name: 'governance_snapshot_age_seconds',
+  help: 'Age of the published governance health snapshot in seconds',
+});
+register.registerMetric(governanceSnapshotAgeSeconds);
+
+export const treasuryReconciled = new client.Gauge({
+  name: 'treasury_reconciled',
+  help: '1 when opening + inflows - outflows equals the published closing balance for every asset',
+});
+register.registerMetric(treasuryReconciled);
+
+export const treasuryBalanceBreaks = new client.Gauge({
+  name: 'treasury_balance_breaks',
+  help: 'Number of error-severity treasury reconciliation breaks',
+});
+register.registerMetric(treasuryBalanceBreaks);
+
+export const treasurySnapshotAgeSeconds = new client.Gauge({
+  name: 'treasury_snapshot_age_seconds',
+  help: 'Age of the published treasury snapshot in seconds',
+});
+register.registerMetric(treasurySnapshotAgeSeconds);
+
+export const releaseReviewNonCompliant = new client.Gauge({
+  name: 'release_review_non_compliant',
+  help: 'Number of release entries that violate the community review window policy',
+});
+register.registerMetric(releaseReviewNonCompliant);
+
+export const releaseReviewOpenWindows = new client.Gauge({
+  name: 'release_review_open_windows',
+  help: 'Number of release review windows currently open for feedback',
+});
+register.registerMetric(releaseReviewOpenWindows);
+
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();
   res.on('finish', () => {
