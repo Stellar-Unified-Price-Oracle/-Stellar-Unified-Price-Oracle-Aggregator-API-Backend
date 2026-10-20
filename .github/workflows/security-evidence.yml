@@ -1,0 +1,41 @@
+name: Security control evidence
+
+on:
+  schedule:
+    - cron: '0 6 1 */3 *'
+  workflow_dispatch:
+    inputs:
+      period_start:
+        description: Collection period start (ISO date)
+        required: true
+      period_end:
+        description: Collection period end (ISO date)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Collect evidence
+        env:
+          PERIOD_START: ${{ inputs.period_start || '' }}
+          PERIOD_END: ${{ inputs.period_end || '' }}
+        run: |
+          START="${PERIOD_START:-$(date -u -d '3 months ago' +%F)}"
+          END="${PERIOD_END:-$(date -u +%F)}"
+          mkdir -p evidence
+          node scripts/security-evidence/collect.mjs --start "$START" --end "$END" --out evidence/evidence.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-control-evidence
+          path: evidence/
