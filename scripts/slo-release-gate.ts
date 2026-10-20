@@ -147,7 +147,6 @@ export const DEFAULT_HALT_CONDITIONS: HaltConditions = {
   haltOnRemainingBudgetPercent: 0,
   haltOnMetricsUnavailable: true,
 };
-=======
 
 export interface GateResult {
   decision: GateDecision;

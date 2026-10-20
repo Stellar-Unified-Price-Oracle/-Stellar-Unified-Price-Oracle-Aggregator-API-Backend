@@ -89,6 +89,20 @@ function urlVar(defaultValue: string) {
     .default(defaultValue);
 }
 
+function jsonRecordVar<T extends z.ZodTypeAny>(schema: T, defaultValue: z.infer<T>) {
+  return z.preprocess((value) => {
+    if (value === undefined || value === '') return defaultValue;
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }, schema);
+}
+
 function csvVar(raw: string | undefined): string[] {
   if (raw === undefined || raw.trim() === '') return [];
   return raw
@@ -135,12 +149,6 @@ const EGRESS_HOST_PATTERN =
 
 const REDIRECT_POLICIES = ['deny', 'same-host', 'allowlist'] as const;
 type RedirectPolicy = (typeof REDIRECT_POLICIES)[number];
-
-const DEFAULT_EGRESS_ALLOWLIST: Record<DeploymentEnvironment, string[]> = {
-  development: [],
-  staging: [],
-  production: [],
-};
 
 const DEFAULT_REDIRECT_POLICY: Record<DeploymentEnvironment, RedirectPolicy> = {
   development: 'deny',
@@ -213,6 +221,14 @@ const envShape = {
 
     CANARY_FAILURE_THRESHOLD: intVar(3, 1, 100),
     CANARY_AUTO_ROLLBACK: boolVar(true),
+    SURGE_LIMITS_ENABLED: boolVar(false),
+    SURGE_MAX_REQUESTS_PER_WINDOW: intVar(1000, 1, 1_000_000),
+    SURGE_WINDOW_MS: intVar(60000, 1000, 3_600_000),
+    SURGE_RECOVERY_RATE_LIMIT: floatVar(0.5, 0, 1),
+    SURGE_MAX_COST_PER_WINDOW_USD: floatVar(0, 0, 1_000_000),
+    SURGE_COST_PER_REQUEST_USD: floatVar(0, 0, 1000),
+    SURGE_ALERT_THRESHOLD_PERCENT: floatVar(0.8, 0, 1),
+    SURGE_DEGRADE_ON_LIMIT: boolVar(true),
 
     CHAINLINK_BASE_URL: urlVar('https://min-api.cryptocompare.com/data'),
     CHAINLINK_API_KEY: z.string().default(''),
@@ -221,6 +237,12 @@ const envShape = {
     REFLECTOR_BASE_URL: urlVar('https://api.reflector.xyz'),
 
     WATCHED_ASSETS: assetsSchema,
+    FEED_PRIMARY_REGION: jsonRecordVar(z.record(z.string()), {}),
+    FEED_FAILOVER_REGION: jsonRecordVar(z.record(z.string()), {}),
+    FEED_OWNERSHIP_JSON: jsonRecordVar(z.record(z.object({
+      primary: z.string().optional(),
+      failover: z.string().optional(),
+    })), {}),
 
     LOG_LEVEL: z
       .enum(LOG_LEVELS, {
@@ -230,7 +252,7 @@ const envShape = {
 
     REGION_ID: z
       .string()
-      .optional()
+      .default('local')
       .transform((raw, ctx) => {
         if (raw === undefined || raw.trim() === '') return undefined;
         const value = raw.trim().toLowerCase();
@@ -281,37 +303,6 @@ const envShape = {
     MAINTENANCE_POSTCHECK_TIMEOUT_MS: intVar(120000, 1000, 3_600_000),
 
     KAFKA_BROKERS: commaListSchema(
-======>>> REPLACE
-export type RawEnvConfig = z.infer<typeof envSchema>;
-
-export interface CellConfig {
-  /** Cell identifier; `default` preserves single-cell behaviour. */
-  id: string;
-  /** True when CELL_ID was not set and the service runs as the single default cell. */
-  isDefault: boolean;
-  /** Upper-cased asset symbols owned by this cell (empty means all watched assets). */
-  assignedFeeds: string[];
-  /** Per-cell dependency overrides; undefined falls back to the global setting. */
-  dbUrl?: string;
-  cacheUrl?: string;
-  providerUrls: string[];
-}
-
-export const DEFAULT_CELL_ID = 'default';
-
-export function resolveCellConfig(config: RawEnvConfig): CellConfig {
-  const isDefault = config.CELL_ID === undefined;
-  return {
-    id: config.CELL_ID ?? DEFAULT_CELL_ID,
-    isDefault,
-    assignedFeeds: Array.from(
-      new Set((config.CELL_ASSIGNED_FEEDS ?? []).map((feed) => feed.toUpperCase())),
-    ),
-    dbUrl: config.CELL_DB_URL,
-    cacheUrl: config.CELL_CACHE_URL,
-    providerUrls: config.CELL_PROVIDER_URLS ?? [],
-  };
-}
       'KAFKA_BROKERS',
       (entry) => entry.length > 0 && entry.length <= 253 && !/\s/.test(entry),
       'expected a bootstrap broker as host or host:port',
@@ -363,9 +354,12 @@ export function resolveCellConfig(config: RawEnvConfig): CellConfig {
       .enum(REDIRECT_POLICIES, {
         errorMap: () => ({ message: `expected one of ${REDIRECT_POLICIES.join(', ')}` }),
       })
-      .optional(),
+      .default('deny'),
     EGRESS_MAX_REDIRECTS: intVar(0, 0, 10),
     EGRESS_DNS_REVALIDATE: boolVar(true),
+    EGRESS_POLICY_ENABLED: boolVar(true),
+    EGRESS_FOLLOW_REDIRECTS: boolVar(false),
+    EGRESS_PIN_DNS: boolVar(true),
 
     WS_ALLOWED_ORIGINS: commaListSchema(
       'WS_ALLOWED_ORIGINS',
