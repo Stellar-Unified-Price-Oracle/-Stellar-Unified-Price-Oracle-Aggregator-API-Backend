@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { decryptSecret } from './crypto';
 import { parseConfigEnv, redactConfig } from './config-schema';
+import { logger } from '../observability/logger';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
@@ -17,12 +18,77 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   const parsed = parseConfigEnv(env);
 
   const regionId = parsed.REGION_ID ?? parsed.AWS_REGION?.trim() ?? 'local';
-  const sourceUrls = [
-    parsed.CHAINLINK_BASE_URL,
-    parsed.REDSTONE_BASE_URL,
-    parsed.BAND_BASE_URL,
-    parsed.REFLECTOR_BASE_URL,
-  ];
+
+  // Issue #685 — region-scoped provider configuration.
+  //
+  // Endpoint and credential configuration can be scoped by deployment region
+  // by setting `{VAR}_{REGION}` (e.g. `CHAINLINK_BASE_URL_US_EAST` for region
+  // `us-east`). Resolution prefers the region-scoped value and falls back to
+  // the global value, so a region never reads another region's credentials
+  // (no cross-environment leakage). Region-scoped URLs are validated; an
+  // invalid region-scoped URL falls back to the global endpoint with a loud
+  // warning (validated failover) rather than crashing or silently sending
+  // traffic to a malformed host.
+  const regionSuffix = `_${regionId.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+  const regionScoped = <T extends string>(envs: NodeJS.ProcessEnv, varName: string): T | undefined =>
+    envs[`${varName}${regionSuffix}`] as T | undefined;
+
+  const isHttpUrl = (value: string | undefined): boolean => {
+    if (!value) return false;
+    try {
+      const u = new URL(value);
+      return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
+  const resolveBaseUrl = (globalUrl: string, varName: string): string => {
+    const scoped = regionScoped(env, varName);
+    if (scoped && isHttpUrl(scoped)) return scoped;
+    if (scoped) {
+      logger.warn(
+        `[RegionConfig] Ignoring invalid region-scoped ${varName} for region ${regionId} — falling back to global endpoint`,
+      );
+    }
+    return globalUrl;
+  };
+
+  const resolveApiKey = (globalKey: string, varName: string): string => {
+    const scoped = regionScoped(env, varName);
+    return scoped && scoped.length > 0 ? scoped : globalKey;
+  };
+
+  // Collect every source host (global + region-scoped) so the SSRF allowlist
+  // covers the endpoints this region will actually call out to.
+  const sourceUrls: string[] = [];
+  for (const varName of [
+    'CHAINLINK_BASE_URL',
+    'REDSTONE_BASE_URL',
+    'BAND_BASE_URL',
+    'REFLECTOR_BASE_URL',
+  ] as const) {
+    sourceUrls.push(parsed[varName]);
+    const scoped = regionScoped(env, varName);
+    if (scoped && isHttpUrl(scoped)) sourceUrls.push(scoped);
+  }
+
+  // Issue #685 — no cross-environment leakage: a region-scoped credential must
+  // not silently reuse the global credential, because that would mean a region
+  // is operating with another environment's secret.
+  for (const varName of ['CHAINLINK_API_KEY'] as const) {
+    const scoped = regionScoped(env, varName);
+    if (
+      scoped &&
+      scoped.length > 0 &&
+      parsed[varName] &&
+      scoped === parsed[varName]
+    ) {
+      logger.warn(
+        `[RegionConfig] Region ${regionId} ${varName} equals the global value — potential cross-environment leakage; use a region-scoped secret`,
+      );
+    }
+  }
 
   return {
     port: parsed.PORT,
@@ -43,12 +109,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
 
     sources: {
       chainlink: {
-        baseUrl: parsed.CHAINLINK_BASE_URL,
-        apiKey: decryptSecret(parsed.CHAINLINK_API_KEY),
+        baseUrl: resolveBaseUrl(parsed.CHAINLINK_BASE_URL, 'CHAINLINK_BASE_URL'),
+        apiKey: decryptSecret(resolveApiKey(parsed.CHAINLINK_API_KEY, 'CHAINLINK_API_KEY')),
       },
-      redstone: { baseUrl: parsed.REDSTONE_BASE_URL },
-      band: { baseUrl: parsed.BAND_BASE_URL },
-      reflector: { baseUrl: parsed.REFLECTOR_BASE_URL },
+      redstone: { baseUrl: resolveBaseUrl(parsed.REDSTONE_BASE_URL, 'REDSTONE_BASE_URL') },
+      band: { baseUrl: resolveBaseUrl(parsed.BAND_BASE_URL, 'BAND_BASE_URL') },
+      reflector: { baseUrl: resolveBaseUrl(parsed.REFLECTOR_BASE_URL, 'REFLECTOR_BASE_URL') },
     },
 
     assets: parsed.WATCHED_ASSETS,
@@ -65,52 +131,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       quarantineRecoverPercent: parsed.REGION_QUARANTINE_RECOVER_PERCENT,
       maxReplicationLagMs: parsed.REGION_MAX_REPLICATION_LAG_MS,
     },
-  },
 
-  assets: (process.env.WATCHED_ASSETS || 'XLM,USDC,BTC,ETH,USDT').split(','),
-
-  // Issue #579 — graceful shutdown. The drain deadline must stay smaller than
-  // the deployment's terminationGracePeriodSeconds (60s in k8s/*); see
-  // docs/PRODUCTION_DEPLOYMENT.md §10 for the arithmetic.
-  shutdown: {
-    drainDeadlineMs: parseInt(process.env.SHUTDOWN_DRAIN_DEADLINE_MS || '25000', 10),
-    forceExitMs: parseInt(process.env.SHUTDOWN_FORCE_EXIT_MS || '35000', 10),
-  },
-
-  logLevel: process.env.LOG_LEVEL || 'info',
-
-  region: {
-    id: process.env.REGION_ID || process.env.AWS_REGION || 'local',
-    activeActive: process.env.ACTIVE_ACTIVE_REGIONS_ENABLED === 'true',
-    peers: commaList(process.env.REGION_PEERS),
-    replicationTopic: process.env.REGION_REPLICATION_TOPIC || 'stellar-oracle-prices',
-    driftAlertPercent: parseFloat(process.env.REGION_DRIFT_ALERT_PERCENT || '0.1'),
-    quarantineEnabled: process.env.REGION_QUARANTINE_ENABLED === 'true',
-    quarantineRecoverPercent: parseFloat(process.env.REGION_QUARANTINE_RECOVER_PERCENT || '0.05'),
-    maxReplicationLagMs: parseInt(process.env.REGION_MAX_REPLICATION_LAG_MS || '5000', 10),
-  },
-
-  database: {
-    url: decryptSecret(process.env.DATABASE_URL || ''),
-    // TimescaleDB: convert the price_history table into a hypertable when available.
-    useTimescale: process.env.USE_TIMESCALEDB !== 'false',
-    // Chunk interval in seconds for the integer `timestamp` time dimension (default 7 days).
-    chunkIntervalSeconds: parseInt(process.env.TIMESCALE_CHUNK_INTERVAL_SECONDS || '604800', 10),
-    retentionDays: parseInt(process.env.HISTORY_RETENTION_DAYS || '0', 10),
-  },
-
-  // Caps applied to file-based history on every append (issue #214), so the
-  // JSON files under data/ cannot grow without bound. Set either to 0 to disable.
-  history: {
-    maxEntries: parseInt(process.env.HISTORY_MAX_ENTRIES || '10000', 10),
-    retentionSeconds: parseInt(process.env.HISTORY_RETENTION_SECONDS || '604800', 10),
-    // File-based archival to cold storage (issue #43).
-    archival: {
-      enabled: process.env.FILE_ARCHIVAL_ENABLED === 'true',
-      archiveAfterDays: parseInt(process.env.FILE_ARCHIVE_AFTER_DAYS || '90', 10),
-      retentionDays: parseInt(process.env.FILE_RETENTION_DAYS || '0', 10),
-      coldStorageDir: process.env.FILE_COLD_STORAGE_DIR || './data/archive',
-      intervalMs: parseInt(process.env.FILE_ARCHIVAL_INTERVAL_MS || '86400000', 10),
+    shutdown: {
+      drainDeadlineMs: parseInt(env.SHUTDOWN_DRAIN_DEADLINE_MS || '25000', 10),
+      forceExitMs: parseInt(env.SHUTDOWN_FORCE_EXIT_MS || '35000', 10),
     },
 
     database: {
@@ -119,12 +143,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
       chunkIntervalSeconds: parsed.TIMESCALE_CHUNK_INTERVAL_SECONDS,
       retentionDays: parsed.HISTORY_RETENTION_DAYS,
     },
-    // WebSocket upgrade hardening (issue #40, #586).
+
+    history: {
+      maxEntries: parsed.HISTORY_MAX_ENTRIES,
+      retentionSeconds: parsed.HISTORY_RETENTION_SECONDS,
+      archival: {
+        enabled: parsed.FILE_ARCHIVAL_ENABLED,
+        archiveAfterDays: parsed.FILE_ARCHIVE_AFTER_DAYS,
+        retentionDays: parsed.FILE_RETENTION_DAYS,
+        coldStorageDir: parsed.FILE_COLD_STORAGE_DIR,
+        intervalMs: parsed.FILE_ARCHIVAL_INTERVAL_MS,
+      },
+      database: {
+        url: decryptSecret(parsed.DATABASE_URL),
+        useTimescale: parsed.USE_TIMESCALEDB,
+        chunkIntervalSeconds: parsed.TIMESCALE_CHUNK_INTERVAL_SECONDS,
+        retentionDays: parsed.HISTORY_RETENTION_DAYS,
+      },
+    },
+
     websocket: {
-      allowedOrigins: commaList(process.env.WS_ALLOWED_ORIGINS),
-      requireOrigin: process.env.WS_REQUIRE_ORIGIN !== 'false',
-      maxConnectionsPerWindow: parseInt(process.env.WS_RATE_LIMIT_MAX || '20', 10),
-      rateLimitWindowMs: parseInt(process.env.WS_RATE_LIMIT_WINDOW_MS || '60000', 10),
+      maxSubscriptions: parsed.WS_MAX_SUBSCRIPTIONS,
+      dropBufferBytes: parsed.WS_BACKPRESSURE_DROP_BYTES,
+      pingIntervalMs: parsed.WS_PING_INTERVAL_MS,
+      pingTimeoutMs: parsed.WS_PING_TIMEOUT_MS,
+      maxClientMessageBytes: parsed.WS_MAX_CLIENT_MESSAGE_BYTES,
     },
 
     security: {
@@ -145,14 +188,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
         previousKey: parsed.ENCRYPTION_KEY_PREVIOUS,
         encryptHistory: parsed.ENCRYPT_HISTORY,
       },
-    },
-
-    websocket: {
-      maxSubscriptions: parsed.WS_MAX_SUBSCRIPTIONS,
-      dropBufferBytes: parsed.WS_BACKPRESSURE_DROP_BYTES,
-      pingIntervalMs: parsed.WS_PING_INTERVAL_MS,
-      pingTimeoutMs: parsed.WS_PING_TIMEOUT_MS,
-      maxClientMessageBytes: parsed.WS_MAX_CLIENT_MESSAGE_BYTES,
     },
   };
 }
