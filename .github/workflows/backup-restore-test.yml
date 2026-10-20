@@ -1,5 +1,11 @@
 name: Backup & Restore Test
+concurrency:
+  group: backup-restore-test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+  issues: write
 on:
   schedule:
     - cron: '0 1 * * 0'
@@ -172,3 +178,29 @@ jobs:
         run: |
           echo "::error::One or more restore integrity assertions failed. Check the restore-report artifact for details."
           exit 1
+
+  record-outcome:
+    name: Record drill outcome
+    if: always() && github.event_name == 'schedule'
+    needs: [restore-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          DRILL_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+        with:
+          script: |
+            const status = process.env.DRILL_STATUS;
+            const body = [
+              `Workflow: ${context.workflow}`,
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `Status: ${status}`,
+              'Record the achieved RTO/RPO in docs/operations/DRILL_LOG.md.',
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[drill] backup-restore-test ${new Date().toISOString().slice(0, 10)}: ${status}`,
+              body,
+              labels: ['drill-outcome', 'operations'],
+            });

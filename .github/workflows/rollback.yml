@@ -1,6 +1,15 @@
 name: Rollback
+concurrency:
+  group: rollback-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  issues: write
 
 on:
+  schedule:
+    - cron: '0 3 * * 6'
   workflow_dispatch:
     inputs:
       environment:
@@ -22,6 +31,7 @@ env:
 
 jobs:
   rollback:
+    if: github.event_name == 'workflow_dispatch'
     name: Rollback ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment == 'production' && 'production' || github.event.inputs.environment }}
@@ -99,3 +109,118 @@ jobs:
           kubectl rollout status deployment -n "stellar-oracle-${{ github.event.inputs.environment }}" \
             --timeout=120s \
             api-stable aggregator
+
+  # Weekly dry-run drill (consolidated from rollback-drill.yml, issue #627).
+  rollback-drill:
+    if: github.event_name == 'schedule'
+    name: Weekly Rollback Drill (staging, dry-run)
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Record drill start time
+        id: start
+        run: echo "ts=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Run rollback script in dry-run mode
+        env:
+          ROLLBACK_DRY_RUN: "true"
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p logs
+          bash scripts/rollback.sh staging 2>&1 | tee logs/drill-output.log
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+
+      - name: Compute simulated TTR
+        id: ttr
+        run: |
+          start_ts=${{ steps.start.outputs.ts }}
+          end_ts=$(date +%s)
+          ttr=$(( end_ts - start_ts ))
+          echo "ttr=${ttr}" >> "$GITHUB_OUTPUT"
+          echo "ttr_readable=$(printf '%dm %ds' $((ttr/60)) $((ttr%60)))" >> "$GITHUB_OUTPUT"
+
+      - name: Generate drill report
+        run: |
+          cat > logs/drill-report.md <<EOF
+          # Rollback Drill Report
+
+          **Date:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          **Environment:** staging (dry-run)
+          **Triggered by:** ${{ github.event_name }}
+          **Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ## Result
+
+          | Item | Value |
+          |------|-------|
+          | Simulated TTR | ${{ steps.ttr.outputs.ttr_readable }} (${{ steps.ttr.outputs.ttr }}s) |
+          | TTR target | < 600s (10 min) |
+          | Target met | $([ ${{ steps.ttr.outputs.ttr }} -le 600 ] && echo "✅ Yes" || echo "❌ No") |
+          | Dry-run mode | true |
+          | Rollback SHA | $(git rev-parse HEAD~1 2>/dev/null || echo "n/a") |
+
+          ## Script output
+
+          \`\`\`
+          $(cat logs/drill-output.log)
+          \`\`\`
+
+          ## Event log
+
+          \`\`\`
+          $(cat logs/rollback-events.log 2>/dev/null || echo "(no events logged)")
+          \`\`\`
+          EOF
+
+      - name: Upload drill report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: drill-report-${{ github.run_id }}
+          path: logs/drill-report.md
+          retention-days: 90
+
+      - name: Post summary to job summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Rollback Drill — $(date -u +%Y-%m-%d)
+
+          | Item | Value |
+          |------|-------|
+          | Environment | staging (dry-run) |
+          | Simulated TTR | ${{ steps.ttr.outputs.ttr_readable }} |
+          | TTR target | < 10 min |
+          | Target met | $([ ${{ steps.ttr.outputs.ttr }} -le 600 ] && echo "✅ Yes" || echo "❌ No") |
+
+          See the **drill-report** artifact for full script output and event log.
+          EOF
+
+      - name: Record drill outcome
+        if: always() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        env:
+          DRILL_STATUS: ${{ job.status }}
+          DRILL_TTR: ${{ steps.ttr.outputs.ttr_readable }}
+        with:
+          script: |
+            const status = process.env.DRILL_STATUS;
+            const body = [
+              `Workflow: ${context.workflow}`,
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `Status: ${status}`,
+              `Simulated TTR: ${process.env.DRILL_TTR || 'n/a'} (target < 10 min)`,
+              `Environment: staging (dry-run)`,
+              '',
+              'Outcome is durable here and in the drill-report artifact.',
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[drill] rollback ${new Date().toISOString().slice(0, 10)}: ${status}`,
+              body,
+              labels: ['drill-outcome', 'operations'],
+            });
