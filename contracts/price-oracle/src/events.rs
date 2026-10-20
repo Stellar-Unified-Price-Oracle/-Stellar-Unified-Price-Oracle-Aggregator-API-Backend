@@ -455,3 +455,15 @@ pub struct WhitelistUpdated {
     pub addr: Address,
     pub status: bool,
 }
+
+// ── Feed catalog commitment (Issue #725) ─────────────────────────────────────
+
+#[contractevent(data_format = "vec")]
+pub struct FeedCatalogCommitted {
+    #[topic]
+    pub publisher: Address,
+    pub version: u32,
+    pub catalog_hash: BytesN<32>,
+    pub timestamp: u64,
+}
+

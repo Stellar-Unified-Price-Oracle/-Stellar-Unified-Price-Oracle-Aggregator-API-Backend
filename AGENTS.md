@@ -30,6 +30,8 @@ serve the data to downstream DeFi protocols.
 │   │   ├── middleware/         # logger, usage tracking
 │   │   ├── platform/           # rate limiter, plugin system, lineage, self-healing
 │   │   ├── graphql/, feeds/, webhooks/, routes/, release-notes/, services/
+│   │   │   └── feeds/                   # Feed catalog: asset identity, per-feed
+│   │   │                                # policy/quorum, lifecycle, aliases
 │   │   └── domain-events/
 │   └── tests/                  # vitest; see "Integration tests" below
 │

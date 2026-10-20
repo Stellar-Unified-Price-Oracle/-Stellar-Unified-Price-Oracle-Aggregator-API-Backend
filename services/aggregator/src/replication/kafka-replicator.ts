@@ -9,6 +9,7 @@ import {
   replicationRecordsOutboundTotal,
   replicationStaleEpochRejectedTotal,
 } from '../observability/metrics';
+import { FeedReplicationMonitor } from './feed-replication-monitor';
 
 const RECONNECT_INTERVAL_MS = 30_000;
 
@@ -27,6 +28,7 @@ interface ReplicationEnvelope {
   price?: unknown;
   decimals?: unknown;
   timestamp?: unknown;
+  sequence?: unknown;
   traceparent?: unknown;
   tracestate?: unknown;
   epoch?: unknown;
@@ -40,6 +42,7 @@ export class KafkaReplicator {
   private consumerStarted = false;
   private lastConnectAttempt = 0;
   private replicationLagMs = 0;
+  private readonly feedMonitor = new FeedReplicationMonitor();
 
   constructor(
     private readonly kafkaConfig: KafkaReplicatorConfig,
@@ -134,6 +137,7 @@ export class KafkaReplicator {
             source: 'local',
             timestamp: record.timestamp,
             wallClock: Date.now(),
+            sequence,
             traceparent: trace.traceparent,
             tracestate: trace.tracestate,
             epoch,
@@ -197,6 +201,16 @@ export class KafkaReplicator {
         this.replicationLagMs = Math.max(this.replicationLagMs, Date.now() - publishedAt);
       }
 
+      const sequence = typeof record.sequence === 'number' ? record.sequence : undefined;
+      this.feedMonitor.observe({
+        feed: record.asset,
+        sourceRegion: record.region,
+        sequence,
+        sourceTimestampMs: typeof record.timestamp === 'number' ? record.timestamp : undefined,
+        receivedAtMs: Date.now(),
+        maxLagMs: this.kafkaConfig.maxReplicationLagMs,
+      });
+
       this.replicator.mergeRemotePrice({
         region: record.region,
         asset: record.asset,
@@ -232,6 +246,10 @@ export class KafkaReplicator {
 
   isHighLag(): boolean {
     return this.replicationLagMs > this.kafkaConfig.maxReplicationLagMs;
+  }
+
+  getFeedReplicationSnapshot(): ReturnType<FeedReplicationMonitor['snapshot']> {
+    return this.feedMonitor.snapshot();
   }
 
   async getClusterInfo(): Promise<unknown> {

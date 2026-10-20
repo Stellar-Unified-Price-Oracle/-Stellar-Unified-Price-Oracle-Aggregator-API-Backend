@@ -43,6 +43,10 @@
     {
       "name": "Webhooks",
       "description": "Webhook registration and delivery for price updates"
+    },
+    {
+      "name": "Feed Catalog",
+      "description": "Feed catalog policies, lifecycle, aliases and canonical asset identity"
     }
   ],
   "paths": {

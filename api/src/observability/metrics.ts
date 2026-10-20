@@ -330,79 +330,57 @@ export const auditEntriesArchivedTotal = new client.Counter({
 });
 register.registerMetric(auditEntriesArchivedTotal);
 
-// ── Governance transparency (#777, #779, #781) ───────────────────────────────
+// ── Per-feed replication lag & feed health routing (issues #739, #740) ───────
 
-export const governanceVoterTurnoutRatio = new client.Gauge({
-  name: 'governance_voter_turnout_ratio',
-  help: 'Mean share of eligible wallets that voted on closed proposals (0..1)',
+export const feedReplicationLagSeconds = new client.Histogram({
+  name: 'feed_replication_lag_seconds',
+  help: 'Replication lag per feed and region, measured as consumer-visible staleness',
+  labelNames: ['feed', 'region'],
+  buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600],
 });
-register.registerMetric(governanceVoterTurnoutRatio);
+register.registerMetric(feedReplicationLagSeconds);
 
-export const governancePowerTurnoutRatio = new client.Gauge({
-  name: 'governance_power_turnout_ratio',
-  help: 'Mean share of eligible voting power cast on closed proposals (0..1)',
+export const feedLastSequence = new client.Gauge({
+  name: 'feed_last_sequence',
+  help: 'Highest sequence number observed per feed and region',
+  labelNames: ['feed', 'region'],
 });
-register.registerMetric(governancePowerTurnoutRatio);
+register.registerMetric(feedLastSequence);
 
-export const governanceQuorumAttainmentRatio = new client.Gauge({
-  name: 'governance_quorum_attainment_ratio',
-  help: 'Share of closed proposals that reached the configured quorum (0..1)',
+export const feedMissingSequencesTotal = new client.Counter({
+  name: 'feed_missing_sequences_total',
+  help: 'Total sequence gaps detected per feed and region',
+  labelNames: ['feed', 'region'],
 });
-register.registerMetric(governanceQuorumAttainmentRatio);
+register.registerMetric(feedMissingSequencesTotal);
 
-export const governanceDelegationHhi = new client.Gauge({
-  name: 'governance_delegation_hhi',
-  help: 'Herfindahl-Hirschman index of delegate voting power (suppressed cohorts emit no sample)',
+export const feedLagThresholdExceeded = new client.Gauge({
+  name: 'feed_lag_threshold_exceeded',
+  help: '1 when a feed/region lag exceeds its consumer-impact threshold, 0 otherwise',
+  labelNames: ['feed', 'region'],
 });
-register.registerMetric(governanceDelegationHhi);
+register.registerMetric(feedLagThresholdExceeded);
 
-export const governanceTopDelegateShare = new client.Gauge({
-  name: 'governance_top_delegate_share',
-  help: 'Voting-power share held by the largest delegate (0..1)',
+export const feedHealthState = new client.Gauge({
+  name: 'feed_health_state',
+  help: 'Per-feed health state (0=unhealthy, 1=degraded, 2=healthy)',
+  labelNames: ['feed', 'region'],
 });
-register.registerMetric(governanceTopDelegateShare);
+register.registerMetric(feedHealthState);
 
-export const governanceAbstentionRate = new client.Gauge({
-  name: 'governance_abstention_rate',
-  help: 'Mean share of eligible voting power that did not vote for or against (0..1)',
+export const feedRoutingDecisionsTotal = new client.Counter({
+  name: 'feed_routing_decisions_total',
+  help: 'Consumer routing decisions by feed, chosen region and reason (fresh, degraded, failover)',
+  labelNames: ['feed', 'region', 'reason'],
 });
-register.registerMetric(governanceAbstentionRate);
+register.registerMetric(feedRoutingDecisionsTotal);
 
-export const governanceSnapshotAgeSeconds = new client.Gauge({
-  name: 'governance_snapshot_age_seconds',
-  help: 'Age of the published governance health snapshot in seconds',
+export const feedFailoversTotal = new client.Counter({
+  name: 'feed_failovers_total',
+  help: 'Deterministic failovers triggered by feed health signals',
+  labelNames: ['feed', 'from_region', 'to_region'],
 });
-register.registerMetric(governanceSnapshotAgeSeconds);
-
-export const treasuryReconciled = new client.Gauge({
-  name: 'treasury_reconciled',
-  help: '1 when opening + inflows - outflows equals the published closing balance for every asset',
-});
-register.registerMetric(treasuryReconciled);
-
-export const treasuryBalanceBreaks = new client.Gauge({
-  name: 'treasury_balance_breaks',
-  help: 'Number of error-severity treasury reconciliation breaks',
-});
-register.registerMetric(treasuryBalanceBreaks);
-
-export const treasurySnapshotAgeSeconds = new client.Gauge({
-  name: 'treasury_snapshot_age_seconds',
-  help: 'Age of the published treasury snapshot in seconds',
-});
-register.registerMetric(treasurySnapshotAgeSeconds);
-
-export const releaseReviewNonCompliant = new client.Gauge({
-  name: 'release_review_non_compliant',
-  help: 'Number of release entries that violate the community review window policy',
-});
-register.registerMetric(releaseReviewNonCompliant);
-
-export const releaseReviewOpenWindows = new client.Gauge({
-  name: 'release_review_open_windows',
-  help: 'Number of release review windows currently open for feedback',
-});
-register.registerMetric(releaseReviewOpenWindows);
+register.registerMetric(feedFailoversTotal);
 
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();

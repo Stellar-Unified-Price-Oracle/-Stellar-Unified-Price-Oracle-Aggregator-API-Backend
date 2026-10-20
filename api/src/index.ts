@@ -32,13 +32,14 @@ import { setDatabase } from './price-serving/price-store';
 import { initializeTracing } from './observability/tracing';
 import platformRoutes from './platform/routes';
 import adminRoutes from './governance/admin';
+import feedCatalogRoutes from './routes/feed-catalog';
 import selfServiceRoutes from './governance/self-service';
 import statusRoutes from './observability/status';
 import sandboxRoutes, { initializeSandboxCache } from './routes/sandbox';
 import featureFlagRoutes from './routes/featureFlags';
 import eventRoutes from './routes/events';
 import governanceRoutes from './governance/proposal-routes';
-import governanceTransparencyRoutes from './governance/transparency/routes';
+import decentralizationRoutes from './governance/decentralization/routes';
 import { uptimeTracker } from './observability/uptime-tracker';
 import { getVaultClient } from '@stellar-oracle/vault-client';
 import { apiKeyManager } from './governance/api-key-manager';
@@ -239,10 +240,9 @@ app.use('/api/v1', v1DeprecationHeaders, v1Routes);
 app.use('/api/v1', v1DeprecationHeaders, platformRoutes);
 app.use('/api/v1/sandbox', sandboxRoutes);
 app.use('/api/v1/admin', adminRoutes);
-// Public governance transparency reads (#777, #779, #780, #781). Mounted
-// before the admin-authenticated proposal router so publication is not gated
-// behind adminAuthMiddleware.
-app.use('/api/v1/governance', governanceTransparencyRoutes);
+// Feed catalog administration (#671, #672, #673, #674) — separate router so
+// it can be rolled back independently of the wider admin surface.
+app.use('/api/v1/catalog', feedCatalogRoutes);
 app.use('/api/v1/governance', governanceRoutes);
 // Public status page — no authentication required (#66)
 app.use('/api/v1/status', statusRoutes);
@@ -268,6 +268,7 @@ app.use('/portal/governance', express.static(path.join(__dirname, '..', 'public'
 // Developer portal: API explorer, key management, usage/billing UI
 app.use('/portal', express.static(path.join(__dirname, '..', 'public', 'portal')));
 app.use('/docs/marketplace', express.static(path.join(__dirname, '..', '..', 'docs', 'marketplace')));
+app.use('/.well-known', express.static(path.join(__dirname, '..', 'public', '.well-known')));
 
 app.use(notFoundHandler);
 app.use(errorHandler);

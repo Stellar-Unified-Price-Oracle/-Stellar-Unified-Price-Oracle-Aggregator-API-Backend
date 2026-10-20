@@ -46,6 +46,29 @@ function hostMapEnv(name: string): Record<string, string[]> {
   return out;
 }
 
+/**
+ * Outbound egress policy (issue #750).
+ *
+ * `EGRESS_ALLOWED_HOSTS` is the deployment-level allowlist of hosts that
+ * provider/integration egress (webhooks, aggregator, RPC, etc.) may reach.
+ * It is deny-by-default: an empty list blocks all outbound destinations.
+ * Entries are lowercased hostnames; a leading `*.` matches any subdomain.
+ *
+ * `EGRESS_ALLOW_REDIRECTS` defaults to `false` so a 3xx response cannot
+ * silently route traffic to a host outside the allowlist. When enabled,
+ * every redirect hop is re-validated against the allowlist and the hop
+ * count is capped by `EGRESS_MAX_REDIRECTS`.
+ */
+function egressHostList(value?: string): string[] {
+  return commaList(value).filter((host) => {
+    // Reject malformed entries (scheme, path, port, whitespace) so a typo
+    // cannot widen the allowlist or match unintended hosts.
+    if (host.includes('://') || host.includes('/') || host.includes(':')) return false;
+    if (host === '*' || host === '*.') return false;
+    return /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(host);
+  });
+}
+
 export const config = {
   sandbox: {
     enabled: process.env.SANDBOX_ENABLED === 'true',
@@ -206,6 +229,18 @@ export const config = {
     enabled: process.env.COMPRESSION_ENABLED !== 'false',
     threshold: parseInt(process.env.COMPRESSION_THRESHOLD || '1024', 10),
     level: parseInt(process.env.COMPRESSION_LEVEL || '6', 10),
+  },
+  // Outbound egress policy (issue #750). Deny-by-default: an empty allowlist
+  // blocks every outbound destination. See docs/security/egress-policy.md.
+  egress: {
+    allowedHosts: egressHostList(process.env.EGRESS_ALLOWED_HOSTS),
+    // Redirects are refused unless explicitly enabled; each hop is re-checked.
+    allowRedirects: process.env.EGRESS_ALLOW_REDIRECTS === 'true',
+    maxRedirects: parseInt(process.env.EGRESS_MAX_REDIRECTS || '3', 10),
+    // Re-resolve DNS on every request so a rebinding change cannot bypass the
+    // allowlist between the check and the connection.
+    revalidateDns: process.env.EGRESS_REVALIDATE_DNS !== 'false',
+    timeoutMs: parseInt(process.env.EGRESS_TIMEOUT_MS || '10000', 10),
   },
   webhooks: {
     baseDelayMs: parseInt(process.env.WEBHOOK_BASE_DELAY_MS || '1000', 10),

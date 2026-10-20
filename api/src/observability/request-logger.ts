@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from './logger';
 import { pipelineStageLatencyMs } from './metrics';
+import { minimizeIp, redactQuery } from '../privacy/telemetryMinimizer';
 
 export function requestLogger(req: Request, res: Response, next: NextFunction): void {
   const startedAt = Date.now();
@@ -9,8 +10,8 @@ export function requestLogger(req: Request, res: Response, next: NextFunction): 
     requestId: req.requestId,
     traceId: req.traceId,
     spanId: req.spanId,
-    query: req.query,
-    ip: req.ip,
+    query: redactQuery(req.query),
+    ip: minimizeIp(req.ip),
   });
 
   res.on('finish', () => {

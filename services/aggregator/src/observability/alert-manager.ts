@@ -15,7 +15,14 @@ export interface AlertThresholds {
 export interface AlertEvent {
   timestamp: number;
   asset: string;
-  type: 'deviation' | 'stale' | 'source_down' | 'sla_breach' | 'invalid_payload';
+  type:
+    | 'deviation'
+    | 'stale'
+    | 'source_down'
+    | 'sla_breach'
+    | 'invalid_payload'
+    | 'region_quarantine'
+    | 'surge_limit';
   message: string;
   previousPrice?: string;
   currentPrice?: string;
@@ -29,6 +36,14 @@ export interface AlertEvent {
   regionCount?: number;
   peerCount?: number;
   driftKnown?: boolean;
+  /** Issue #744: surge-limit scope, e.g. "failover" or "recovery" */
+  surgeScope?: string;
+  /** Issue #744: which limit was hit, e.g. "budget" or "provider_quota" */
+  surgeLimitKind?: 'budget' | 'provider_quota' | 'request_rate';
+  /** Issue #744: percent of the limit consumed (0-100+) */
+  surgeUtilizationPercent?: number;
+  /** Issue #744: degradation action taken or recommended */
+  surgeAction?: 'none' | 'throttle' | 'shed_load' | 'pause_failover';
 }
 
 export interface AlertConfig {
@@ -65,6 +80,10 @@ export interface AlertConfig {
   invalidPayloadMaxPerWindow?: number;
   /** Issue #584: rolling window in seconds for invalid-payload rate alerting */
   invalidPayloadWindowSeconds?: number;
+  /** Issue #744: utilization percent at which a surge warning fires */
+  surgeWarningPercent?: number;
+  /** Issue #744: utilization percent at which a surge critical alert fires */
+  surgeCriticalPercent?: number;
 }
 
 class AlertManager {
@@ -77,6 +96,7 @@ class AlertManager {
   private invalidPayloadTimestamps: Map<string, number[]> = new Map();
   private lastAlertAtByKey: Map<string, number> = new Map();
   private alertTriggerHistory: Map<string, number[]> = new Map();
+  private feedMissingSequenceTimestamps: Map<string, number[]> = new Map();
   private static readonly DEFAULT_CONFIG: AlertConfig = {
     webhookRetries: 3,
     webhookRetryDelayMs: 1000,
@@ -91,6 +111,8 @@ class AlertManager {
     flapMaxTriggers: 3,
     invalidPayloadMaxPerWindow: 5,
     invalidPayloadWindowSeconds: 900,
+    surgeWarningPercent: 80,
+    surgeCriticalPercent: 95,
   };
 
   constructor(config: Partial<AlertConfig> = {}) {
@@ -331,6 +353,53 @@ class AlertManager {
     });
   }
 
+  /**
+   * Issue #744 — surge-limit alerting for failover and recovery.
+   *
+   * Called by the surge limiter before a budget or provider quota is
+   * exhausted so operators get a warning while there is still headroom to
+   * degrade safely. Emits a warning at `surgeWarningPercent` and a critical
+   * alert at `surgeCriticalPercent`; below the warning threshold nothing is
+   * emitted. Returns whether an alert fired, for the caller's metrics.
+   */
+  async checkSurgeLimit(event: {
+    scope: string;
+    limitKind: 'budget' | 'provider_quota' | 'request_rate';
+    utilizationPercent: number;
+    action?: 'none' | 'throttle' | 'shed_load' | 'pause_failover';
+    asset?: string;
+    source?: string;
+    region?: string;
+  }): Promise<boolean> {
+    const warningPercent = this.config.surgeWarningPercent ?? 80;
+    const criticalPercent = this.config.surgeCriticalPercent ?? 95;
+    const utilization = event.utilizationPercent;
+
+    if (!Number.isFinite(utilization) || utilization < warningPercent) {
+      return false;
+    }
+
+    const critical = utilization >= criticalPercent;
+    const action = event.action ?? 'none';
+    const asset = (event.asset ?? 'GLOBAL').toUpperCase();
+
+    return this.emitAlert({
+      timestamp: Math.floor(Date.now() / 1000),
+      asset,
+      type: 'surge_limit',
+      source: event.source,
+      region: event.region,
+      surgeScope: event.scope,
+      surgeLimitKind: event.limitKind,
+      surgeUtilizationPercent: utilization,
+      surgeAction: action,
+      message:
+        `${critical ? 'CRITICAL' : 'WARNING'} surge limit for ${event.scope} (${event.limitKind}): ` +
+        `${utilization.toFixed(1)}% utilized (warn ${warningPercent}%, critical ${criticalPercent}%). ` +
+        `action=${action}. Runbook: docs/runbooks/surge-limits.md`,
+    });
+  }
+
   private async emitAlert(alert: AlertEvent): Promise<boolean> {
     const dedupKey = this.getAlertKey(alert);
     const now = Math.floor(Date.now() / 1000);
@@ -402,7 +471,11 @@ class AlertManager {
   private getAlertKey(alert: AlertEvent): string {
     const target = alert.source ?? alert.affectedSources?.join(',') ?? 'global';
     const base = `${alert.asset.toUpperCase()}:${alert.type}:${target}`;
-    return alert.transition ? `${base}:${alert.transition}` : base;
+    const withTransition = alert.transition ? `${base}:${alert.transition}` : base;
+    if (alert.type === 'surge_limit') {
+      return `${withTransition}:${alert.surgeScope ?? 'global'}:${alert.surgeLimitKind ?? 'unknown'}`;
+    }
+    return withTransition;
   }
 
   private isFlapping(alertKey: string, now: number): boolean {
@@ -454,7 +527,7 @@ class AlertManager {
           payload: {
             summary: alert.message,
             source: 'price-oracle-aggregator',
-            severity: (alert.type === 'source_down' || alert.type === 'sla_breach' || alert.type === 'region_quarantine') ? 'critical' : 'warning',
+            severity: (alert.type === 'source_down' || alert.type === 'sla_breach' || alert.type === 'region_quarantine' || (alert.type === 'surge_limit' && (alert.surgeUtilizationPercent ?? 0) >= (this.config.surgeCriticalPercent ?? 95))) ? 'critical' : 'warning',
             custom_details: alert,
           },
         }),
@@ -469,7 +542,7 @@ class AlertManager {
 
   private async sendOpsgenie(alert: AlertEvent): Promise<void> {
     try {
-      const priority = alert.type === 'source_down' || alert.type === 'sla_breach' || alert.type === 'region_quarantine' ? 'P1' : 'P3';
+      const priority = alert.type === 'source_down' || alert.type === 'sla_breach' || alert.type === 'region_quarantine' || (alert.type === 'surge_limit' && (alert.surgeUtilizationPercent ?? 0) >= (this.config.surgeCriticalPercent ?? 95)) ? 'P1' : 'P3';
       const response = await fetch('https://api.opsgenie.com/v2/alerts', {
         method: 'POST',
         headers: {

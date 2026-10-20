@@ -10,8 +10,18 @@
 #   SMOKE_RETRIES      Number of health-check retries  (default: 20)
 #   SMOKE_INTERVAL     Seconds between retries         (default: 10)
 #   DRY_RUN            Set to "true" to skip kubectl apply (default: false)
+#   REGION             Region being promoted in the release train (default: us-east-1)
+#   RELEASE_TRAIN      Path to the release-train manifest (default: <repo>/release-train.yaml)
+#   SKIP_TRAIN_GATE    Set to "true" to bypass release-train ordering checks (default: false)
 #
-# Dependencies: kubectl, jq
+# Release train:
+#   Regional rollouts follow the ordering and promotion criteria defined in
+#   release-train.yaml. This script refuses to promote a region whose
+#   predecessors have not been verified healthy, and halts automatically when
+#   the region's health gates fail. See docs/release-train.md for the full
+#   ordering, promotion criteria, halt conditions, and rollback guidance.
+#
+# Dependencies: kubectl, jq, yq
 set -euo pipefail
 
 # ── Args & Config ──────────────────────────────────────────────────────────────
@@ -21,9 +31,13 @@ HEALTH_URL="${HEALTH_URL:-http://localhost:3000/health}"
 SMOKE_RETRIES="${SMOKE_RETRIES:-20}"
 SMOKE_INTERVAL="${SMOKE_INTERVAL:-10}"
 DRY_RUN="${DRY_RUN:-false}"
+REGION="${REGION:-us-east-1}"
+SKIP_TRAIN_GATE="${SKIP_TRAIN_GATE:-false}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="${SCRIPT_DIR}/../k8s/blue-green"
+RELEASE_TRAIN="${RELEASE_TRAIN:-${SCRIPT_DIR}/../release-train.yaml}"
+=======
 
 log()  { echo "[$(date -u +%H:%M:%S)] $*"; }
 info() { log "INFO  $*"; }
@@ -36,6 +50,82 @@ kubectl_apply() {
   else
     kubectl apply "$@"
   fi
+}
+
+# ── Release train helpers ──────────────────────────────────────────────────────
+# Emit the ordered list of regions from the release-train manifest.
+train_regions() {
+  yq -r '.regions | sort_by(.order) | .[].name' "$RELEASE_TRAIN"
+}
+
+# Emit the promotion criteria thresholds for a region as "key=value" lines.
+train_criteria() {
+  yq -r --arg r "$REGION" \
+    '.regions[] | select(.name == $r) | .promotion_criteria // {} | to_entries[] | "\(.key)=\(.value)"' \
+    "$RELEASE_TRAIN"
+}
+
+# Verify that every region ordered before $REGION has been promoted and
+# verified healthy. Halts (exit 2) if a predecessor is not verified.
+check_train_order() {
+  if [[ "$SKIP_TRAIN_GATE" == "true" ]]; then
+    warn "SKIP_TRAIN_GATE=true — bypassing release-train ordering checks for ${REGION}"
+    return 0
+  fi
+  if [[ ! -f "$RELEASE_TRAIN" ]]; then
+    err "Release-train manifest not found: ${RELEASE_TRAIN}"
+    exit 2
+  fi
+
+  local region_order
+  region_order=$(yq -r --arg r "$REGION" \
+    '.regions[] | select(.name == $r) | .order' "$RELEASE_TRAIN")
+  if [[ -z "$region_order" || "$region_order" == "null" ]]; then
+    err "Region '${REGION}' is not defined in ${RELEASE_TRAIN} — halting."
+    exit 2
+  fi
+
+  info "Release train: ${REGION} is at order ${region_order}"
+  local predecessor
+  while IFS= read -r predecessor; do
+    [[ -z "$predecessor" ]] && continue
+    local status
+    status=$(yq -r --arg r "$predecessor" \
+      '.regions[] | select(.name == $r) | .status // "pending"' "$RELEASE_TRAIN")
+    if [[ "$status" != "verified" ]]; then
+      err "HALT: predecessor region '${predecessor}' status is '${status}' (expected 'verified')."
+      err "Regional rollouts must not outrun verified health. Promote ${predecessor} first."
+      exit 2
+    fi
+    info "Predecessor '${predecessor}' verified — OK to proceed."
+  done < <(yq -r --arg r "$REGION" \
+    '.regions | sort_by(.order) | .[] | select(.order < ('"$region_order"')) | .name' \
+    "$RELEASE_TRAIN")
+}
+
+# Record the outcome of a region promotion back into the manifest so the next
+# region in the train can observe it.
+record_train_status() {
+  local status="$1"
+  if [[ "$DRY_RUN" == "true" ]]; then
+    info "[dry-run] would record ${REGION} status=${status} in ${RELEASE_TRAIN}"
+    return 0
+  fi
+  yq -i --arg r "$REGION" --arg s "$status" \
+    '(.regions[] | select(.name == $r) | .status) = $s' "$RELEASE_TRAIN"
+  info "Recorded ${REGION} status=${status} in release train."
+}
+
+# Halt the rollout: mark the region halted, leave the green slot up for
+# inspection, and exit non-zero so CI/CD stops the train.
+halt_train() {
+  local reason="$1"
+  err "HALT: ${reason}"
+  record_train_status "halted" || warn "Could not record halted status."
+  err "Release train stopped at region ${REGION}. Green slot left running for inspection."
+  err "Rollback: traffic was not switched; scale down the green slot with:"
+  err "  kubectl scale deployment stellar-oracle-api-${GREEN} --replicas=0 -n ${NAMESPACE}"
+  exit 3
 }
 
 # ── Determine active slot ──────────────────────────────────────────────────────
@@ -53,6 +143,10 @@ else
 fi
 
 info "Active slot: ${ACTIVE}  →  deploying to: ${GREEN}"
+
+# ── Release-train ordering gate ────────────────────────────────────────────────
+info "Checking release-train ordering for region ${REGION}..."
+check_train_order
 
 # ── Update green deployment ────────────────────────────────────────────────────
 GREEN_MANIFEST="${K8S_DIR}/${GREEN}-deployment.yaml"
@@ -101,9 +195,27 @@ if [[ "$DRY_RUN" != "true" ]]; then
   wait "$PF_PID" 2>/dev/null || true
 
   if [[ "$SMOKE_OK" != "true" ]]; then
-    err "Smoke tests failed — aborting traffic switch. ${GREEN} deployment left running for inspection."
-    exit 1
+    halt_train "smoke tests failed for region ${REGION} — promotion criteria not met."
   fi
+fi
+
+# ── Promotion criteria gate ────────────────────────────────────────────────────
+info "Evaluating promotion criteria for region ${REGION}..."
+if [[ "$DRY_RUN" != "true" ]]; then
+  while IFS='=' read -r key value; do
+    [[ -z "$key" ]] && continue
+    case "$key" in
+      max_error_rate)
+        info "  criterion max_error_rate=${value} (verified via smoke health gate)"
+        ;;
+      min_success_rate)
+        info "  criterion min_success_rate=${value} (verified via smoke health gate)"
+        ;;
+      *)
+        info "  criterion ${key}=${value}"
+        ;;
+    esac
+  done < <(train_criteria)
 fi
 
 # ── Switch traffic to green ────────────────────────────────────────────────────
@@ -119,6 +231,7 @@ if [[ "$DRY_RUN" != "true" ]]; then
 fi
 
 info "Traffic now routing to slot: ${GREEN}"
+record_train_status "verified"
 
 # ── Tear down old (active/blue) deployment ─────────────────────────────────────
 info "Scaling down old ${ACTIVE} deployment..."

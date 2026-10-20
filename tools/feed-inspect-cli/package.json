@@ -1,0 +1,7 @@
+{
+  "name": "feed-inspect-cli",
+  "private": true,
+  "type": "module",
+  "bin": { "feed-inspect": "./cli.mjs" },
+  "scripts": { "test": "node --test" }
+}

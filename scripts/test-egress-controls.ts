@@ -37,6 +37,66 @@ const blockedDestinations = [
   { hostname: '172.16.0.1', description: 'Private IP range' },
 ];
 
+// Ports that must never be reachable from provider/integration egress, even to
+// an otherwise allowlisted host. These are common lateral-movement targets.
+const disallowedPorts = [22, 23, 25, 445, 3306, 5432, 6379, 9200, 11211, 27017];
+
+// Redirect and DNS-rebinding scenarios that must be blocked by the deployment
+// policy. Each describes the initial (allowlisted) hop and the private target
+// the attacker tries to pivot to.
+interface RedirectScenario {
+  name: string;
+  initialHost: string;
+  redirectTarget: string;
+  description: string;
+}
+
+const redirectScenarios: RedirectScenario[] = [
+  {
+    name: 'redirect-to-private-ip',
+    initialHost: 'chainlink-api.example.com',
+    redirectTarget: 'http://10.0.0.5/admin',
+    description: 'Allowlisted host 302-redirects to private IP',
+  },
+  {
+    name: 'redirect-to-metadata',
+    initialHost: 'api.redstone.example.com',
+    redirectTarget: 'http://169.254.169.254/latest/meta-data/',
+    description: 'Allowlisted host redirects to cloud metadata endpoint',
+  },
+  {
+    name: 'redirect-to-internal-host',
+    initialHost: 'api.bandprotocol.example.com',
+    redirectTarget: 'http://internal-service.internal:8080/',
+    description: 'Allowlisted host redirects to internal service DNS name',
+  },
+];
+
+interface DNSRebindingScenario {
+  name: string;
+  hostname: string;
+  firstResolution: string[];
+  reboundResolution: string[];
+  description: string;
+}
+
+const dnsRebindingScenarios: DNSRebindingScenario[] = [
+  {
+    name: 'dns-rebind-to-private-ip',
+    hostname: 'rebind.example.com',
+    firstResolution: ['192.0.2.50'],
+    reboundResolution: ['10.0.0.5'],
+    description: 'Domain resolves to allowlisted IP then rebinds to private IP',
+  },
+  {
+    name: 'dns-rebind-to-loopback',
+    hostname: 'rebind-loopback.example.com',
+    firstResolution: ['198.51.100.50'],
+    reboundResolution: ['127.0.0.1'],
+    description: 'Domain resolves to allowlisted IP then rebinds to loopback',
+  },
+];
+
 async function testNetworkPolicyEnforcement(
   targetHost: string,
   expectedOutcome: 'allowed' | 'denied'
@@ -118,6 +178,176 @@ function ipInRange(ip: string, cidr: string): boolean {
   // In production: parse CIDR and verify IP membership
   const [base] = cidr.split('/');
   return ip.startsWith(base.substring(0, base.lastIndexOf('.')));
+}
+
+function isPrivateOrReservedIP(ip: string): boolean {
+  const octets = ip.split('.').map((o) => parseInt(o, 10));
+  if (octets.length !== 4 || octets.some((o) => Number.isNaN(o) || o < 0 || o > 255)) {
+    return true; // Unparseable addresses are treated as unsafe
+  }
+  const [a, b] = octets;
+
+  if (a === 10) return true; // 10.0.0.0/8
+  if (a === 127) return true; // loopback
+  if (a === 0) return true; // "this" network
+  if (a === 169 && b === 254) return true; // link-local / cloud metadata
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  if (a === 100 && b >= 64 && b <= 127) return true; // carrier-grade NAT
+  if (a >= 224) return true; // multicast / reserved
+  return false;
+}
+
+function isAllowlistedHost(host: string): boolean {
+  return allowlistedProviders.some((p) => p.domains.includes(host));
+}
+
+function isAllowlistedIP(ip: string): boolean {
+  return allowlistedProviders.some((p) => p.ipRanges.some((range) => ipInRange(ip, range)));
+}
+
+/**
+ * Evaluate a single outbound request against the deployment egress policy.
+ * This models the policy engine that runs in front of provider/integration
+ * egress: it must reject private/reserved targets, disallowed ports, and
+ * redirects that pivot off an allowlisted host to a non-allowlisted target.
+ */
+function evaluateEgressPolicy(
+  host: string,
+  port: number,
+  resolvedIps: string[],
+  redirectTarget?: string
+): { allowed: boolean; denialType?: string; reason?: string } {
+  // Redirects must be re-evaluated against the policy; a redirect to a
+  // private/reserved or non-allowlisted destination is a bypass attempt.
+  if (redirectTarget) {
+    const match = /^https?:\/\/([^/:]+)(?::(\d+))?/.exec(redirectTarget);
+    if (!match) {
+      return { allowed: false, denialType: 'ssrf-guard', reason: 'unparseable redirect target' };
+    }
+    const redirectHost = match[1];
+    const redirectPort = match[2] ? parseInt(match[2], 10) : 80;
+
+    if (isPrivateOrReservedIP(redirectHost) || redirectHost.endsWith('.internal')) {
+      return {
+        allowed: false,
+        denialType: 'ssrf-guard',
+        reason: `redirect to private/reserved target ${redirectHost}`,
+      };
+    }
+    if (!isAllowlistedHost(redirectHost)) {
+      return {
+        allowed: false,
+        denialType: 'policy',
+        reason: `redirect to non-allowlisted host ${redirectHost}`,
+      };
+    }
+    return evaluateEgressPolicy(redirectHost, redirectPort, resolvedIps);
+  }
+
+  if (disallowedPorts.includes(port)) {
+    return { allowed: false, denialType: 'policy', reason: `disallowed port ${port}` };
+  }
+
+  // Every resolved IP must be safe and allowlisted; a single bad answer
+  // (e.g. DNS rebinding) must fail the whole request.
+  for (const ip of resolvedIps) {
+    if (isPrivateOrReservedIP(ip)) {
+      return { allowed: false, denialType: 'dns', reason: `resolved to private/reserved IP ${ip}` };
+    }
+    if (!isAllowlistedIP(ip)) {
+      return { allowed: false, denialType: 'policy', reason: `resolved to non-allowlisted IP ${ip}` };
+    }
+  }
+
+  if (!isAllowlistedHost(host)) {
+    return { allowed: false, denialType: 'policy', reason: `host ${host} not allowlisted` };
+  }
+
+  return { allowed: true };
+}
+
+async function verifyRedirectBlocked(scenario: RedirectScenario): Promise<boolean> {
+  const startTime = Date.now();
+  try {
+    const initial = await testNetworkPolicyEnforcement(scenario.initialHost, 'allowed');
+    if (!initial.allowed) {
+      throw new Error(`Initial allowlisted hop ${scenario.initialHost} unexpectedly blocked`);
+    }
+
+    const decision = evaluateEgressPolicy(scenario.initialHost, 443, [], scenario.redirectTarget);
+    if (decision.allowed) {
+      throw new Error(
+        `BYPASS: ${scenario.description} was allowed (${scenario.redirectTarget}); redirect not re-evaluated`
+      );
+    }
+    return true;
+  } finally {
+    console.log(`  Redirect test ${scenario.name}: ${Date.now() - startTime}ms`);
+  }
+}
+
+async function verifyDNSRebindingBlocked(scenario: DNSRebindingScenario): Promise<boolean> {
+  const startTime = Date.now();
+  try {
+    // First resolution is benign and allowlisted.
+    const first = evaluateEgressPolicy(scenario.hostname, 443, scenario.firstResolution);
+    if (!first.allowed) {
+      throw new Error(
+        `First resolution of ${scenario.hostname} unexpectedly blocked: ${first.reason}`
+      );
+    }
+
+    // Rebound resolution must be rejected by the policy.
+    const rebound = evaluateEgressPolicy(scenario.hostname, 443, scenario.reboundResolution);
+    if (rebound.allowed) {
+      throw new Error(
+        `BYPASS: ${scenario.description} was allowed (rebound to ${scenario.reboundResolution.join(', ')})`
+      );
+    }
+    return true;
+  } finally {
+    console.log(`  DNS rebinding test ${scenario.name}: ${Date.now() - startTime}ms`);
+  }
+}
+
+async function verifyDisallowedPortsBlocked(): Promise<{ blocked: number[]; bypassed: number[] }> {
+  const blocked: number[] = [];
+  const bypassed: number[] = [];
+
+  for (const provider of allowlistedProviders) {
+    for (const domain of provider.domains) {
+      for (const port of disallowedPorts) {
+        const decision = evaluateEgressPolicy(domain, port, []);
+        if (decision.allowed) {
+          bypassed.push(port);
+        } else {
+          blocked.push(port);
+        }
+      }
+    }
+  }
+
+  return { blocked, bypassed };
+}
+
+async function verifyAllowlistedHostScenarios(): Promise<{ passed: number; failed: string[] }> {
+  const failed: string[] = [];
+  let passed = 0;
+
+  for (const provider of allowlistedProviders) {
+    for (const domain of provider.domains) {
+      const resolved = await testDNSResolution(domain);
+      const decision = evaluateEgressPolicy(domain, 443, resolved.ips);
+      if (decision.allowed) {
+        passed++;
+      } else {
+        failed.push(`${domain}: ${decision.reason}`);
+      }
+    }
+  }
+
+  return { passed, failed };
 }
 
 async function verifyNegativePolicyDenial(
@@ -352,7 +582,120 @@ export async function runEgressControlTests(): Promise<EgressControlResult[]> {
     console.log(`✗ Allowlist breadth check failed: ${error}`);
   }
 
-  // Test 4: DNS-to-IP drift detection
+  // Test 4: Redirect-to-private-IP / metadata / internal-host scenarios
+  console.log('\nVerifying redirects cannot bypass egress policy...');
+  for (const scenario of redirectScenarios) {
+    const testName = scenario.name;
+    const startTime = Date.now();
+
+    try {
+      await verifyRedirectBlocked(scenario);
+      results.push({
+        testName,
+        passed: true,
+        denialType: 'ssrf-guard',
+        durationMs: Date.now() - startTime,
+      });
+      console.log(`✓ ${testName}: ${scenario.description} blocked`);
+    } catch (error) {
+      results.push({
+        testName,
+        passed: false,
+        error: String(error),
+        durationMs: Date.now() - startTime,
+      });
+      console.log(`✗ ${testName}: ${error}`);
+    }
+  }
+
+  // Test 5: DNS-rebinding scenarios
+  console.log('\nVerifying DNS rebinding cannot bypass egress policy...');
+  for (const scenario of dnsRebindingScenarios) {
+    const testName = scenario.name;
+    const startTime = Date.now();
+
+    try {
+      await verifyDNSRebindingBlocked(scenario);
+      results.push({
+        testName,
+        passed: true,
+        denialType: 'dns',
+        durationMs: Date.now() - startTime,
+      });
+      console.log(`✓ ${testName}: ${scenario.description} blocked`);
+    } catch (error) {
+      results.push({
+        testName,
+        passed: false,
+        error: String(error),
+        durationMs: Date.now() - startTime,
+      });
+      console.log(`✗ ${testName}: ${error}`);
+    }
+  }
+
+  // Test 6: Disallowed ports to allowlisted hosts
+  console.log('\nVerifying disallowed ports are blocked...');
+  try {
+    const portCheck = await verifyDisallowedPortsBlocked();
+    if (portCheck.bypassed.length > 0) {
+      const unique = Array.from(new Set(portCheck.bypassed));
+      results.push({
+        testName: 'disallowed-ports',
+        passed: false,
+        error: `BYPASS: ports reachable on allowlisted hosts: ${unique.join(', ')}`,
+        durationMs: 0,
+      });
+      console.log(`✗ disallowed-ports: ${unique.join(', ')} not blocked`);
+    } else {
+      results.push({
+        testName: 'disallowed-ports',
+        passed: true,
+        durationMs: 0,
+      });
+      console.log(`✓ disallowed-ports: all ${disallowedPorts.length} ports blocked`);
+    }
+  } catch (error) {
+    results.push({
+      testName: 'disallowed-ports',
+      passed: false,
+      error: String(error),
+      durationMs: 0,
+    });
+    console.log(`✗ disallowed-ports check failed: ${error}`);
+  }
+
+  // Test 7: Allowlisted-host scenarios remain reachable (no over-blocking)
+  console.log('\nVerifying allowlisted hosts remain reachable...');
+  try {
+    const allowCheck = await verifyAllowlistedHostScenarios();
+    if (allowCheck.failed.length > 0) {
+      results.push({
+        testName: 'allowlisted-hosts',
+        passed: false,
+        error: `Allowlisted hosts blocked: ${allowCheck.failed.join('; ')}`,
+        durationMs: 0,
+      });
+      console.log(`✗ allowlisted-hosts: ${allowCheck.failed.join('; ')}`);
+    } else {
+      results.push({
+        testName: 'allowlisted-hosts',
+        passed: true,
+        durationMs: 0,
+      });
+      console.log(`✓ allowlisted-hosts: ${allowCheck.passed} allowlisted host(s) reachable`);
+    }
+  } catch (error) {
+    results.push({
+      testName: 'allowlisted-hosts',
+      passed: false,
+      error: String(error),
+      durationMs: 0,
+    });
+    console.log(`✗ allowlisted-hosts check failed: ${error}`);
+  }
+
+  // Test 8: DNS-to-IP drift detection
   console.log('\nDetecting DNS-to-IP drift...');
   try {
     const drift = await verifyDNSToIPDrift();
@@ -412,4 +755,12 @@ if (require.main === module) {
     });
 }
 
-export { NetworkPolicyTest, EgressControlResult };
+export {
+  NetworkPolicyTest,
+  EgressControlResult,
+  evaluateEgressPolicy,
+  isPrivateOrReservedIP,
+  disallowedPorts,
+  redirectScenarios,
+  dnsRebindingScenarios,
+};

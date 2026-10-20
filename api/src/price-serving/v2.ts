@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Router, Request, Response } from 'express';
 import { AssetQuerySchema, HistoryQuerySchema, formatValidationResponse } from './validation';
 import { readAssetPrices, readPriceHistory } from './price-store';
+import { estimateRequestCost } from './cost-estimate';
 import type { ApiPrice } from '@stellar-oracle/types';
 import { HybridCache } from './cache';
 import { cacheHitTotal, cacheMissTotal, lastPriceTimestamp, priceQueriesTotal } from '../observability/metrics';
@@ -74,6 +75,7 @@ router.get('/', (_req: Request, res: Response) => {
       prices: '/api/v2/prices',
       price: '/api/v2/prices/:asset',
       batchPrices: 'POST /api/v2/prices/batch',
+      costEstimate: 'GET /api/v2/prices/cost-estimate',
       assets: '/api/v2/assets',
       history: '/api/v2/history/:asset',
       sources: '/api/v2/sources',
@@ -85,6 +87,7 @@ router.get('/', (_req: Request, res: Response) => {
       'Price objects include `consistency` metadata (objective, maxStalenessMs, ageMs, stale)',
       'Pagination supported on /prices and /history via `cursor`',
       'Batch endpoint accepts up to 50 assets',
+      'Deterministic cost estimates via GET /prices/cost-estimate',
       'Asset metadata endpoint with filtering by status',
     ],
     consistencyObjectives: CONSISTENCY_OBJECTIVES,
@@ -123,6 +126,66 @@ router.get('/assets', async (req: Request, res: Response) => {
 
   await pricesCache.set(cacheKey, response, 'sources');
   res.json(v2Ok(response));
+});
+
+// Registered before '/prices/:asset' for the same reason as '/prices/batch'
+// above: declaration order wins, so the literal "cost-estimate" segment must
+// be bound before the ':asset' parameter route.
+router.get('/prices/cost-estimate', (req: Request, res: Response) => {
+  const operationParam = (req.query.operation as string) || '';
+  const rawAssetCount = req.query.assetCount;
+  const rawHistoryLimit = req.query.historyLimit;
+
+  const params: {
+    operation: string;
+    assetCount?: number;
+    historyLimit?: number;
+  } = { operation: operationParam };
+
+  // Cheap pre-validation so malformed selectors fail fast with a clean 400
+  // before the model classifies the request: only plain decimal integer
+  // strings are accepted, and absurdly long strings cannot be an integer.
+  if (typeof rawAssetCount === 'string' && rawAssetCount.length > 0) {
+    if (rawAssetCount.length > 12 || !/^[0-9]+$/.test(rawAssetCount)) {
+      return res.status(400).json(
+        v2Fail({
+          code: 'VALIDATION_ERROR',
+          message: 'assetCount must be a plain integer',
+        }),
+      );
+    }
+    params.assetCount = Number(rawAssetCount);
+  } else if (rawAssetCount !== undefined) {
+    return res.status(400).json(
+      v2Fail({
+        code: 'VALIDATION_ERROR',
+        message: 'assetCount must be a plain integer',
+      }),
+    );
+  }
+
+  if (typeof rawHistoryLimit === 'string' && rawHistoryLimit.length > 0) {
+    if (rawHistoryLimit.length > 10 || !/^[0-9]+$/.test(rawHistoryLimit)) {
+      return res.status(400).json(
+        v2Fail({
+          code: 'VALIDATION_ERROR',
+          message: 'historyLimit must be a plain integer',
+        }),
+      );
+    }
+    params.historyLimit = Number(rawHistoryLimit);
+  } else if (rawHistoryLimit !== undefined) {
+    return res.status(400).json(
+      v2Fail({
+        code: 'VALIDATION_ERROR',
+        message: 'historyLimit must be a plain integer',
+      }),
+    );
+  }
+
+  // Deterministic by construction: the estimate is a pure function of these
+  // query parameters and the static rule table — no time or per-key state.
+  res.json(v2Ok(estimateRequestCost(params), false));
 });
 
 // v2 prices — enhanced envelope with confidence + source count

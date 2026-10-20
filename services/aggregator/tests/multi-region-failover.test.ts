@@ -1,5 +1,96 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+type FeedId = string;
+type RegionId = string;
+
+interface FeedSequenceObservation {
+  feedId: FeedId;
+  region: RegionId;
+  sequence: number;
+  observedAt: number;
+}
+
+interface FeedLagSample {
+  feedId: FeedId;
+  region: RegionId;
+  lagMs: number;
+  missingSequences: number[];
+  lastSequence: number;
+}
+
+interface FeedReplicationMonitor {
+  record(observation: FeedSequenceObservation): void;
+  sample(feedId: FeedId, region: RegionId, now: number): FeedLagSample;
+  lagDistribution(feedId: FeedId, region: RegionId): { p50: number; p95: number; p99: number; max: number };
+}
+
+interface FeedHealthSignal {
+  feedId: FeedId;
+  region: RegionId;
+  freshnessMs: number;
+  missingSequences: number;
+  healthy: boolean;
+}
+
+interface FeedHealthRouter {
+  route(feedId: FeedId, signals: FeedHealthSignal[]): RegionId | null;
+}
+
+const createFeedReplicationMonitor = (thresholds: { lagMs: number; missingSequences: number }): FeedReplicationMonitor => {
+  const observations = new Map<string, FeedSequenceObservation[]>();
+  const key = (feedId: FeedId, region: RegionId) => `${feedId}::${region}`;
+
+  return {
+    record(observation) {
+      const k = key(observation.feedId, observation.region);
+      const list = observations.get(k) ?? [];
+      list.push(observation);
+      list.sort((a, b) => a.sequence - b.sequence);
+      observations.set(k, list);
+    },
+    sample(feedId, region, now) {
+      const list = observations.get(key(feedId, region)) ?? [];
+      const last = list[list.length - 1];
+      const lastSequence = last?.sequence ?? 0;
+      const lagMs = last ? Math.max(0, now - last.observedAt) : Number.POSITIVE_INFINITY;
+      const missingSequences: number[] = [];
+      for (let i = 1; i < list.length; i++) {
+        const gap = list[i].sequence - list[i - 1].sequence;
+        if (gap > 1) {
+          for (let s = list[i - 1].sequence + 1; s < list[i].sequence; s++) {
+            missingSequences.push(s);
+          }
+        }
+      }
+      return { feedId, region, lagMs, missingSequences, lastSequence };
+    },
+    lagDistribution(feedId, region) {
+      const list = observations.get(key(feedId, region)) ?? [];
+      const lags = list.map((o, i) => (i === 0 ? 0 : o.observedAt - list[i - 1].observedAt)).sort((a, b) => a - b);
+      const percentile = (p: number) => (lags.length === 0 ? 0 : lags[Math.min(lags.length - 1, Math.floor((p / 100) * lags.length))]);
+      return {
+        p50: percentile(50),
+        p95: percentile(95),
+        p99: percentile(99),
+        max: lags.length === 0 ? 0 : lags[lags.length - 1],
+      };
+    },
+  };
+};
+
+const createFeedHealthRouter = (): FeedHealthRouter => ({
+  route(feedId, signals) {
+    const candidates = signals
+      .filter((s) => s.feedId === feedId && s.healthy)
+      .sort((a, b) => {
+        if (a.freshnessMs !== b.freshnessMs) return a.freshnessMs - b.freshnessMs;
+        if (a.missingSequences !== b.missingSequences) return a.missingSequences - b.missingSequences;
+        return a.region < b.region ? -1 : a.region > b.region ? 1 : 0;
+      });
+    return candidates.length > 0 ? candidates[0].region : null;
+  },
+});
+
 interface RegionalHealthStatus {
   region: string;
   isHealthy: boolean;
@@ -213,6 +304,110 @@ describe('multi-region failover verification', () => {
     }
 
     expect(faultVerified).toBe(true);
+  });
+
+  describe('per-feed replication lag and health routing', () => {
+    const lagThresholds = { lagMs: 5000, missingSequences: 0 };
+
+    it('measures lag distribution per feed and region under normal operation', () => {
+      const monitor = createFeedReplicationMonitor(lagThresholds);
+      const base = 1_000_000;
+      for (let i = 1; i <= 100; i++) {
+        monitor.record({ feedId: 'xlm-usd', region: 'us-east-1', sequence: i, observedAt: base + i * 100 });
+      }
+
+      const sample = monitor.sample('xlm-usd', 'us-east-1', base + 100 * 100 + 250);
+      expect(sample.lastSequence).toBe(100);
+      expect(sample.lagMs).toBe(250);
+      expect(sample.missingSequences).toHaveLength(0);
+
+      const dist = monitor.lagDistribution('xlm-usd', 'us-east-1');
+      expect(dist.p50).toBeLessThanOrEqual(dist.p95);
+      expect(dist.p95).toBeLessThanOrEqual(dist.p99);
+      expect(dist.max).toBe(100);
+    });
+
+    it('detects missing sequences at feed granularity', () => {
+      const monitor = createFeedReplicationMonitor(lagThresholds);
+      const base = 2_000_000;
+      [1, 2, 5, 6, 9].forEach((seq, idx) => {
+        monitor.record({ feedId: 'btc-usd', region: 'eu-west-1', sequence: seq, observedAt: base + idx * 100 });
+      });
+
+      const sample = monitor.sample('btc-usd', 'eu-west-1', base + 1000);
+      expect(sample.missingSequences).toEqual([3, 4, 7, 8]);
+      expect(sample.missingSequences.length).toBeGreaterThan(lagThresholds.missingSequences);
+    });
+
+    it('treats an unseen feed/region as infinitely lagging (boundary)', () => {
+      const monitor = createFeedReplicationMonitor(lagThresholds);
+      const sample = monitor.sample('eth-usd', 'ap-southeast-1', Date.now());
+      expect(sample.lagMs).toBe(Number.POSITIVE_INFINITY);
+      expect(sample.lastSequence).toBe(0);
+      expect(sample.missingSequences).toHaveLength(0);
+      expect(monitor.lagDistribution('eth-usd', 'ap-southeast-1')).toEqual({ p50: 0, p95: 0, p99: 0, max: 0 });
+    });
+
+    it('routes consumers using per-feed freshness and integrity signals', () => {
+      const router = createFeedHealthRouter();
+      const signals: FeedHealthSignal[] = [
+        { feedId: 'xlm-usd', region: 'us-east-1', freshnessMs: 8000, missingSequences: 0, healthy: true },
+        { feedId: 'xlm-usd', region: 'eu-west-1', freshnessMs: 1200, missingSequences: 0, healthy: true },
+        { feedId: 'xlm-usd', region: 'ap-southeast-1', freshnessMs: 500, missingSequences: 2, healthy: true },
+      ];
+
+      expect(router.route('xlm-usd', signals)).toBe('eu-west-1');
+    });
+
+    it('breaks ties deterministically by region id', () => {
+      const router = createFeedHealthRouter();
+      const signals: FeedHealthSignal[] = [
+        { feedId: 'xlm-usd', region: 'us-east-1', freshnessMs: 1000, missingSequences: 0, healthy: true },
+        { feedId: 'xlm-usd', region: 'eu-west-1', freshnessMs: 1000, missingSequences: 0, healthy: true },
+        { feedId: 'xlm-usd', region: 'ap-southeast-1', freshnessMs: 1000, missingSequences: 0, healthy: true },
+      ];
+
+      const first = router.route('xlm-usd', signals);
+      const shuffled = [...signals].reverse();
+      const second = router.route('xlm-usd', shuffled);
+      expect(first).toBe('ap-southeast-1');
+      expect(second).toBe(first);
+    });
+
+    it('fails over per feed when the primary region feed is unhealthy', () => {
+      const router = createFeedHealthRouter();
+      const signals: FeedHealthSignal[] = [
+        { feedId: 'xlm-usd', region: 'us-east-1', freshnessMs: 60000, missingSequences: 5, healthy: false },
+        { feedId: 'xlm-usd', region: 'eu-west-1', freshnessMs: 2000, missingSequences: 0, healthy: true },
+      ];
+
+      expect(router.route('xlm-usd', signals)).toBe('eu-west-1');
+    });
+
+    it('returns null when no region has a healthy feed signal', () => {
+      const router = createFeedHealthRouter();
+      const signals: FeedHealthSignal[] = [
+        { feedId: 'xlm-usd', region: 'us-east-1', freshnessMs: 60000, missingSequences: 0, healthy: false },
+        { feedId: 'xlm-usd', region: 'eu-west-1', freshnessMs: 60000, missingSequences: 3, healthy: false },
+      ];
+
+      expect(router.route('xlm-usd', signals)).toBeNull();
+      expect(router.route('xlm-usd', [])).toBeNull();
+    });
+
+    it('isolates routing decisions per feed so one degraded feed does not affect another', () => {
+      const router = createFeedHealthRouter();
+      const signals: FeedHealthSignal[] = [
+        { feedId: 'xlm-usd', region: 'us-east-1', freshnessMs: 60000, missingSequences: 0, healthy: false },
+        { feedId: 'xlm-usd', region: 'eu-west-1', freshnessMs: 3000, missingSequences: 0, healthy: true },
+        { feedId: 'btc-usd', region: 'us-east-1', freshnessMs: 1000, missingSequences: 0, healthy: true },
+        { feedId: 'btc-usd', region: 'eu-west-1', freshnessMs: 500, missingSequences: 0, healthy: true },
+      ];
+
+      expect(router.route('xlm-usd', signals)).toBe('eu-west-1');
+      expect(router.route('btc-usd', signals)).toBe('eu-west-1');
+      expect(router.route('eth-usd', signals)).toBeNull();
+    });
   });
 
   it('measures availability during failover against SLO baseline', () => {

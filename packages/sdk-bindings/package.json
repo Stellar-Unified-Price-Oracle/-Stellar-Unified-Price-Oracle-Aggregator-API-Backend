@@ -1,0 +1,9 @@
+{
+  "name": "@stellar-oracle/sdk-bindings",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Generated typed feed metadata bindings and SDK checkpoint recovery",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts"
+}

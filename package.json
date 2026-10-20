@@ -21,6 +21,8 @@
     "test:contract": "cd contracts/price-oracle && cargo test",
     "test:backend": "npm run test:aggregator && npm run test:api",
     "test:integration": "node scripts/integration-test.mjs",
+    "rehearsal:upgrade": "node scripts/upgrade-rehearsal.mjs",
+    "verify:catalog": "node scripts/verify-feed-catalog.mjs",
     "check:env": "node scripts/check-env-contract.mjs",
     "check:routes": "node scripts/check-route-contract.mjs",
     "check:ports": "node scripts/check-port-consistency.mjs",

@@ -5,6 +5,10 @@ import {
   type SsrfError,
   type SsrfPolicy,
 } from '@stellar-oracle/ssrf-guard';
+import {
+  verifyEgressDestination,
+  type EgressVerificationResult,
+} from '@stellar-oracle/egress-policy';
 import { config } from '../infrastructure/config';
 import { logger } from '../observability/logger';
 
@@ -48,6 +52,43 @@ export function webhookSsrfPolicy(apiKeyPrefix?: string): SsrfPolicy {
 
 export function isPrivateIpsAllowed(): boolean {
   return ((config.webhooks ?? {}) as Partial<typeof config.webhooks>).allowPrivateIps === true;
+}
+
+/**
+ * Deployment-policy check for a webhook destination (issue #750).
+ *
+ * `webhookSsrfPolicy` decides what a URL may look like; this verifier decides
+ * whether the deployment permits egress to it at all. It runs the same
+ * environment allowlist, redirect refusal and connect-time DNS pinning the
+ * aggregator uses, so a webhook cannot reach a destination the deployment has
+ * not approved, and a redirect or a DNS answer that changes after the check
+ * cannot widen that approval.
+ *
+ * Returns the verification result rather than throwing so callers can log the
+ * category and surface a fixed message; the raw reason never leaves the process.
+ */
+export async function verifyWebhookEgress(
+  url: string,
+  apiKeyPrefix?: string,
+): Promise<EgressVerificationResult> {
+  const result = await verifyEgressDestination(url, {
+    policy: webhookSsrfPolicy(apiKeyPrefix),
+    // Webhooks are user-supplied: never follow redirects, since a permitted
+    // host could redirect to one the policy would have refused.
+    followRedirects: false,
+    // Re-resolve and re-check at connect time so a DNS answer that flips
+    // between verification and connection is refused rather than used.
+    pinResolvedAddress: true,
+  });
+
+  if (!result.allowed) {
+    logger.warn('[Webhook][Egress] Destination refused by deployment policy', {
+      webhookHost: result.host,
+      reason: result.reason,
+    });
+  }
+
+  return result;
 }
 
 let dispatcher: Agent | null = null;
