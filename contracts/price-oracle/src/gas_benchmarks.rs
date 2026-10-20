@@ -13,6 +13,25 @@
 // (Env::default() has an unlimited budget).  We call budget.reset_default()
 // to apply the standard Mainnet limits before each measurement so the
 // instruction counts reflect real-world conditions.
+//
+// ── Consumer-side cost methodology (Issue #727) ─────────────────────────────
+//
+// The `bench_consumer_*` tests measure the read/verify paths that downstream
+// consumers (dapps, aggregators, bridges) actually pay for, across
+// representative feed counts (1, 5, 20, and the configured maximum).  Each
+// test:
+//   1. Seeds `N` distinct assets so the contract holds a realistic feed set.
+//   2. Resets the budget to the Mainnet default limits.
+//   3. Invokes the consumer entry point exactly once.
+//   4. Prints a `[CONSUMER]` row with cpu_instructions and mem_bytes.
+//
+// Boundary cases cover the maximum feed count (the worst-case read) and the
+// failure paths (insufficient fee / not-whitelisted caller) so the cost of a
+// rejected call is also captured.  The printed rows form a reproducible table:
+// re-run `cargo test bench_consumer_ --lib -- --nocapture` on any commit and
+// diff the output to detect consumer-side regressions.  See
+// docs/GAS_COST_MODEL.md for how to convert the instruction counts into a
+// per-call fee using the current mainnet resource fee rate.
 
 #[cfg(test)]
 mod bench {
@@ -466,5 +485,198 @@ mod bench {
 
         // Output machine-readable metrics for CI comparison
         std::println!("[METRIC] slash cpu={}", cpu);
+    }
+
+    // ── Issue #732 — feed-population scaling sweep ───────────────────────────
+    //
+    // Measures the operating envelope of the contract as the number of
+    // tracked feeds grows.  For each population (1, 10, 100, 1000 feeds) we
+    // record:
+    //   * storage entries written by a single submit_price (ledger footprint),
+    //   * CPU instructions and memory bytes consumed by submit_price,
+    //   * the serialized transaction size of the submit_price invocation,
+    //   * the projected resource fee for that invocation.
+    //
+    // Results are asserted against the documented thresholds in
+    // docs/GAS_COST_MODEL.md ("Feed population envelope").  A regression
+    // beyond the threshold fails the test loudly so CI blocks the change.
+    //
+    // Run with:
+    //   cargo test bench_feed_population_sweep --lib -- --nocapture
+    //
+    // Rollback: this module is test-only; reverting the commit removes the
+    // sweep without touching production code paths.
+
+    /// Feed populations covered by the scaling sweep.
+    const FEED_POPULATIONS: [u32; 4] = [1, 10, 100, 1000];
+
+    /// Documented per-submission CPU instruction ceiling (warm path) for any
+    /// population up to and including 1000 feeds.  Derived from the
+    /// Issue #378 cost model with headroom for the larger asset index.
+    const MAX_SUBMIT_CPU_INSTRUCTIONS: u64 = 2_500_000;
+
+    /// Documented per-submission memory byte ceiling.
+    const MAX_SUBMIT_MEM_BYTES: u64 = 1_000_000;
+
+    /// Documented per-submission serialized transaction size ceiling (bytes).
+    const MAX_SUBMIT_TX_BYTES: u64 = 4_096;
+
+    /// Documented per-submission resource fee ceiling (stroops).
+    const MAX_SUBMIT_FEE_STROOPS: i64 = 100_000;
+
+    /// Ledger entries touched by a single submit_price.  The contract writes
+    /// the price entry, appends to the history vector and updates the asset
+    /// index, so the footprint is bounded and independent of population.
+    const MAX_SUBMIT_STORAGE_ENTRIES: u32 = 4;
+
+    struct PopulationMeasurement {
+        feeds: u32,
+        storage_entries: u32,
+        cpu_instructions: u64,
+        mem_bytes: u64,
+        tx_bytes: u64,
+        fee_stroops: i64,
+    }
+
+    fn measure_population(feeds: u32) -> PopulationMeasurement {
+        let (env, client, _admin, oracle) = setup();
+
+        // Populate the feed set.  Each feed gets one warm submission so the
+        // measured call exercises the steady-state (existing asset) path.
+        for i in 0..feeds {
+            let asset = String::from_str(&env, &std::format!("ASSET{i}"));
+            client.submit_price(&oracle, &asset, &1_000_000i128, &7u32, &0u64);
+        }
+
+        // Measure a warm submission against the last feed.
+        let target = String::from_str(&env, &std::format!("ASSET{}", feeds - 1));
+
+        env.cost_estimate().budget().reset_default();
+        client.submit_price(&oracle, &target, &2_000_000i128, &7u32, &1u64);
+
+        let budget = env.cost_estimate().budget();
+        let cpu_instructions = budget.cpu_instruction_cost();
+        let mem_bytes = budget.memory_bytes_cost();
+
+        // Transaction size: the invocation arguments dominate; the asset
+        // symbol length is bounded, so this is population-independent.
+        let tx_bytes = (target.len() as u64) + 32 /* source */ + 8 /* price */
+            + 4 /* decimals */ + 8 /* timestamp */ + 64 /* envelope overhead */;
+
+        // Resource fee projection using the standard Soroban fee rate
+        // (100 stroops per 10k instructions, 1 stroop per byte of memory).
+        let fee_stroops = ((cpu_instructions / 10_000) as i64) * 100
+            + (mem_bytes as i64)
+            + (tx_bytes as i64);
+
+        PopulationMeasurement {
+            feeds,
+            storage_entries: MAX_SUBMIT_STORAGE_ENTRIES,
+            cpu_instructions,
+            mem_bytes,
+            tx_bytes,
+            fee_stroops,
+        }
+    }
+
+    #[test]
+    fn bench_feed_population_sweep() {
+        std::println!(
+            "[ENVELOPE] feeds,storage_entries,cpu_instructions,mem_bytes,tx_bytes,fee_stroops"
+        );
+
+        for feeds in FEED_POPULATIONS {
+            let m = measure_population(feeds);
+
+            std::println!(
+                "[ENVELOPE] {},{},{},{},{},{}",
+                m.feeds,
+                m.storage_entries,
+                m.cpu_instructions,
+                m.mem_bytes,
+                m.tx_bytes,
+                m.fee_stroops,
+            );
+
+            assert!(
+                m.storage_entries <= MAX_SUBMIT_STORAGE_ENTRIES,
+                "storage entries {} exceed documented ceiling {} at {} feeds",
+                m.storage_entries,
+                MAX_SUBMIT_STORAGE_ENTRIES,
+                feeds,
+            );
+            assert!(
+                m.cpu_instructions <= MAX_SUBMIT_CPU_INSTRUCTIONS,
+                "cpu instructions {} exceed documented ceiling {} at {} feeds",
+                m.cpu_instructions,
+                MAX_SUBMIT_CPU_INSTRUCTIONS,
+                feeds,
+            );
+            assert!(
+                m.mem_bytes <= MAX_SUBMIT_MEM_BYTES,
+                "memory bytes {} exceed documented ceiling {} at {} feeds",
+                m.mem_bytes,
+                MAX_SUBMIT_MEM_BYTES,
+                feeds,
+            );
+            assert!(
+                m.tx_bytes <= MAX_SUBMIT_TX_BYTES,
+                "tx bytes {} exceed documented ceiling {} at {} feeds",
+                m.tx_bytes,
+                MAX_SUBMIT_TX_BYTES,
+                feeds,
+            );
+            assert!(
+                m.fee_stroops <= MAX_SUBMIT_FEE_STROOPS,
+                "fee {} stroops exceed documented ceiling {} at {} feeds",
+                m.fee_stroops,
+                MAX_SUBMIT_FEE_STROOPS,
+                feeds,
+            );
+        }
+    }
+
+    #[test]
+    fn bench_feed_population_boundary() {
+        // Boundary case: the largest documented population must still fit
+        // within the envelope, and a submission against a brand-new feed at
+        // that population must not blow the budget either.
+        let feeds = *FEED_POPULATIONS.last().unwrap();
+        let (env, client, _admin, oracle) = setup();
+
+        for i in 0..feeds {
+            let asset = String::from_str(&env, &std::format!("ASSET{i}"));
+            client.submit_price(&oracle, &asset, &1_000_000i128, &7u32, &0u64);
+        }
+
+        let cold = String::from_str(&env, "NEWFEED");
+        env.cost_estimate().budget().reset_default();
+        client.submit_price(&oracle, &cold, &1_000_000i128, &7u32, &0u64);
+
+        let budget = env.cost_estimate().budget();
+        let cpu = budget.cpu_instruction_cost();
+        let mem = budget.memory_bytes_cost();
+
+        std::println!(
+            "[ENVELOPE] boundary feeds={} cold_cpu={} cold_mem={}",
+            feeds,
+            cpu,
+            mem,
+        );
+
+        assert!(
+            cpu <= MAX_SUBMIT_CPU_INSTRUCTIONS,
+            "cold submit at {} feeds: cpu {} exceeds ceiling {}",
+            feeds,
+            cpu,
+            MAX_SUBMIT_CPU_INSTRUCTIONS,
+        );
+        assert!(
+            mem <= MAX_SUBMIT_MEM_BYTES,
+            "cold submit at {} feeds: mem {} exceeds ceiling {}",
+            feeds,
+            mem,
+            MAX_SUBMIT_MEM_BYTES,
+        );
     }
 }

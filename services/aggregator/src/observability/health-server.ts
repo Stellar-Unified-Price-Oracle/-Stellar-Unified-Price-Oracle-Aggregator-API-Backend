@@ -14,6 +14,26 @@ export interface CircuitBreakerMetrics {
   suspiciousSourcesList: Array<{ key: string; deviations: number }>;
 }
 
+// #736 — a deployment cell bounds the blast radius of a single deployment or
+// dependency failure to a fixed set of feeds and consumers.
+export interface CellStatus {
+  id: string;
+  feeds: string[];
+  dependencies: Record<string, boolean>;
+  degraded: boolean;
+  reason?: string;
+}
+
+// #737 — explicit per-feed ownership: primary/failover region and the epoch of
+// the single authorized publisher.
+export interface FeedOwnership {
+  feed: string;
+  primaryRegion: string;
+  failoverRegion: string;
+  ownerRegion: string;
+  publisherEpoch: number;
+}
+
 export interface HealthSnapshot {
   sourceHealth: Record<string, SourceHealthStatus>;
   lastAggregated: AggregatedPrice[];
@@ -27,6 +47,28 @@ export interface HealthSnapshot {
   onChainHeartbeat?: Record<string, number>;
   // Issue #590 — resolved listen ports (PORT base, PORT+1 WS, PORT+2 HTTP).
   ports?: { base: number; ws: number; http: number };
+  // Issue #741 — controlled brownout state (current tier + shed features).
+  brownout?: BrownoutSnapshot;
+  // Issue #742 — planned maintenance window state (draining / fenced / validating).
+  maintenance?: MaintenanceSnapshot;
+}
+
+export interface BrownoutSnapshot {
+  active: boolean;
+  tier: string;
+  shedFeatures: string[];
+  reason?: string;
+  since?: number;
+}
+
+export interface MaintenanceSnapshot {
+  active: boolean;
+  phase: 'idle' | 'precheck' | 'draining' | 'fenced' | 'validating' | 'complete' | 'aborted';
+  region?: string;
+  startedAt?: number;
+  deadlineAt?: number;
+  publisherFenced: boolean;
+  validationPassed?: boolean;
 }
 
 export class HealthServer {
@@ -74,7 +116,10 @@ export class HealthServer {
         const hasPrices = snap.lastAggregated.length > 0;
         const quarantined = snap.region?.quarantined === true;
         const shuttingDown = snap.shutdownInProgress === true;
-        const ready = hasPrices && !quarantined && !shuttingDown && openCircuits.length < Object.keys(snap.sourceHealth).length;
+        // #742 — a cell being drained/fenced for maintenance must not receive traffic.
+        const maintenanceActive = snap.maintenance?.active === true;
+        const ready = hasPrices && !quarantined && !shuttingDown && !maintenanceActive
+          && openCircuits.length < Object.keys(snap.sourceHealth).length;
         const code = ready ? 200 : 503;
         res.writeHead(code, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -84,7 +129,30 @@ export class HealthServer {
           shutdownInProgress: shuttingDown,
           startupTimeMs: snap.startupTimeMs ?? 0,
           openCircuitBreakers: openCircuits.length,
+          // #741 — brownout is a partial-service mode; readiness stays true but is surfaced.
+          brownout: snap.brownout
+            ? { active: snap.brownout.active, tier: snap.brownout.tier, shedFeatures: snap.brownout.shedFeatures }
+            : { active: false, tier: 'none', shedFeatures: [] },
+          // #742 — maintenance progress for orchestrators.
+          maintenance: snap.maintenance
+            ? { active: snap.maintenance.active, phase: snap.maintenance.phase, publisherFenced: snap.maintenance.publisherFenced }
+            : { active: false, phase: 'idle', publisherFenced: false },
         }));
+        return;
+      }
+
+      // #736 — cell boundaries, assigned feeds and dependency reachability.
+      if (url.pathname === '/health/cells') {
+        const snap = this.getSnapshot();
+        const cells = (snap.cells ?? []).map((c) => ({
+          id: c.id,
+          feeds: c.feeds,
+          dependencies: c.dependencies,
+          degraded: c.degraded,
+          reason: c.reason,
+        }));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ cells }));
         return;
       }
 
@@ -166,6 +234,10 @@ export class HealthServer {
           onChainHeartbeat: snap.onChainHeartbeat || {},
           // #590 — resolved listen ports, so drift is visible at runtime
           ...(snap.ports ? { ports: snap.ports } : {}),
+          // #741 — controlled brownout state
+          brownout: snap.brownout || { active: false, tier: 'none', shedFeatures: [] },
+          // #742 — maintenance window state
+          maintenance: snap.maintenance || { active: false, phase: 'idle', publisherFenced: false },
         };
 
         if (verbose) {

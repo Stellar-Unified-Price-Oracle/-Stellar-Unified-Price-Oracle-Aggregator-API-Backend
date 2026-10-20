@@ -330,62 +330,57 @@ export const auditEntriesArchivedTotal = new client.Counter({
 });
 register.registerMetric(auditEntriesArchivedTotal);
 
-// ── Feed catalog (#671, #672, #673, #674) ────────────────────────────────────
+// ── Per-feed replication lag & feed health routing (issues #739, #740) ───────
 
-export const feedPolicySavedTotal = new client.Counter({
-  name: 'feed_policy_saved_total',
-  help: 'Feed policy writes by outcome (accepted, rejected)',
-  labelNames: ['result'],
+export const feedReplicationLagSeconds = new client.Histogram({
+  name: 'feed_replication_lag_seconds',
+  help: 'Replication lag per feed and region, measured as consumer-visible staleness',
+  labelNames: ['feed', 'region'],
+  buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600],
 });
-register.registerMetric(feedPolicySavedTotal);
+register.registerMetric(feedReplicationLagSeconds);
 
-export const feedPolicyValidationErrorsTotal = new client.Counter({
-  name: 'feed_policy_validation_errors_total',
-  help: 'Feed policy writes rejected by validation, by feed',
-  labelNames: ['feed'],
+export const feedLastSequence = new client.Gauge({
+  name: 'feed_last_sequence',
+  help: 'Highest sequence number observed per feed and region',
+  labelNames: ['feed', 'region'],
 });
-register.registerMetric(feedPolicyValidationErrorsTotal);
+register.registerMetric(feedLastSequence);
 
-export const feedQuorumEvaluatedTotal = new client.Counter({
-  name: 'feed_quorum_evaluated_total',
-  help: 'Quorum evaluations by feed and outcome',
-  labelNames: ['feed', 'result'],
+export const feedMissingSequencesTotal = new client.Counter({
+  name: 'feed_missing_sequences_total',
+  help: 'Total sequence gaps detected per feed and region',
+  labelNames: ['feed', 'region'],
 });
-register.registerMetric(feedQuorumEvaluatedTotal);
+register.registerMetric(feedMissingSequencesTotal);
 
-export const feedQuorumReportingSources = new client.Gauge({
-  name: 'feed_quorum_reporting_sources',
-  help: 'Eligible sources that reported towards the last quorum evaluation',
-  labelNames: ['feed'],
+export const feedLagThresholdExceeded = new client.Gauge({
+  name: 'feed_lag_threshold_exceeded',
+  help: '1 when a feed/region lag exceeds its consumer-impact threshold, 0 otherwise',
+  labelNames: ['feed', 'region'],
 });
-register.registerMetric(feedQuorumReportingSources);
+register.registerMetric(feedLagThresholdExceeded);
 
-export const feedTransitionsTotal = new client.Counter({
-  name: 'feed_transitions_total',
-  help: 'Feed lifecycle transitions applied, by transition and target state',
-  labelNames: ['transition', 'to'],
+export const feedHealthState = new client.Gauge({
+  name: 'feed_health_state',
+  help: 'Per-feed health state (0=unhealthy, 1=degraded, 2=healthy)',
+  labelNames: ['feed', 'region'],
 });
-register.registerMetric(feedTransitionsTotal);
+register.registerMetric(feedHealthState);
 
-export const feedTransitionDeniedTotal = new client.Counter({
-  name: 'feed_transition_denied_total',
-  help: 'Feed lifecycle transitions refused, by reason code',
-  labelNames: ['code'],
+export const feedRoutingDecisionsTotal = new client.Counter({
+  name: 'feed_routing_decisions_total',
+  help: 'Consumer routing decisions by feed, chosen region and reason (fresh, degraded, failover)',
+  labelNames: ['feed', 'region', 'reason'],
 });
-register.registerMetric(feedTransitionDeniedTotal);
+register.registerMetric(feedRoutingDecisionsTotal);
 
-export const feedAliasHitsTotal = new client.Counter({
-  name: 'feed_alias_hits_total',
-  help: 'Requests served through a feed alias, by alias kind and expiry state',
-  labelNames: ['kind', 'expired'],
+export const feedFailoversTotal = new client.Counter({
+  name: 'feed_failovers_total',
+  help: 'Deterministic failovers triggered by feed health signals',
+  labelNames: ['feed', 'from_region', 'to_region'],
 });
-register.registerMetric(feedAliasHitsTotal);
-
-export const feedAliasExpiredTotal = new client.Counter({
-  name: 'feed_alias_expired_total',
-  help: 'Feed aliases past their sunset date that are still registered',
-});
-register.registerMetric(feedAliasExpiredTotal);
+register.registerMetric(feedFailoversTotal);
 
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const end = httpRequestDuration.startTimer();

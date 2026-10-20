@@ -32,6 +32,7 @@ import { AggregatedPrice } from '../infrastructure/types';
 import { CanaryRollbackGuard, shouldRouteToCanary } from './canary';
 import { SubmissionRetryQueue } from './retry-queue';
 import { MerkleTree, BatchPriceEntry } from '../infrastructure/merkle';
+import { FencingEpochStore, FencingEpochState } from './fencing-epoch';
 
 interface ContractCallLog {
   txHash: string;
@@ -94,6 +95,24 @@ const NON_RETRYABLE_CONTRACT_ERRORS = new Set([
   'InvalidDecimals',
   'NotWhitelisted',
 ]);
+
+// Issue #726 — feature flag for the stable snapshot read interface.
+//
+// Rollout: set CONTRACT_SNAPSHOT_READS_ENABLED=true to make the publisher read
+// `get_price_snapshot` (a single mutually-consistent view of price, timestamps
+// and policy version) instead of the legacy multi-read path.  The flag
+// defaults to off so the change can be rolled out per region.
+//
+// Rollback: set the flag back to false (or unset it) and restart.  The legacy
+// `get_price` / `get_on_chain_timestamp` reads remain in place and are used
+// whenever the flag is off or the snapshot read fails, so no state migration
+// is required.  Monitor `contract_rpc_calls_total{call_type="simulate"}` and
+// the `snapshot_read_fallback` log line to confirm the active path.
+const SNAPSHOT_READS_ENABLED = process.env.CONTRACT_SNAPSHOT_READS_ENABLED === 'true';
+
+// Issue #726 — policy version reported by the contract when the snapshot
+// interface is unavailable (legacy deployments).
+const LEGACY_POLICY_VERSION = 0;
 
 // Maximum number of getTransaction polls before declaring a timeout.
 const TX_POLL_RETRIES = parseInt(process.env.TX_POLL_RETRIES || '20', 10);
@@ -188,6 +207,58 @@ function extractContractErrorName(resultMetaXdr: unknown): string | null {
   }
 }
 
+/**
+ * Issue #726 — mutually consistent read view returned by `get_price_snapshot`.
+ *
+ * All fields are read in a single simulation, so a consumer can rely on
+ * `price`, `timestamp` and `policyVersion` describing the same ledger state.
+ */
+export interface PriceSnapshot {
+  asset: string;
+  price: bigint;
+  decimals: number;
+  timestamp: number;
+  /** Ledger sequence at which the snapshot was produced. */
+  ledger: number;
+  /** Version of the on-chain pricing policy in force for this snapshot. */
+  policyVersion: number;
+  /** Whether the value came from the snapshot read or the legacy fallback. */
+  source: 'snapshot' | 'legacy';
+}
+
+/**
+ * Issue #724 — consumer-verifiable evidence for a published price.
+ *
+ * Trust assumptions:
+ *   - The evidence is only as trustworthy as the contract id and network
+ *     passphrase it was produced against; consumers MUST pin both.
+ *   - `txHash` identifies the transaction that committed the price; a
+ *     consumer verifies it against the ledger via `getTransaction`.
+ *   - `snapshot` is the read view observed by the publisher at publish time;
+ *     it is advisory and must be re-read by the consumer to detect drift.
+ *
+ * Failure cases a consumer must handle:
+ *   - Missing/unknown `txHash` (transaction not yet included or pruned).
+ *   - `snapshot` older than the consumer's staleness threshold.
+ *   - `policyVersion` newer than the consumer supports.
+ */
+export interface PriceEvidence {
+  asset: string;
+  price: string;
+  decimals: number;
+  timestamp: number;
+  txHash: string;
+  contractId: string;
+  networkPassphrase: string;
+  policyVersion: number;
+  ledger: number;
+  /** Schema version of this evidence payload. */
+  evidenceVersion: number;
+}
+
+/** Current evidence schema version emitted by the publisher (Issue #724). */
+export const PRICE_EVIDENCE_VERSION = 1;
+
 /** Fee policy configuration for Soroban transactions (Issue #578) */
 export interface FeePolicy {
   baseInclusionFee: number;
@@ -258,13 +329,23 @@ export class ContractPublisher {
   private submissionSequence = 0;
   private canaryRollbackGuard: CanaryRollbackGuard;
 
-  constructor(feePolicy: Partial<FeePolicy> = {}) {
+  // Issue #745 — single-publisher fencing epoch.  Every submission carries
+  // the epoch this publisher believes is authoritative; the contract rejects
+  // anything below its own epoch, so a stale or isolated region cannot write
+  // after failover.  The epoch is persisted so a restarted process resumes
+  // with the same authority instead of silently regressing.
+  private fencingEpochStore: FencingEpochStore;
+  private fencingEpoch = 0;
+
+  constructor(feePolicy: Partial<FeePolicy> = {}, fencingEpochStore?: FencingEpochStore) {
     this.server = new SorobanRpc.Server(config.soroban.rpcUrl);
     this.keypair = Keypair.fromSecret(config.soroban.adminSecret);
     this.contractId = config.soroban.contractId;
     this.networkPassphrase = config.soroban.networkPassphrase;
     this.feePolicy = { ...DEFAULT_FEE_POLICY, ...feePolicy };
     this.canaryRollbackGuard = new CanaryRollbackGuard(config.canary.failureThreshold);
+    this.fencingEpochStore = fencingEpochStore ?? new FencingEpochStore();
+    this.fencingEpoch = this.fencingEpochStore.load().epoch;
 
     this.retryQueue = new SubmissionRetryQueue({
       maxRetries: 5,
@@ -292,6 +373,105 @@ export class ContractPublisher {
 
   isPublishingEnabled(): boolean {
     return this.publishingEnabled;
+  }
+
+  /** Issue #745 — the epoch this publisher currently claims authority for. */
+  getFencingEpoch(): number {
+    return this.fencingEpoch;
+  }
+
+  /**
+   * Issue #745 — advance the fencing epoch on leader election.
+   *
+   * The new epoch is persisted before it is adopted so a crash mid-promotion
+   * cannot leave the process believing it holds an older epoch than the one
+   * recorded on disk.  Queued submissions from the previous epoch are
+   * discarded: they were produced under authority that is no longer valid and
+   * must be re-aggregated by the new leader rather than replayed.
+   */
+  async advanceFencingEpoch(reason = 'leader_election'): Promise<number> {
+    const previous = this.fencingEpoch;
+    const next = previous + 1;
+    const state: FencingEpochState = {
+      epoch: next,
+      updatedAt: Date.now(),
+      reason,
+    };
+    this.fencingEpochStore.save(state);
+    this.fencingEpoch = next;
+
+    const discarded = this.retryQueue.getQueueSize();
+    if (discarded > 0) {
+      this.retryQueue.discardAll(`fencing_epoch_advanced:${previous}->${next}`);
+    }
+
+    logger.warn('[Publisher] Fencing epoch advanced on leader election', {
+      previousEpoch: previous,
+      epoch: next,
+      reason,
+      discardedSubmissions: discarded,
+    });
+    return next;
+  }
+
+  /**
+   * Issue #745 — reject submissions whose epoch is not the current
+   * authoritative epoch.  Returns true when the submission may proceed.
+   */
+  private admitEpoch(epoch: number | undefined, asset: string): boolean {
+    const claimed = epoch ?? this.fencingEpoch;
+    if (claimed === this.fencingEpoch) return true;
+
+    contractSubmissionsTotal.inc({ path: 'fenced', status: 'stale_epoch' });
+    logger.warn('[Publisher] Rejected submission from stale fencing epoch', {
+      asset,
+      claimedEpoch: claimed,
+      currentEpoch: this.fencingEpoch,
+    });
+    return false;
+  }
+
+  /**
+   * Issues #737, #738 — attach (or replace) the feed ownership registry used
+   * to gate submissions. When no registry is configured the publisher keeps
+   * its legacy behaviour and publishes unconditionally.
+   */
+  setOwnershipRegistry(registry: FeedOwnershipRegistry | null): void {
+    this.ownershipRegistry = registry;
+  }
+
+  /**
+   * Issues #737, #738 — decide whether this region may publish the given feed
+   * right now. Returns `{ allowed: true }` when no registry is configured.
+   *
+   * A feed is publishable only when:
+   *   - this region is the current owner, and
+   *   - the local epoch matches the latest committed epoch, and
+   *   - no authority transfer (failover/failback) is in progress.
+   */
+  private checkFeedAuthority(asset: string): OwnershipDecision {
+    if (!this.ownershipRegistry) {
+      return { allowed: true };
+    }
+    return this.ownershipRegistry.canPublish(asset);
+  }
+
+  /**
+   * Issues #737, #738 — log and drop a submission that this region is not
+   * authorized to make. Never enqueues a retry: the owning region is
+   * responsible for the feed, and retrying here would risk split brain.
+   */
+  private rejectUnauthorizedSubmission(asset: string, decision: OwnershipDecision): null {
+    logger.warn('[Publisher] Skipping submission: region not authorized for feed', {
+      asset,
+      region: this.ownershipRegistry?.getLocalRegion(),
+      reason: decision.reason,
+      ownerRegion: decision.ownerRegion,
+      localEpoch: decision.localEpoch,
+      latestEpoch: decision.latestEpoch,
+      transferInProgress: decision.transferInProgress,
+    });
+    return null;
   }
 
   /**
@@ -372,8 +552,9 @@ export class ContractPublisher {
     price: bigint,
     decimals: number,
     timestamp: number,
+    epoch?: number,
   ): Promise<string | null> {
-    return this.submitPriceTo(this.contractId, asset, price, decimals, timestamp);
+    return this.submitPriceTo(this.contractId, asset, price, decimals, timestamp, false, epoch);
   }
 
   /** Send one submission to a specific contract id with bad-sequence recovery */
@@ -384,10 +565,15 @@ export class ContractPublisher {
     decimals: number,
     timestamp: number,
     isRetry = false,
+    epoch?: number,
   ): Promise<string | null> {
+    if (!this.admitEpoch(epoch, asset)) {
+      return null;
+    }
+
     const startMs = Date.now();
     const fnName = 'submit_price';
-    const params = { asset, price: price.toString(), decimals, timestamp };
+    const params = { asset, price: price.toString(), decimals, timestamp, epoch: this.fencingEpoch };
 
     let txHash = '';
     try {
@@ -408,6 +594,7 @@ export class ContractPublisher {
               nativeToScVal(price, { type: 'i128' }),
               nativeToScVal(decimals, { type: 'u32' }),
               nativeToScVal(timestamp, { type: 'u64' }),
+              nativeToScVal(this.fencingEpoch, { type: 'u32' }),
             ],
           }),
         )
@@ -484,7 +671,7 @@ export class ContractPublisher {
         if (!isRetry) {
           logger.warn(`[Contract] tx_bad_seq reported from sendTransaction for ${asset}. Resyncing account and retrying once...`);
           await this.getAccount(true);
-          return this.submitPriceTo(targetContractId, asset, price, decimals, timestamp, true);
+          return this.submitPriceTo(targetContractId, asset, price, decimals, timestamp, true, epoch);
         }
       }
 
@@ -521,6 +708,13 @@ export class ContractPublisher {
         });
 
         await this.captureContractEvents(txHash, txResponse);
+
+        // Issue #724/#726 — attach evidence and emit the versioned snapshot
+        // event for the confirmed publish.
+        const evidence = this.buildPriceEvidence(asset, price, decimals, timestamp, txHash);
+        logger.info('[Contract] price_evidence', { evidence });
+        this.emitSnapshotEvent(asset, txHash);
+
         return txHash;
       }
 
@@ -566,7 +760,7 @@ export class ContractPublisher {
           { txHash, contractErrorName },
         );
       } else {
-        this.retryQueue.enqueue({ asset, price, decimals, timestamp });
+        this.retryQueue.enqueue({ asset, price, decimals, timestamp, epoch: this.fencingEpoch });
       }
 
       return null;
@@ -575,7 +769,7 @@ export class ContractPublisher {
         logger.warn(`[Contract] tx_bad_seq exception for ${asset}. Resyncing sequence and retrying once...`);
         try {
           await this.getAccount(true);
-          return this.submitPriceTo(targetContractId, asset, price, decimals, timestamp, true);
+          return this.submitPriceTo(targetContractId, asset, price, decimals, timestamp, true, epoch);
         } catch (resyncErr) {
           logger.error(`[Contract] Failed to resync account after tx_bad_seq: ${resyncErr}`);
         }
@@ -613,11 +807,150 @@ export class ContractPublisher {
           price,
           decimals,
           timestamp,
+          epoch: this.fencingEpoch,
         });
       }
 
       return null;
     }
+  }
+
+  /**
+   * Issue #726 — read a mutually consistent snapshot of price, timestamps and
+   * policy version in a single simulation via `get_price_snapshot`.
+   *
+   * Returns null when the snapshot interface is unavailable or the read
+   * fails; callers fall back to the legacy multi-read path.
+   */
+  async getPriceSnapshot(asset: string): Promise<PriceSnapshot | null> {
+    if (!SNAPSHOT_READS_ENABLED) return null;
+    try {
+      const dummyAccount = new Account(this.keypair.publicKey(), '0');
+      const tx = new TransactionBuilder(dummyAccount, {
+        fee: this.calculateInclusionFee(),
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: this.contractId,
+            function: 'get_price_snapshot',
+            args: [
+              nativeToScVal(this.keypair.publicKey(), { type: 'address' }),
+              nativeToScVal(asset, { type: 'string' }),
+            ],
+          }),
+        )
+        .setTimeout(30)
+        .build();
+
+      tx.sign(this.keypair);
+      this.recordRpcCall('simulate');
+      const simulateResponse: SimulateResponse = await this.server.simulateTransaction(tx);
+      if (simulateResponse.error || !simulateResponse.result?.retval) {
+        logger.warn('[Contract] get_price_snapshot unavailable, using legacy reads', {
+          asset,
+          error: simulateResponse.error ? String(simulateResponse.error) : 'no retval',
+        });
+        return null;
+      }
+
+      const decoded = scValToNative(simulateResponse.result.retval) as
+        | Record<string, unknown>
+        | undefined;
+      if (!decoded || decoded.price === undefined || decoded.timestamp === undefined) {
+        return null;
+      }
+
+      const snapshot: PriceSnapshot = {
+        asset,
+        price: BigInt(decoded.price as string | number | bigint),
+        decimals: Number(decoded.decimals ?? 0),
+        timestamp: Number(decoded.timestamp),
+        ledger: Number(decoded.ledger ?? 0),
+        policyVersion: Number(decoded.policy_version ?? LEGACY_POLICY_VERSION),
+        source: 'snapshot',
+      };
+      this.lastSnapshots.set(asset, snapshot);
+      return snapshot;
+    } catch (err) {
+      logger.warn('[Contract] get_price_snapshot failed, using legacy reads', {
+        asset,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Issue #726 — obtain a consistent read view for an asset, preferring the
+   * snapshot interface and falling back to the legacy multi-read path.
+   */
+  async readPriceSnapshot(asset: string): Promise<PriceSnapshot | null> {
+    const snapshot = await this.getPriceSnapshot(asset);
+    if (snapshot) return snapshot;
+
+    const timestamp = await this.getOnChainTimestamp(asset);
+    if (timestamp === null) return null;
+
+    const legacy: PriceSnapshot = {
+      asset,
+      price: 0n,
+      decimals: 0,
+      timestamp,
+      ledger: 0,
+      policyVersion: LEGACY_POLICY_VERSION,
+      source: 'legacy',
+    };
+    this.lastSnapshots.set(asset, legacy);
+    return legacy;
+  }
+
+  /**
+   * Issue #724 — build a consumer-verifiable evidence payload for a published
+   * price.  Consumers pin `contractId` + `networkPassphrase`, verify `txHash`
+   * on-ledger, and re-read the snapshot to detect drift.
+   */
+  buildPriceEvidence(
+    asset: string,
+    price: bigint,
+    decimals: number,
+    timestamp: number,
+    txHash: string,
+  ): PriceEvidence {
+    const snapshot = this.lastSnapshots.get(asset);
+    return {
+      asset,
+      price: price.toString(),
+      decimals,
+      timestamp,
+      txHash,
+      contractId: this.contractId,
+      networkPassphrase: this.networkPassphrase,
+      policyVersion: snapshot?.policyVersion ?? LEGACY_POLICY_VERSION,
+      ledger: snapshot?.ledger ?? 0,
+      evidenceVersion: PRICE_EVIDENCE_VERSION,
+    };
+  }
+
+  /**
+   * Issue #726 — emit the versioned snapshot event after a successful publish
+   * so downstream consumers can observe the consistent read view.
+   */
+  private emitSnapshotEvent(asset: string, txHash: string): void {
+    const snapshot = this.lastSnapshots.get(asset);
+    if (!snapshot) return;
+    logger.info('[Contract] price_snapshot', {
+      event: 'price_snapshot',
+      eventVersion: PRICE_EVIDENCE_VERSION,
+      asset,
+      price: snapshot.price.toString(),
+      decimals: snapshot.decimals,
+      timestamp: snapshot.timestamp,
+      ledger: snapshot.ledger,
+      policyVersion: snapshot.policyVersion,
+      source: snapshot.source,
+      txHash,
+    });
   }
 
   // Issue #382, #578 — on-chain price staleness heartbeat without redundant getAccount lookups.
@@ -853,24 +1186,61 @@ export class ContractPublisher {
       logger.debug('[Publisher] Skipping contract write: publication is suspended');
       return;
     }
+    // Issue #742 — a fenced publisher must not start new writes; the
+    // orchestrator drains and validates before unfencing.
+    if (this.fenced) {
+      logger.warn('[Publisher] Skipping publish round: publisher is fenced', {
+        reason: this.fenceReason,
+        assets: prices.length,
+      });
+      return;
+    }
     this.resetRoundRpcMetrics();
 
-    // Re-read the on-chain canary registration once per publish round
-    await this.refreshCanary();
+    // Issue #741 — critical price publication is always allowed, but the
+    // optional canary refresh is non-critical and is skipped under minimal
+    // brownout to shed RPC load while preserving price freshness.
+    if (this.brownout.isAllowed('canary_refresh')) {
+      // Re-read the on-chain canary registration once per publish round
+      await this.refreshCanary();
+    } else {
+      logger.debug('[Publisher] Brownout: skipping canary refresh (non-critical)');
+    }
+
+    // Issue #726 — refresh the consistent read snapshot for each asset before
+    // publishing so evidence carries the policy version observed this round.
+    // Falls back to the legacy read path when the snapshot interface is off
+    // or unavailable (see SNAPSHOT_READS_ENABLED for rollout/rollback).
+    for (const price of prices) {
+      await this.readPriceSnapshot(price.asset);
+    }
 
     // Issue #577 — attempt the Merkle batch path first.
     // One submit_batch transaction commits the root; N apply_batch_entry
     // transactions (one per asset, but far cheaper than full submit_price)
     // apply the individual prices.  Falls back to per-asset submit_price when
     // batch construction or the commit transaction fails.
-    const batchSucceeded = await this.publishViaBatch(prices);
-    if (batchSucceeded) {
-      return;
+    // Issue #741 — under minimal brownout the batch path is shed entirely and
+    // the cheaper per-asset path is used to reduce transaction count.
+    if (this.brownout.isAllowed('batch_publication')) {
+      const batchSucceeded = await this.publishViaBatch(prices);
+      if (batchSucceeded) {
+        return;
+      }
+    } else {
+      logger.warn('[Publisher] Brownout: batch path shed, using per-asset submission');
     }
 
     // Fallback: per-asset submit_price (original behaviour).
     logger.warn('[Publisher] Batch path failed or unavailable, falling back to per-asset submission');
     for (const price of prices) {
+      // Issues #737, #738 — skip feeds owned by another region or mid-transfer.
+      const authority = this.checkFeedAuthority(price.asset);
+      if (!authority.allowed) {
+        this.rejectUnauthorizedSubmission(price.asset, authority);
+        continue;
+      }
+
       this.submissionSequence += 1;
       const routeToCanary =
         this.isCanaryActive() &&
@@ -934,6 +1304,16 @@ export class ContractPublisher {
   // practice, but the caller must be aware of it for partial-failure cases.
   private async publishViaBatch(prices: AggregatedPrice[]): Promise<boolean> {
     if (prices.length === 0) return true;
+
+    // Issues #737, #738 — filter out feeds this region is not authorized to
+    // publish. If nothing remains, the round is a no-op (return true so the
+    // caller does not fall back to per-asset submission).
+    const authorizedPrices = this.filterAuthorizedPrices(prices);
+    if (authorizedPrices.length === 0) {
+      logger.debug('[Publisher/Batch] No feeds authorized for this region in this round');
+      return true;
+    }
+    prices = authorizedPrices;
 
     try {
       // Step 1: read current nonce.
@@ -999,6 +1379,24 @@ export class ContractPublisher {
       });
       return false;
     }
+  }
+
+  /**
+   * Issues #737, #738 — return only the prices whose feeds this region is
+   * currently authorized to publish, logging each rejected feed.
+   */
+  private filterAuthorizedPrices(prices: AggregatedPrice[]): AggregatedPrice[] {
+    if (!this.ownershipRegistry) return prices;
+    const authorized: AggregatedPrice[] = [];
+    for (const price of prices) {
+      const decision = this.checkFeedAuthority(price.asset);
+      if (decision.allowed) {
+        authorized.push(price);
+      } else {
+        this.rejectUnauthorizedSubmission(price.asset, decision);
+      }
+    }
+    return authorized;
   }
 
   private async getBatchNonce(): Promise<bigint | null> {
@@ -1151,9 +1549,22 @@ export class ContractPublisher {
 
   processRetryQueue(): void {
     if (!this.publishingEnabled) return;
+    // Issue #742 — never flush the retry queue while fenced.
+    if (this.fenced) {
+      logger.debug('[Publisher] Skipping retry processing: publisher is fenced', {
+        reason: this.fenceReason,
+      });
+      return;
+    }
+    // Issue #741 — retry processing is non-critical work; under minimal
+    // brownout it is deferred so RPC capacity is reserved for fresh prices.
+    if (!this.brownout.isAllowed('retry_processing')) {
+      logger.debug('[Publisher] Brownout: deferring retry queue processing');
+      return;
+    }
     const items = this.retryQueue.getQueueItems();
     for (const item of items) {
-      this.submitPrice(item.asset, item.price, item.decimals, item.timestamp)
+      this.submitPrice(item.asset, item.price, item.decimals, item.timestamp, item.epoch)
         .then((result) => {
           if (result) {
             this.retryQueue.remove(`${item.asset}:${item.timestamp}`);
@@ -1177,6 +1588,11 @@ export class ContractPublisher {
     return this.submissionSequence;
   }
 
+  /** Issue #745 — persisted fencing state, for health checks and dashboards. */
+  getFencingEpochState(): FencingEpochState {
+    return this.fencingEpochStore.load();
+  }
+
   getConsecutiveFailures(): number {
     return this.canaryRollbackGuard.consecutiveFailures();
   }
@@ -1194,8 +1610,23 @@ export class ContractPublisher {
       logger.info(`[Publisher] Draining ${items.length} item(s) from retry queue before exit...`);
       for (const item of items) {
         if (!this.publishingEnabled) break;
+        // Issue #742 — stop draining as soon as the publisher is fenced so a
+        // maintenance drain cannot race with a fresh fence.
+        if (this.fenced) {
+          logger.warn('[Publisher] Drain aborted: publisher was fenced mid-drain', {
+            reason: this.fenceReason,
+            remaining: items.length,
+          });
+          break;
+        }
         try {
-          const result = await this.submitPrice(item.asset, item.price, item.decimals, item.timestamp);
+          const result = await this.submitPrice(
+            item.asset,
+            item.price,
+            item.decimals,
+            item.timestamp,
+            item.epoch,
+          );
           if (result) {
             this.retryQueue.remove(`${item.asset}:${item.timestamp}`);
           }

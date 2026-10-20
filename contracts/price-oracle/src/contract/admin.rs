@@ -9,14 +9,16 @@
 //           explicit `admin` parameter, call storage::verify_admin, and
 //           return Result<(), OracleError> so rejection surfaces an error code.
 
-use soroban_sdk::{token, Address, Env, String};
+use soroban_sdk::{token, Address, BytesN, Env, String};
 
 use crate::errors::OracleError;
 use crate::events::{
     AdminTransferAccepted, AdminTransferCancelled, AdminTransferProposed, DeviationThresholdSet,
-    ReputationReset, SourceAdded, SourceRemoved, StakeTreasurySet, TrustedAssetSet,
+    FeedPaused, FeedUnpaused, ReputationReset, SourceAdded, SourceRemoved, StakeTreasurySet,
+    TrustedAssetSet, WritePathPaused, WritePathUnpaused,
 };
 use crate::storage;
+use crate::types::FeedCatalogCommitment;
 
 pub(crate) fn initialize(env: &Env, admin: &Address) -> Result<(), OracleError> {
     if storage::has_admin(env) {
@@ -324,4 +326,92 @@ pub(crate) fn extend_instance_ttl(
     extend_to: u32,
 ) -> Result<(), OracleError> {
     storage::extend_instance_ttl(env, caller, threshold, extend_to)
+}
+
+// ── Issue #731 — selective pause / safe recovery ─────────────────────────────
+//
+// Pausing is deliberately scoped: a feed pause only blocks submissions for the
+// named asset, and a write-path pause only blocks the named write entry point.
+// Recovery is symmetric and idempotent so an operator can re-run an unpause
+// without side effects. Unpausing one component never clears unrelated pauses.
+
+/// Pause submissions for a single feed (asset). Other feeds and unrelated
+/// write paths remain fully operational.
+pub(crate) fn pause_feed(
+    env: &Env,
+    admin: &Address,
+    asset: &String,
+    reason: &String,
+) -> Result<(), OracleError> {
+    admin.require_auth();
+    storage::verify_admin(env, admin)?;
+    storage::set_feed_paused(env, asset, true);
+    FeedPaused {
+        admin: admin.clone(),
+        asset: asset.clone(),
+        reason: reason.clone(),
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+    Ok(())
+}
+
+/// Resume a previously paused feed. Idempotent: unpausing an active feed is a
+/// no-op that still emits the recovery event for auditability. Does not touch
+/// any other feed or write-path pause.
+pub(crate) fn unpause_feed(
+    env: &Env,
+    admin: &Address,
+    asset: &String,
+) -> Result<(), OracleError> {
+    admin.require_auth();
+    storage::verify_admin(env, admin)?;
+    storage::set_feed_paused(env, asset, false);
+    FeedUnpaused {
+        admin: admin.clone(),
+        asset: asset.clone(),
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+    Ok(())
+}
+
+/// Pause a single named write path (e.g. a specific mutating entry point).
+/// Unrelated write paths and read paths are unaffected.
+pub(crate) fn pause_write_path(
+    env: &Env,
+    admin: &Address,
+    path: &String,
+    reason: &String,
+) -> Result<(), OracleError> {
+    admin.require_auth();
+    storage::verify_admin(env, admin)?;
+    storage::set_write_path_paused(env, path, true);
+    WritePathPaused {
+        admin: admin.clone(),
+        path: path.clone(),
+        reason: reason.clone(),
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+    Ok(())
+}
+
+/// Resume a single named write path. Idempotent and scoped: it never enables
+/// unrelated write paths that were paused separately.
+pub(crate) fn unpause_write_path(
+    env: &Env,
+    admin: &Address,
+    path: &String,
+) -> Result<(), OracleError> {
+    admin.require_auth();
+    storage::verify_admin(env, admin)?;
+    storage::set_write_path_paused(env, path, false);
+    WritePathUnpaused {
+        admin: admin.clone(),
+        path: path.clone(),
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(env);
+    Ok(())
 }

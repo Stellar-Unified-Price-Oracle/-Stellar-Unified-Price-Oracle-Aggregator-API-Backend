@@ -19,6 +19,17 @@
 // extend_instance_ttl / extend_price_history_ttl are permissionless
 // (no require_auth), so any funded account can call them; the caller only
 // pays the resource fee for the extension.
+//
+// Issue #726 / #727 — snapshot read interface and cost estimates.
+// The stable read snapshot interface (get_read_snapshot and friends) is
+// read-only: it does not create new persistent entries, so it adds no rent
+// obligation of its own. It does, however, read the same instance storage
+// (Admin, GovConfig, policy version) and PriceHistory entries that this
+// script already extends, so keeping those TTLs above the floor is what
+// keeps snapshot reads cheap and available. If a future revision persists
+// snapshot/evidence entries (e.g. cached snapshots or audit evidence),
+// extend them here too via the corresponding extend_*_ttl entry point so the
+// rent budget in docs/RENT_AND_TTL.md stays accurate.
 
 import { execFileSync } from 'child_process';
 
@@ -39,6 +50,15 @@ const SOURCE_ACCOUNT = process.env.STELLAR_ACCOUNT;
 // out to roughly 30 days. Tune per the rent budget in docs/RENT_AND_TTL.md.
 const THRESHOLD_LEDGERS = process.env.TTL_THRESHOLD_LEDGERS || '34560';
 const EXTEND_TO_LEDGERS = process.env.TTL_EXTEND_TO_LEDGERS || '518400';
+
+// Optional: persistent snapshot/evidence entries introduced alongside the
+// read snapshot interface (#726). Comma-separated keys; empty by default
+// because the current snapshot reads are non-persistent. When set, each key
+// is extended through the contract's extend_snapshot_ttl entry point.
+const SNAPSHOT_KEYS = (process.env.SNAPSHOT_KEYS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 if (!ORACLE_CONTRACT_ID || !SOURCE_ACCOUNT) {
   console.error('ERROR: ORACLE_CONTRACT_ID and STELLAR_ACCOUNT must be set.');
@@ -89,6 +109,18 @@ for (const asset of TRACKED_ASSETS) {
       '--extend_to', EXTEND_TO_LEDGERS,
     ]);
   }
+}
+
+// Extend any persistent snapshot/evidence entries backing the read snapshot
+// interface (#726). No-op unless SNAPSHOT_KEYS is configured.
+for (const key of SNAPSHOT_KEYS) {
+  console.log(`Extending snapshot/evidence TTL for ${key}...`);
+  invoke(ORACLE_CONTRACT_ID, 'extend_snapshot_ttl', [
+    '--caller', SOURCE_ACCOUNT,
+    '--key', key,
+    '--threshold', THRESHOLD_LEDGERS,
+    '--extend_to', EXTEND_TO_LEDGERS,
+  ]);
 }
 
 console.log('TTL extension pass complete.');

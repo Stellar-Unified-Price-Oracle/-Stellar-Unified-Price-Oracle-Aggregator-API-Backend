@@ -764,6 +764,50 @@ router.get('/compliance/incident-disclosure-policy', (_req: Request, res: Respon
   res.json({ success: true, data: { policy: getIncidentDisclosurePolicy() } });
 });
 
+export const vulnerabilityDisclosurePolicy = {
+  policy: 'https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/security/vulnerability-disclosure-policy.md',
+  contact: 'security@stellar-unified-oracle.example',
+  pgpFingerprint: 'E7F9 2A84 5B1D 9C03 4F6E  82A1 3C75 90D2 1A4B 8C9E',
+  securityTxt: '/.well-known/security.txt',
+  responseTargets: {
+    critical: {
+      acknowledgmentHours: 24,
+      triageHours: 48,
+      remediationTargetDays: 3,
+    },
+    high: {
+      acknowledgmentHours: 48,
+      triageBusinessDays: 5,
+      remediationTargetDays: 14,
+    },
+    medium: {
+      acknowledgmentBusinessDays: 3,
+      triageBusinessDays: 10,
+      remediationTargetDays: 30,
+    },
+    low: {
+      acknowledgmentBusinessDays: 3,
+      triageBusinessDays: 10,
+      remediationTargetDays: 60,
+    },
+  },
+  coordinatedDisclosureDays: 90,
+  safeHarbor: true,
+};
+
+export function getVulnerabilityDisclosurePolicy() {
+  return vulnerabilityDisclosurePolicy;
+}
+
+router.get('/compliance/vulnerability-disclosure-policy', (_req: Request, res: Response) => {
+  res.json({ success: true, data: { policy: getVulnerabilityDisclosurePolicy() } });
+});
+
+router.get('/security/disclosure-policy', (_req: Request, res: Response) => {
+  res.json({ success: true, data: { policy: getVulnerabilityDisclosurePolicy() } });
+});
+
+
 router.get('/compliance/reports/:framework', (req: Request, res: Response) => {
   const framework = req.params.framework.toLowerCase();
   const reports: Record<string, unknown> = {

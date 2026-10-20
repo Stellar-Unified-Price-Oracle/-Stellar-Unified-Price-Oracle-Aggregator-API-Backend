@@ -106,3 +106,219 @@ export function decryptSecret(value: string): string {
     return value;
   }
 }
+
+/**
+ * Cryptographic key inventory (issue #751).
+ *
+ * Owner-mapped registry of signing, encryption, and verification keys with
+ * rotation, retirement, and algorithm transition requirements. Entries are
+ * declared statically here and reconciled against the keys actually loaded
+ * from the environment (ENCRYPTION_KEY / ENCRYPTION_KEY_PREVIOUS) so drift is
+ * visible to operators.
+ */
+
+export type KeyPurpose = 'signing' | 'encryption' | 'verification';
+export type KeyAlgorithm = 'aes-256-gcm' | 'ed25519' | 'secp256k1' | 'hmac-sha256';
+export type KeyStatus = 'active' | 'rotating' | 'retiring' | 'retired';
+
+export interface KeyInventoryEntry {
+  /** Stable identifier referenced by payloads / signatures. */
+  id: string;
+  /** Accountable owner (team or role) for rotation and retirement. */
+  owner: string;
+  purpose: KeyPurpose;
+  algorithm: KeyAlgorithm;
+  status: KeyStatus;
+  /** ISO-8601 date the key entered service. */
+  createdAt: string;
+  /** ISO-8601 date by which the key must be rotated. */
+  rotateBy: string;
+  /** ISO-8601 date after which the key must no longer be used to sign/encrypt. */
+  retireBy: string;
+  /** Where the key material is sourced from (env var, KMS, etc.). */
+  source: string;
+  /** Algorithm transition plan, if this key is being migrated. */
+  transition?: {
+    toAlgorithm: KeyAlgorithm;
+    /** ISO-8601 date the transition must complete. */
+    completeBy: string;
+    notes: string;
+  };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Declarative inventory. Keep in sync with the keys provisioned in each
+ * environment; `validateKeyInventory` flags missing/expired entries.
+ */
+export const KEY_INVENTORY: readonly KeyInventoryEntry[] = [
+  {
+    id: 'enc-active',
+    owner: 'security-platform',
+    purpose: 'encryption',
+    algorithm: 'aes-256-gcm',
+    status: 'active',
+    createdAt: '2024-01-01',
+    rotateBy: '2025-01-01',
+    retireBy: '2026-01-01',
+    source: 'ENCRYPTION_KEY',
+  },
+  {
+    id: 'enc-previous',
+    owner: 'security-platform',
+    purpose: 'encryption',
+    algorithm: 'aes-256-gcm',
+    status: 'rotating',
+    createdAt: '2023-01-01',
+    rotateBy: '2024-01-01',
+    retireBy: '2025-01-01',
+    source: 'ENCRYPTION_KEY_PREVIOUS',
+    transition: {
+      toAlgorithm: 'aes-256-gcm',
+      completeBy: '2025-01-01',
+      notes: 'Re-encrypt remaining payloads under enc-active, then unset ENCRYPTION_KEY_PREVIOUS.',
+    },
+  },
+  {
+    id: 'oracle-signing',
+    owner: 'oracle-core',
+    purpose: 'signing',
+    algorithm: 'ed25519',
+    status: 'active',
+    createdAt: '2024-01-01',
+    rotateBy: '2025-01-01',
+    retireBy: '2026-01-01',
+    source: 'ORACLE_SIGNING_KEY',
+  },
+  {
+    id: 'oracle-verification',
+    owner: 'oracle-core',
+    purpose: 'verification',
+    algorithm: 'ed25519',
+    status: 'active',
+    createdAt: '2024-01-01',
+    rotateBy: '2025-01-01',
+    retireBy: '2026-01-01',
+    source: 'ORACLE_VERIFICATION_KEY',
+  },
+];
+
+export interface KeyInventoryIssue {
+  keyId: string;
+  severity: 'error' | 'warning';
+  message: string;
+}
+
+export interface KeyInventoryReport {
+  generatedAt: string;
+  entries: KeyInventoryEntry[];
+  issues: KeyInventoryIssue[];
+  /** Key ids currently loaded from the environment. */
+  loadedKeyIds: string[];
+}
+
+function parseDate(value: string): number {
+  const t = Date.parse(value);
+  return Number.isNaN(t) ? NaN : t;
+}
+
+/**
+ * Validate the inventory against `now` and the keys currently loaded from the
+ * environment. Pure with respect to its inputs so it is easy to test.
+ */
+export function validateKeyInventory(
+  entries: readonly KeyInventoryEntry[] = KEY_INVENTORY,
+  now: Date = new Date(),
+  loadedKeyIds: readonly string[] = Array.from(loadKeys().all.keys()),
+): KeyInventoryIssue[] {
+  const issues: KeyInventoryIssue[] = [];
+  const seen = new Set<string>();
+  const nowMs = now.getTime();
+
+  for (const entry of entries) {
+    if (seen.has(entry.id)) {
+      issues.push({ keyId: entry.id, severity: 'error', message: 'Duplicate key id in inventory' });
+    }
+    seen.add(entry.id);
+
+    if (!entry.owner) {
+      issues.push({ keyId: entry.id, severity: 'error', message: 'Missing owner' });
+    }
+
+    const created = parseDate(entry.createdAt);
+    const rotateBy = parseDate(entry.rotateBy);
+    const retireBy = parseDate(entry.retireBy);
+
+    if (Number.isNaN(created) || Number.isNaN(rotateBy) || Number.isNaN(retireBy)) {
+      issues.push({ keyId: entry.id, severity: 'error', message: 'Invalid ISO-8601 date' });
+      continue;
+    }
+    if (!(created <= rotateBy && rotateBy <= retireBy)) {
+      issues.push({
+        keyId: entry.id,
+        severity: 'error',
+        message: 'Dates must satisfy createdAt <= rotateBy <= retireBy',
+      });
+    }
+
+    if (entry.status !== 'retired' && nowMs > retireBy) {
+      issues.push({
+        keyId: entry.id,
+        severity: 'error',
+        message: `Key passed retireBy (${entry.retireBy}) but status is "${entry.status}"`,
+      });
+    } else if (entry.status !== 'retired' && nowMs > rotateBy) {
+      issues.push({
+        keyId: entry.id,
+        severity: 'warning',
+        message: `Key passed rotateBy (${entry.rotateBy}); rotation overdue`,
+      });
+    }
+
+    if (entry.transition) {
+      const completeBy = parseDate(entry.transition.completeBy);
+      if (Number.isNaN(completeBy)) {
+        issues.push({ keyId: entry.id, severity: 'error', message: 'Invalid transition completeBy date' });
+      } else if (nowMs > completeBy) {
+        issues.push({
+          keyId: entry.id,
+          severity: 'error',
+          message: `Algorithm transition to ${entry.transition.toAlgorithm} overdue (${entry.transition.completeBy})`,
+        });
+      }
+    }
+
+    if (entry.purpose === 'encryption' && entry.status !== 'retired' && !loadedKeyIds.includes(entry.id)) {
+      // Encryption entries are declared by role; the loaded set is keyed by
+      // derived key id, so this is informational only.
+      issues.push({
+        keyId: entry.id,
+        severity: 'warning',
+        message: 'Encryption key not present in loaded key set',
+      });
+    }
+  }
+
+  return issues;
+}
+
+export function buildKeyInventoryReport(
+  now: Date = new Date(),
+  entries: readonly KeyInventoryEntry[] = KEY_INVENTORY,
+): KeyInventoryReport {
+  const loadedKeyIds = Array.from(loadKeys().all.keys());
+  return {
+    generatedAt: now.toISOString(),
+    entries: entries.map((e) => ({ ...e })),
+    issues: validateKeyInventory(entries, now, loadedKeyIds),
+    loadedKeyIds,
+  };
+}
+
+/** Days until the key must be rotated (negative when overdue). */
+export function daysUntilRotation(entry: KeyInventoryEntry, now: Date = new Date()): number {
+  const rotateBy = parseDate(entry.rotateBy);
+  if (Number.isNaN(rotateBy)) return NaN;
+  return Math.floor((rotateBy - now.getTime()) / DAY_MS);
+}

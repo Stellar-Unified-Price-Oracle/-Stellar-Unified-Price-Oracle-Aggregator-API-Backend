@@ -22,7 +22,9 @@ mod compat_tests {
 
     use crate::contract::{PriceOracleContract, PriceOracleContractClient, API_VERSION};
     use crate::proxy::{ProxyContract, ProxyContractClient};
-    use crate::types::AssetPrice;
+    use crate::types::{
+        AssetPrice, PriceEvidence, PriceSnapshot, EVENT_SCHEMA_VERSION, SNAPSHOT_VERSION,
+    };
 
     #[test]
     fn test_api_version_is_queryable_and_stable() {
@@ -127,6 +129,152 @@ mod compat_tests {
         assert_eq!(v2.get_storage_layout_version(), 1);
         assert_eq!(v2.get_version(), 0, "proxy not yet versioned via upgrade()");
         assert_eq!(v2.get_api_version(), API_VERSION);
+    }
+
+    /// Issues #724/#726/#728 — the consumer-facing read surface added on top of
+    /// v1 (`get_price_snapshot`, `get_price_evidence`, `verify_price_evidence`)
+    /// must be byte-for-byte stable across an implementation swap, and the
+    /// snapshot / event schema versions must not drift.
+    #[test]
+    fn test_consumer_read_surface_survives_implementation_swap() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // ── Deploy v1 and write representative state ─────────────────────────
+        let contract_id = env.register(PriceOracleContract, ());
+        let v1 = PriceOracleContractClient::new(&env, &contract_id);
+
+        let admin = <Address as TestAddress>::generate(&env);
+        let oracle = <Address as TestAddress>::generate(&env);
+
+        v1.initialize(&admin);
+        v1.add_oracle_source(&admin, &oracle, &String::from_str(&env, "Chainlink"));
+        v1.set_trusted_asset(&admin, &String::from_str(&env, "XLM"), &true);
+        v1.set_deviation_threshold(&admin, &1_000u32);
+
+        let xlm = String::from_str(&env, "XLM");
+        let btc = String::from_str(&env, "BTC");
+        v1.submit_price(
+            &oracle,
+            &xlm,
+            &1_000_000i128,
+            &7u32,
+            &env.ledger().timestamp(),
+        );
+        v1.submit_price(
+            &oracle,
+            &btc,
+            &5_000_000_000i128,
+            &7u32,
+            &env.ledger().timestamp(),
+        );
+
+        // Snapshot the new consumer read surface before the swap.
+        let snapshot_before: PriceSnapshot = v1
+            .get_price_snapshot(&xlm)
+            .expect("xlm snapshot should exist");
+        let evidence_before: PriceEvidence = v1
+            .get_price_evidence(&xlm)
+            .expect("xlm evidence should exist");
+        let verified_before = v1.verify_price_evidence(&evidence_before);
+        let btc_snapshot_before: PriceSnapshot = v1
+            .get_price_snapshot(&btc)
+            .expect("btc snapshot should exist");
+
+        // Version constants are stable and queryable.
+        assert_eq!(SNAPSHOT_VERSION, 1, "snapshot struct version is v1");
+        assert_eq!(EVENT_SCHEMA_VERSION, 1, "event schema version is v1");
+        assert_eq!(snapshot_before.version, SNAPSHOT_VERSION);
+        assert_eq!(evidence_before.snapshot.version, SNAPSHOT_VERSION);
+        assert_eq!(evidence_before.event_schema_version, EVENT_SCHEMA_VERSION);
+
+        // ── Upgrade: swap the implementation at the same contract id ─────────
+        env.register_at(&contract_id, ProxyContract, ());
+        let v2 = ProxyContractClient::new(&env, &contract_id);
+
+        // Identical results for every new consumer read.
+        let snapshot_after: PriceSnapshot = v2
+            .get_price_snapshot(&xlm)
+            .expect("xlm snapshot should survive upgrade");
+        assert_eq!(snapshot_after.version, snapshot_before.version);
+        assert_eq!(snapshot_after.price, snapshot_before.price);
+        assert_eq!(snapshot_after.decimals, snapshot_before.decimals);
+        assert_eq!(snapshot_after.timestamp, snapshot_before.timestamp);
+        assert_eq!(snapshot_after.policy_version, snapshot_before.policy_version);
+        assert_eq!(snapshot_after.is_trusted, snapshot_before.is_trusted);
+
+        let evidence_after: PriceEvidence = v2
+            .get_price_evidence(&xlm)
+            .expect("xlm evidence should survive upgrade");
+        assert_eq!(
+            evidence_after.event_schema_version,
+            evidence_before.event_schema_version
+        );
+        assert_eq!(evidence_after.snapshot.version, evidence_before.snapshot.version);
+        assert_eq!(evidence_after.snapshot.price, evidence_before.snapshot.price);
+        assert_eq!(
+            evidence_after.snapshot.policy_version,
+            evidence_before.snapshot.policy_version
+        );
+
+        // Evidence produced before the swap still verifies under the new code.
+        assert_eq!(v2.verify_price_evidence(&evidence_before), verified_before);
+        assert_eq!(v2.verify_price_evidence(&evidence_after), verified_before);
+
+        let btc_snapshot_after: PriceSnapshot = v2
+            .get_price_snapshot(&btc)
+            .expect("btc snapshot should survive upgrade");
+        assert_eq!(btc_snapshot_after.price, btc_snapshot_before.price);
+        assert_eq!(
+            btc_snapshot_after.policy_version,
+            btc_snapshot_before.policy_version
+        );
+
+        // Version constants remain stable after the swap.
+        assert_eq!(v2.get_api_version(), API_VERSION);
+        assert_eq!(snapshot_after.version, SNAPSHOT_VERSION);
+        assert_eq!(evidence_after.event_schema_version, EVENT_SCHEMA_VERSION);
+    }
+
+    /// Boundary/failure cases for the consumer read surface: unknown assets
+    /// yield no snapshot/evidence, and tampered evidence fails verification.
+    #[test]
+    fn test_consumer_read_surface_boundary_and_failure_cases() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(PriceOracleContract, ());
+        let client = PriceOracleContractClient::new(&env, &contract_id);
+
+        let admin = <Address as TestAddress>::generate(&env);
+        let oracle = <Address as TestAddress>::generate(&env);
+        client.initialize(&admin);
+        client.add_oracle_source(&admin, &oracle, &String::from_str(&env, "Chainlink"));
+
+        let xlm = String::from_str(&env, "XLM");
+        let unknown = String::from_str(&env, "DOGE");
+
+        // Unknown asset: no snapshot, no evidence.
+        assert!(client.get_price_snapshot(&unknown).is_none());
+        assert!(client.get_price_evidence(&unknown).is_none());
+
+        client.submit_price(
+            &oracle,
+            &xlm,
+            &1_000_000i128,
+            &7u32,
+            &env.ledger().timestamp(),
+        );
+
+        let evidence: PriceEvidence = client
+            .get_price_evidence(&xlm)
+            .expect("xlm evidence should exist");
+        assert!(client.verify_price_evidence(&evidence));
+
+        // Tampered evidence must fail verification.
+        let mut tampered = evidence.clone();
+        tampered.snapshot.price = tampered.snapshot.price.saturating_add(1);
+        assert!(!client.verify_price_evidence(&tampered));
     }
 
     /// Additive-style re-registration of the same ABI (a no-op WASM swap that

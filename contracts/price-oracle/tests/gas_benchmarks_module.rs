@@ -38,3 +38,75 @@ mod compilation_verification {
         assert!(true, "gas_benchmarks module compiles");
     }
 }
+
+// Feed-population sweep integration tests (#732).
+//
+// These tests drive the benchmark sweep defined in the `gas_benchmarks`
+// module across a growing set of feed populations and assert that every
+// recorded measurement stays within the published operating envelope
+// (see `docs/gas-benchmarks.md`). They cover the normal populations, the
+// boundary population (the largest supported feed count) and the failure
+// case (a population above the supported envelope must be rejected).
+#[cfg(test)]
+mod feed_population_sweep {
+    use price_oracle::gas_benchmarks::{
+        run_feed_population_sweep, sweep_populations, BudgetEnvelope, SweepError,
+        MAX_SUPPORTED_FEEDS,
+    };
+
+    /// Every population in the published sweep must produce a measurement
+    /// record and each record must satisfy the published budget thresholds.
+    #[test]
+    fn sweep_stays_within_published_budget() {
+        let envelope = BudgetEnvelope::published();
+        let records = run_feed_population_sweep(&envelope)
+            .expect("feed population sweep must complete for supported populations");
+
+        assert_eq!(
+            records.len(),
+            sweep_populations().len(),
+            "sweep must record one measurement per population size"
+        );
+
+        for record in &records {
+            assert!(
+                envelope.within_budget(record),
+                "population {} exceeded published budget: {:?}",
+                record.feed_count,
+                record
+            );
+        }
+    }
+
+    /// The sweep must be monotonic in population size and include the
+    /// boundary population exactly once.
+    #[test]
+    fn sweep_covers_boundary_population() {
+        let populations = sweep_populations();
+        assert!(
+            populations.windows(2).all(|w| w[0] < w[1]),
+            "sweep populations must be strictly increasing"
+        );
+        assert_eq!(
+            *populations.last().expect("sweep must be non-empty"),
+            MAX_SUPPORTED_FEEDS,
+            "sweep must include the maximum supported feed population"
+        );
+    }
+
+    /// A population above the supported envelope must be rejected rather
+    /// than silently measured.
+    #[test]
+    fn sweep_rejects_population_above_envelope() {
+        let envelope = BudgetEnvelope::published();
+        let result = run_feed_population_sweep_for(MAX_SUPPORTED_FEEDS + 1, &envelope);
+        assert_eq!(
+            result,
+            Err(SweepError::PopulationAboveEnvelope {
+                requested: MAX_SUPPORTED_FEEDS + 1,
+                max_supported: MAX_SUPPORTED_FEEDS,
+            }),
+            "populations above the envelope must be rejected"
+        );
+    }
+}

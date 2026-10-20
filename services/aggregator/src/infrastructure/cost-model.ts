@@ -250,6 +250,220 @@ export function reloadPersistedCounts(): void {
   loadPersistedDailyCounts();
 }
 
+// ── Consumer-side storage & transaction cost estimation (#727) ──────────────
+//
+// Methodology
+// -----------
+// Consumer contracts pay two kinds of cost when reading/writing oracle feeds:
+//
+//   1. Storage: every persisted entry (e.g. a cached price per feed) occupies
+//      ledger space. Soroban charges rent per ledger entry per ledger, so the
+//      storage cost scales linearly with the number of feeds touched and with
+//      the number of ledgers the entry must stay live.
+//   2. Transaction: each read/write is a transaction whose fee is
+//      `baseFee + instructions * feePerInstruction + ledgerBytes * feePerByte`.
+//      The instruction/byte footprint scales with the number of feeds in the
+//      call (a read of N feeds is roughly N times a single-feed read).
+//
+// The constants below are the *benchmark outputs* captured by the consumer
+// cost benchmark (see `docs/cost-model.md` and the benchmark script). They are
+// deliberately conservative (rounded up) so estimates are upper bounds.
+//
+// Assumptions
+// -----------
+//   - Fees are expressed in stroops (1 XLM = 10,000,000 stroops).
+//   - `feePerInstruction` / `feePerByte` reflect the network fee conditions
+//     supplied by the caller (e.g. surge pricing); defaults are the baseline
+//     mainnet conditions.
+//   - Storage rent is charged per ledger entry per ledger; `rentPerEntryPerLedger`
+//     is the amortized rate. `retentionLedgers` is how long the entry must live.
+//   - Per-feed footprints are linear: no batching discount is assumed.
+//   - The estimate excludes one-off contract upload/instantiation costs.
+
+/** Stroops per XLM. */
+export const STROOPS_PER_XLM = 10_000_000;
+
+/** Benchmark: instruction footprint of a single-feed read. */
+export const BENCH_READ_INSTRUCTIONS_PER_FEED = 12_000;
+/** Benchmark: instruction footprint of a single-feed write (persist). */
+export const BENCH_WRITE_INSTRUCTIONS_PER_FEED = 28_000;
+/** Benchmark: ledger bytes written per persisted feed entry. */
+export const BENCH_STORAGE_BYTES_PER_FEED = 256;
+/** Benchmark: ledger bytes of transaction envelope overhead (feed-independent). */
+export const BENCH_TX_ENVELOPE_BYTES = 512;
+
+/** Baseline network fee conditions (mainnet defaults). */
+export const DEFAULT_FEE_CONDITIONS: NetworkFeeConditions = {
+  baseFeeStroops: 100,
+  feePerInstructionStroops: 25,
+  feePerByteStroops: 1_000,
+  rentPerEntryPerLedgerStroops: 1,
+};
+
+/** Network fee conditions a consumer may face. */
+export interface NetworkFeeConditions {
+  /** Flat per-transaction base fee, in stroops. */
+  baseFeeStroops: number;
+  /** Fee per CPU instruction, in stroops. */
+  feePerInstructionStroops: number;
+  /** Fee per ledger byte, in stroops. */
+  feePerByteStroops: number;
+  /** Storage rent per ledger entry per ledger, in stroops. */
+  rentPerEntryPerLedgerStroops: number;
+}
+
+export interface ConsumerCostParams {
+  /** Number of feeds the consumer reads/writes in one call (>= 1). */
+  feedCount: number;
+  /** Network fee conditions; defaults to DEFAULT_FEE_CONDITIONS. */
+  feeConditions?: Partial<NetworkFeeConditions>;
+  /** How many ledgers the storage entry must remain live. Default 1. */
+  retentionLedgers?: number;
+  /** Fee the consumer is willing to pay, in stroops. Optional. */
+  maxFeeStroops?: number;
+}
+
+export interface ConsumerCostEstimate {
+  feedCount: number;
+  /** Estimated storage cost (rent) in stroops. */
+  storageStroops: number;
+  /** Estimated transaction fee in stroops. */
+  transactionStroops: number;
+  /** storageStroops + transactionStroops. */
+  totalStroops: number;
+  /** Total cost in XLM. */
+  totalXlm: number;
+  /** True when maxFeeStroops was supplied and totalStroops exceeds it. */
+  insufficientFee: boolean;
+  /** Populated when the inputs are invalid or the fee is insufficient. */
+  error?: string;
+}
+
+/** Maximum feeds a single consumer call may touch (Soroban footprint cap). */
+export const MAX_CONSUMER_FEEDS = 100;
+
+function resolveFeeConditions(overrides?: Partial<NetworkFeeConditions>): NetworkFeeConditions {
+  return { ...DEFAULT_FEE_CONDITIONS, ...(overrides ?? {}) };
+}
+
+function validateConsumerParams(params: ConsumerCostParams): string | undefined {
+  const { feedCount, retentionLedgers } = params;
+  if (!Number.isInteger(feedCount) || feedCount < 1) {
+    return `feedCount must be an integer >= 1 (got ${feedCount})`;
+  }
+  if (feedCount > MAX_CONSUMER_FEEDS) {
+    return `feedCount ${feedCount} exceeds the consumer footprint cap of ${MAX_CONSUMER_FEEDS}`;
+  }
+  if (retentionLedgers !== undefined && (!Number.isInteger(retentionLedgers) || retentionLedgers < 1)) {
+    return `retentionLedgers must be an integer >= 1 (got ${retentionLedgers})`;
+  }
+  const fees = resolveFeeConditions(params.feeConditions);
+  for (const [name, value] of Object.entries(fees)) {
+    if (!Number.isFinite(value) || value < 0) {
+      return `fee condition '${name}' must be a finite number >= 0 (got ${value})`;
+    }
+  }
+  return undefined;
+}
+
+function buildEstimate(
+  params: ConsumerCostParams,
+  storageStroops: number,
+  transactionStroops: number,
+): ConsumerCostEstimate {
+  const totalStroops = storageStroops + transactionStroops;
+  const insufficientFee =
+    params.maxFeeStroops !== undefined && Number.isFinite(params.maxFeeStroops) && totalStroops > params.maxFeeStroops;
+  return {
+    feedCount: params.feedCount,
+    storageStroops,
+    transactionStroops,
+    totalStroops,
+    totalXlm: totalStroops / STROOPS_PER_XLM,
+    insufficientFee,
+    ...(insufficientFee
+      ? { error: `Estimated cost ${totalStroops} stroops exceeds maxFeeStroops ${params.maxFeeStroops}` }
+      : {}),
+  };
+}
+
+/**
+ * Estimate the storage (rent) cost of persisting `feedCount` feed entries for
+ * `retentionLedgers` ledgers. Linear in feed count; invalid inputs yield a
+ * zero estimate carrying an `error` so callers can surface it.
+ */
+export function estimateConsumerStorageCost(params: ConsumerCostParams): ConsumerCostEstimate {
+  const error = validateConsumerParams(params);
+  if (error) {
+    return { feedCount: params.feedCount, storageStroops: 0, transactionStroops: 0, totalStroops: 0, totalXlm: 0, insufficientFee: false, error };
+  }
+  const fees = resolveFeeConditions(params.feeConditions);
+  const retention = params.retentionLedgers ?? 1;
+  const storageStroops = params.feedCount * fees.rentPerEntryPerLedgerStroops * retention;
+  return buildEstimate(params, storageStroops, 0);
+}
+
+/**
+ * Estimate the transaction fee of a single consumer read of `feedCount` feeds
+ * under the given network fee conditions.
+ */
+export function estimateConsumerReadCost(params: ConsumerCostParams): ConsumerCostEstimate {
+  const error = validateConsumerParams(params);
+  if (error) {
+    return { feedCount: params.feedCount, storageStroops: 0, transactionStroops: 0, totalStroops: 0, totalXlm: 0, insufficientFee: false, error };
+  }
+  const fees = resolveFeeConditions(params.feeConditions);
+  const instructions = params.feedCount * BENCH_READ_INSTRUCTIONS_PER_FEED;
+  const bytes = BENCH_TX_ENVELOPE_BYTES + params.feedCount * BENCH_STORAGE_BYTES_PER_FEED;
+  const transactionStroops =
+    fees.baseFeeStroops + instructions * fees.feePerInstructionStroops + bytes * fees.feePerByteStroops;
+  return buildEstimate(params, 0, transactionStroops);
+}
+
+/**
+ * Estimate the full cost of a consumer write (persist) of `feedCount` feeds:
+ * transaction fee plus storage rent for the retained entries.
+ */
+export function estimateConsumerWriteCost(params: ConsumerCostParams): ConsumerCostEstimate {
+  const error = validateConsumerParams(params);
+  if (error) {
+    return { feedCount: params.feedCount, storageStroops: 0, transactionStroops: 0, totalStroops: 0, totalXlm: 0, insufficientFee: false, error };
+  }
+  const fees = resolveFeeConditions(params.feeConditions);
+  const retention = params.retentionLedgers ?? 1;
+  const instructions = params.feedCount * BENCH_WRITE_INSTRUCTIONS_PER_FEED;
+  const bytes = BENCH_TX_ENVELOPE_BYTES + params.feedCount * BENCH_STORAGE_BYTES_PER_FEED;
+  const transactionStroops =
+    fees.baseFeeStroops + instructions * fees.feePerInstructionStroops + bytes * fees.feePerByteStroops;
+  const storageStroops = params.feedCount * fees.rentPerEntryPerLedgerStroops * retention;
+  return buildEstimate(params, storageStroops, transactionStroops);
+}
+
+export interface ConsumerCostMatrix {
+  feedCounts: number[];
+  feeConditions: NetworkFeeConditions;
+  reads: ConsumerCostEstimate[];
+  writes: ConsumerCostEstimate[];
+}
+
+/**
+ * Reproducible estimate matrix across representative feed counts (1, 10, 50,
+ * and the MAX_CONSUMER_FEEDS boundary) for the given fee conditions. Used by
+ * the benchmark/reporting procedure and tests.
+ */
+export function estimateConsumerCostMatrix(
+  feeConditions?: Partial<NetworkFeeConditions>,
+  feedCounts: number[] = [1, 10, 50, MAX_CONSUMER_FEEDS],
+): ConsumerCostMatrix {
+  const resolved = resolveFeeConditions(feeConditions);
+  return {
+    feedCounts,
+    feeConditions: resolved,
+    reads: feedCounts.map((feedCount) => estimateConsumerReadCost({ feedCount, feeConditions: resolved })),
+    writes: feedCounts.map((feedCount) => estimateConsumerWriteCost({ feedCount, feeConditions: resolved })),
+  };
+}
+
 export interface CostModelIntegrityResult {
   valid: boolean;
   driftDetected: boolean;
@@ -263,6 +477,8 @@ export interface CostModelIntegrityResult {
  * Alerts if runtime assumptions diverge from the approved capacity model beyond tolerance.
  */
 export function verifyRuntimeCostModelIntegrity(customModelPath?: string): CostModelIntegrityResult {
+  // NOTE (#734): regional capacity forecasts are derived from the same
+  // budgets/rates reconciled here; drift in this model invalidates forecasts.
   const defaultPath = path.resolve(__dirname, '../../../../config/cost-model.json');
   const targetPath = customModelPath || defaultPath;
 

@@ -201,6 +201,74 @@ class APIClientGenerator {
   }
 }
 
+interface BuildArtifact {
+  name: string;
+  sha256: string;
+}
+
+interface ReproducibilityReport {
+  reproducible: boolean;
+  mismatches: string[];
+  missing: string[];
+  checked: number;
+}
+
+class ReproducibleBuildChecker {
+  private normalizeHash(hash: string): string {
+    return hash.trim().toLowerCase();
+  }
+
+  compare(
+    published: BuildArtifact[],
+    rebuilt: BuildArtifact[],
+  ): ReproducibilityReport {
+    const mismatches: string[] = [];
+    const missing: string[] = [];
+
+    const rebuiltByName = new Map<string, BuildArtifact>();
+    for (const artifact of rebuilt) {
+      rebuiltByName.set(artifact.name, artifact);
+    }
+
+    for (const artifact of published) {
+      const candidate = rebuiltByName.get(artifact.name);
+      if (!candidate) {
+        missing.push(`Missing artifact in rebuild: ${artifact.name}`);
+        continue;
+      }
+      if (this.normalizeHash(candidate.sha256) !== this.normalizeHash(artifact.sha256)) {
+        mismatches.push(
+          `Hash mismatch for ${artifact.name}: published=${this.normalizeHash(artifact.sha256)} rebuilt=${this.normalizeHash(candidate.sha256)}`,
+        );
+      }
+    }
+
+    const publishedNames = new Set(published.map(a => a.name));
+    for (const artifact of rebuilt) {
+      if (!publishedNames.has(artifact.name)) {
+        mismatches.push(`Unexpected artifact in rebuild: ${artifact.name}`);
+      }
+    }
+
+    return {
+      reproducible: mismatches.length === 0 && missing.length === 0,
+      mismatches,
+      missing,
+      checked: published.length,
+    };
+  }
+
+  formatReport(report: ReproducibilityReport): string {
+    if (report.reproducible) {
+      return `Reproducible build verified: ${report.checked} artifact(s) matched.`;
+    }
+    const lines = [`Reproducible build FAILED (${report.checked} artifact(s) checked):`];
+    for (const m of report.mismatches) lines.push(`  - ${m}`);
+    for (const m of report.missing) lines.push(`  - ${m}`);
+    return lines.join('\n');
+  }
+}
+
 class CompatibilityChecker {
   checkBackwardsCompatibility(oldDoc: OpenAPIDocument, newDoc: OpenAPIDocument): { compatible: boolean; breaks: string[] } {
     const breaks: string[] = [];
@@ -624,6 +692,118 @@ describe('Generated API Contracts', () => {
 
       expect(result.compatible).toBe(true);
       expect(result.breaks).toHaveLength(0);
+    });
+  });
+
+  describe('Reproducible Build Verification', () => {
+    let buildChecker: ReproducibleBuildChecker;
+
+    beforeEach(() => {
+      buildChecker = new ReproducibleBuildChecker();
+    });
+
+    it('should pass when published and rebuilt hashes match', () => {
+      const published: BuildArtifact[] = [
+        { name: 'api-server.tar.gz', sha256: 'abc123' },
+        { name: 'openapi.json', sha256: 'def456' },
+      ];
+      const rebuilt: BuildArtifact[] = [
+        { name: 'api-server.tar.gz', sha256: 'abc123' },
+        { name: 'openapi.json', sha256: 'def456' },
+      ];
+
+      const report = buildChecker.compare(published, rebuilt);
+
+      expect(report.reproducible).toBe(true);
+      expect(report.mismatches).toHaveLength(0);
+      expect(report.missing).toHaveLength(0);
+      expect(report.checked).toBe(2);
+      expect(buildChecker.formatReport(report)).toContain('Reproducible build verified');
+    });
+
+    it('should treat hash comparison as case-insensitive and whitespace-trimmed', () => {
+      const published: BuildArtifact[] = [{ name: 'api-server.tar.gz', sha256: 'ABC123' }];
+      const rebuilt: BuildArtifact[] = [{ name: 'api-server.tar.gz', sha256: '  abc123  ' }];
+
+      const report = buildChecker.compare(published, rebuilt);
+
+      expect(report.reproducible).toBe(true);
+    });
+
+    it('should pass for an empty artifact set (boundary case)', () => {
+      const report = buildChecker.compare([], []);
+
+      expect(report.reproducible).toBe(true);
+      expect(report.checked).toBe(0);
+      expect(report.mismatches).toHaveLength(0);
+      expect(report.missing).toHaveLength(0);
+    });
+
+    it('should fail and report actionable output on hash mismatch', () => {
+      const published: BuildArtifact[] = [{ name: 'api-server.tar.gz', sha256: 'abc123' }];
+      const rebuilt: BuildArtifact[] = [{ name: 'api-server.tar.gz', sha256: 'zzz999' }];
+
+      const report = buildChecker.compare(published, rebuilt);
+
+      expect(report.reproducible).toBe(false);
+      expect(report.mismatches).toHaveLength(1);
+      expect(report.mismatches[0]).toContain('api-server.tar.gz');
+      expect(report.mismatches[0]).toContain('abc123');
+      expect(report.mismatches[0]).toContain('zzz999');
+
+      const output = buildChecker.formatReport(report);
+      expect(output).toContain('Reproducible build FAILED');
+      expect(output).toContain('Hash mismatch for api-server.tar.gz');
+    });
+
+    it('should fail when a published artifact is missing from the rebuild', () => {
+      const published: BuildArtifact[] = [
+        { name: 'api-server.tar.gz', sha256: 'abc123' },
+        { name: 'openapi.json', sha256: 'def456' },
+      ];
+      const rebuilt: BuildArtifact[] = [{ name: 'api-server.tar.gz', sha256: 'abc123' }];
+
+      const report = buildChecker.compare(published, rebuilt);
+
+      expect(report.reproducible).toBe(false);
+      expect(report.missing).toContain('Missing artifact in rebuild: openapi.json');
+      expect(buildChecker.formatReport(report)).toContain('Missing artifact in rebuild: openapi.json');
+    });
+
+    it('should fail when the rebuild contains an unexpected artifact', () => {
+      const published: BuildArtifact[] = [{ name: 'api-server.tar.gz', sha256: 'abc123' }];
+      const rebuilt: BuildArtifact[] = [
+        { name: 'api-server.tar.gz', sha256: 'abc123' },
+        { name: 'debug-symbols.tar.gz', sha256: 'aaa000' },
+      ];
+
+      const report = buildChecker.compare(published, rebuilt);
+
+      expect(report.reproducible).toBe(false);
+      expect(report.mismatches.some(m => m.includes('Unexpected artifact in rebuild: debug-symbols.tar.gz'))).toBe(true);
+    });
+
+    it('should aggregate multiple failures into a single actionable report', () => {
+      const published: BuildArtifact[] = [
+        { name: 'api-server.tar.gz', sha256: 'abc123' },
+        { name: 'openapi.json', sha256: 'def456' },
+        { name: 'migrations.sql', sha256: 'ghi789' },
+      ];
+      const rebuilt: BuildArtifact[] = [
+        { name: 'api-server.tar.gz', sha256: 'zzz999' },
+        { name: 'migrations.sql', sha256: 'ghi789' },
+      ];
+
+      const report = buildChecker.compare(published, rebuilt);
+
+      expect(report.reproducible).toBe(false);
+      expect(report.mismatches).toHaveLength(1);
+      expect(report.missing).toHaveLength(1);
+      expect(report.checked).toBe(3);
+
+      const output = buildChecker.formatReport(report);
+      expect(output).toContain('Hash mismatch for api-server.tar.gz');
+      expect(output).toContain('Missing artifact in rebuild: openapi.json');
     });
   });
 

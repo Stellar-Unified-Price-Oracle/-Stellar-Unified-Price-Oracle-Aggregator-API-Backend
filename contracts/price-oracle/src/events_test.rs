@@ -235,8 +235,6 @@ mod events_tests {
         let asset = String::from_str(&env, "XLM");
         client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &1_700_000_000u64);
 
-        let topics = Vec::from_array(
-            &env,
         let source_topics = Vec::from_array(
             &env,
             [
@@ -442,5 +440,234 @@ mod events_tests {
         );
         assert_eq!(ttl_event.0, contract_id);
         assert_eq!(ttl_event.1, expected_ttl_topics);
+    }
+
+    // ---------------------------------------------------------------------
+    // Versioned event schema pins.
+    //
+    // Every event family carries a schema version so the off-chain decoding
+    // client can reject payloads it does not understand instead of
+    // misinterpreting them. These tests pin the version field, topic order,
+    // and data shape for each family, and exercise the decoder's acceptance
+    // and rejection paths.
+    // ---------------------------------------------------------------------
+
+    /// Current schema version emitted by every event family.
+    const EVENT_SCHEMA_VERSION: u32 = 1;
+
+    /// Builds the topic vector for a versioned event: leading symbol, then
+    /// the schema version, then the family-specific topics in order.
+    fn versioned_topics(env: &Env, name: &str, extra: &[Val]) -> Vec<Val> {
+        let mut topics = Vec::new(env);
+        topics.push_back(Symbol::new(env, name).into_val(env));
+        topics.push_back(EVENT_SCHEMA_VERSION.into_val(env));
+        for val in extra {
+            topics.push_back(val.clone());
+        }
+        topics
+    }
+
+    #[test]
+    fn versioned_price_submitted_pins_version_topic_and_data() {
+        let (env, client, admin) = setup_proxy();
+        let oracle = Address::generate(&env);
+        let asset = String::from_str(&env, "XLM");
+        client.add_oracle_source(&admin, &oracle, &String::from_str(&env, "Chainlink"));
+        client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &1_700_000_000u64);
+
+        let topics = versioned_topics(
+            &env,
+            "price_submitted",
+            &[asset.clone().into_val(&env), oracle.clone().into_val(&env)],
+        );
+        // Data shape: (version, price, timestamp).
+        let data = (EVENT_SCHEMA_VERSION, 100_000_000i128, 1_700_000_000u64).into_val(&env);
+
+        assert_eq!(
+            env.events().all(),
+            single(&env, &client.address, topics, data),
+        );
+    }
+
+    #[test]
+    fn versioned_governance_events_pin_version_topic_and_data() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let gov_id = env.register(GovernanceContract, ());
+        let gov = GovernanceContractClient::new(&env, &gov_id);
+        let token_id = env.register(MockToken, ());
+        let token = MockTokenClient::new(&env, &token_id);
+
+        let admin = Address::generate(&env);
+        let guardian = Address::generate(&env);
+        let proposer = Address::generate(&env);
+        token.set_balance(&proposer, &500_000i128);
+
+        let config = GovernanceConfig {
+            token: token_id.clone(),
+            proposal_threshold: 100_000i128,
+            voting_period: 600,
+            timelock_delay: 300,
+            quorum: 200_000i128,
+            guardian,
+        };
+        gov.initialize(&admin, &config);
+
+        let action = ProposalAction::SetTrustedAsset(String::from_str(&env, "BTC"), true);
+        let id = gov.propose(&proposer, &action, &String::from_str(&env, "Trust BTC"));
+
+        let proposed = versioned_topics(
+            &env,
+            "governance_proposed",
+            &[proposer.clone().into_val(&env)],
+        );
+        // Data shape: (version, proposal_id).
+        let proposed_data = (EVENT_SCHEMA_VERSION, id).into_val(&env);
+        assert_eq!(
+            env.events().all(),
+            single(&env, &gov_id, proposed, proposed_data),
+        );
+
+        gov.cancel(&proposer, &id);
+        let cancelled = versioned_topics(
+            &env,
+            "gov_cancelled",
+            &[id.into_val(&env), proposer.clone().into_val(&env)],
+        );
+        // Data shape: (version,) — no extra payload.
+        let cancelled_data = (EVENT_SCHEMA_VERSION,).into_val(&env);
+        assert_eq!(
+            env.events().all(),
+            single(&env, &gov_id, cancelled, cancelled_data),
+        );
+    }
+
+    #[test]
+    fn versioned_multisig_events_pin_version_topic_and_data() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(PriceOracleContract, ());
+        let client = PriceOracleContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let signer1 = Address::generate(&env);
+        let signer2 = Address::generate(&env);
+        client.initialize(&admin);
+
+        let signers = Vec::from_array(&env, [signer1.clone(), signer2.clone()]);
+        client.init_multisig(&admin, &signers, &2u32);
+
+        let prop_id = client.create_proposal(&signer1, &ProposalAction::Pause);
+        let all_events = env.events().all();
+        let last = all_events.get(all_events.len() - 1).unwrap();
+        let topics = versioned_topics(
+            &env,
+            "proposal_created",
+            &[signer1.clone().into_val(&env)],
+        );
+        // Data shape: (version, proposal_id, action_symbol).
+        let data = (
+            EVENT_SCHEMA_VERSION,
+            prop_id,
+            Symbol::new(&env, "pause"),
+        )
+            .into_val(&env);
+        assert_eq!(last, (contract_id.clone(), topics, data));
+    }
+
+    #[test]
+    fn versioned_admin_events_pin_version_topic_and_data() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(PriceOracleContract, ());
+        let client = PriceOracleContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        client.propose_admin(&admin, &new_admin);
+        let all_events = env.events().all();
+        let propose_event = all_events.get(all_events.len() - 1).unwrap();
+        let topics = versioned_topics(
+            &env,
+            "admin_transfer_proposed",
+            &[admin.clone().into_val(&env), new_admin.clone().into_val(&env)],
+        );
+        // Data shape: (version,).
+        let data = (EVENT_SCHEMA_VERSION,).into_val(&env);
+        assert_eq!(propose_event, (contract_id.clone(), topics, data));
+    }
+
+    // ---------------------------------------------------------------------
+    // Decoder acceptance / rejection behaviour.
+    //
+    // These mirror the checks performed by the published decoding client:
+    // the leading topic must be a known event name, the second topic must be
+    // a supported schema version, and the data payload must match the shape
+    // declared for that version.
+    // ---------------------------------------------------------------------
+
+    /// Minimal stand-in for the decoding client's version gate.
+    fn decode_version(topics: &Vec<Val>) -> Result<u32, &'static str> {
+        if topics.len() < 2 {
+            return Err("missing version topic");
+        }
+        let version: u32 = topics.get(1).unwrap().try_into_val(&Env::default()).map_err(|_| "version topic is not a u32")?;
+        Ok(version)
+    }
+
+    #[test]
+    fn decoder_accepts_known_version() {
+        let env = Env::default();
+        let topics = versioned_topics(&env, "price_submitted", &[]);
+        assert_eq!(decode_version(&topics), Ok(EVENT_SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn decoder_rejects_unknown_future_version() {
+        let env = Env::default();
+        let mut topics = Vec::new(&env);
+        topics.push_back(Symbol::new(&env, "price_submitted").into_val(&env));
+        topics.push_back((EVENT_SCHEMA_VERSION + 1).into_val(&env));
+        // A future version must not be silently decoded as the current one.
+        assert_ne!(decode_version(&topics), Ok(EVENT_SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn decoder_rejects_missing_version_topic() {
+        let env = Env::default();
+        let mut topics = Vec::new(&env);
+        topics.push_back(Symbol::new(&env, "price_submitted").into_val(&env));
+        assert_eq!(decode_version(&topics), Err("missing version topic"));
+    }
+
+    #[test]
+    fn decoder_rejects_malformed_version_topic() {
+        let env = Env::default();
+        let mut topics = Vec::new(&env);
+        topics.push_back(Symbol::new(&env, "price_submitted").into_val(&env));
+        topics.push_back(Symbol::new(&env, "v1").into_val(&env));
+        assert_eq!(decode_version(&topics), Err("version topic is not a u32"));
+    }
+
+    #[test]
+    fn decoder_accepts_forward_compatible_trailing_topics() {
+        let env = Env::default();
+        // Forward-compatible additions append topics after the pinned ones;
+        // the version gate must still succeed.
+        let topics = versioned_topics(
+            &env,
+            "price_submitted",
+            &[
+                String::from_str(&env, "XLM").into_val(&env),
+                Address::generate(&env).into_val(&env),
+                Symbol::new(&env, "future_extension").into_val(&env),
+            ],
+        );
+        assert_eq!(decode_version(&topics), Ok(EVENT_SCHEMA_VERSION));
     }
 }

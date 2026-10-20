@@ -109,3 +109,115 @@ export interface HistoricalPriceEntry {
   source: string;
   timestamp: number;
 }
+
+// ── Consumer data product types (issues #715-#718) ─────────────────────────────
+
+/** Consumer-supplied or derived geographic region for latency/freshness grouping. */
+export type ConsumerRegion = string;
+
+/** A single measured delivery sample: how long a price took to reach the consumer
+ *  and how fresh it was at serve time. */
+export interface LatencySample {
+  asset: string;
+  region: ConsumerRegion;
+  /** Price observation timestamp, Unix seconds (provider's observedAt when present). */
+  observedAt: number;
+  /** When the API delivered the response, Unix seconds. */
+  deliveredAt: number;
+  /** End-to-end delivery latency in milliseconds. */
+  latencyMs: number;
+  /** Data age at delivery in milliseconds (deliveredAt - price.timestamp). */
+  freshnessMs: number;
+  source?: OracleSourceName;
+}
+
+/** Percentile summary for a numeric distribution. */
+export interface PercentileSummary {
+  p50: number;
+  p95: number;
+  p99: number;
+  mean: number;
+  max: number;
+  count: number;
+}
+
+/** Latency + freshness stats for one (asset, region) feed over a sample window. */
+export interface FeedLatencyFreshnessStats {
+  asset: string;
+  region: ConsumerRegion;
+  windowStart: number; // Unix seconds
+  windowEnd: number;   // Unix seconds
+  sampleCount: number;
+  latency: PercentileSummary;
+  freshness: PercentileSummary & { staleCount: number };
+  methodology: string;
+}
+
+/** One usage record exported to the calling consumer (tenant-scoped). */
+export interface UsageExportRecord {
+  endpoint: string;
+  method: string;
+  asset?: string;
+  status: number;
+  timestamp: number; // Unix seconds
+}
+
+/** Machine-readable usage export for the authenticated consumer only. */
+export interface UsageExport {
+  keyPrefix: string;
+  windowStart: number; // Unix seconds
+  windowEnd: number;   // Unix seconds
+  totalRequests: number;
+  byEndpoint: Record<string, number>;
+  byAsset: Record<string, number>;
+  byStatus: Record<string, number>;
+  records: UsageExportRecord[];
+  generatedAt: number; // Unix seconds
+}
+
+/** A contracted consumer delivery objective (SLO/SLA). */
+export interface DeliveryObjective {
+  id: string;
+  name: string;
+  description: string;
+  metric: 'latency' | 'freshness' | 'uptime' | 'availability';
+  target: number;
+  unit: 'ms' | 'seconds' | 'percent';
+  window: '1h' | '24h' | '7d' | '30d';
+}
+
+/** Measured attainment of a delivery objective, with exclusions and incidents. */
+export interface DeliveryObjectiveAttainment {
+  objective: DeliveryObjective;
+  attained: boolean;
+  actual: number;
+  target: number;
+  unit: 'ms' | 'seconds' | 'percent';
+  exclusions: Array<{ reason: string; from: number; to: number }>;
+  incidentWindows: Array<{ id: string; from: number; to: number; reason: string }>;
+  calculation: string; // human-readable, auditable description of the calculation
+}
+
+/** Price-provenance response linking a price to its production lineage. */
+export interface PriceProvenance {
+  asset: string;
+  price: string;
+  decimals: number;
+  timestamp: number; // Unix seconds
+  observedAt: number | null;
+  catalogVersion: string;
+  aggregationPolicy: {
+    strategy: string;
+    sourceCount: number;
+    minSources: number;
+  };
+  sourceSet: OracleSourceName[];
+  observationTimeSemantics: {
+    observedAt?: number | null;
+    fetchedAt?: number | null;
+    /** True only when every contributing source reported its own observation time. */
+    ageVerified: boolean;
+  };
+  provenanceId: string;
+  verificationUrl: string;
+}

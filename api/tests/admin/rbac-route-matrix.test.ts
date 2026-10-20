@@ -93,6 +93,10 @@ describe('admin route authorization behavior', () => {
   let operatorKey: string;
   let adminKey: string;
   let scopedOperatorKey: string;
+  let policyScopedOperatorKey: string;
+  let policyScopedReadOnlyKey: string;
+  let policyScopedExpiredKey: string;
+  let policyScopedWrongEnvKey: string;
   let unknownRoleKey: string;
   let victimAdmin: GeneratedApiKey;
   let victimViewer: GeneratedApiKey;
@@ -104,6 +108,34 @@ describe('admin route authorization behavior', () => {
     operatorKey = apiKeyManager.generateKey(1000, 'matrix operator', 'free', 'operator').key;
     adminKey = apiKeyManager.generateKey(1000, 'matrix admin', 'admin', 'admin').key;
     scopedOperatorKey = apiKeyManager.generateKey(1000, 'scoped operator', 'free', 'operator', ['keys:read']).key;
+    policyScopedOperatorKey = apiKeyManager.generateKey(1000, 'policy operator', 'free', 'operator', {
+      policy: {
+        scopes: ['keys:read', 'keys:write'],
+        environments: ['production'],
+        expiresAt: Date.now() + 60_000,
+      },
+    }).key;
+    policyScopedReadOnlyKey = apiKeyManager.generateKey(1000, 'policy read-only', 'free', 'operator', {
+      policy: {
+        scopes: ['keys:read'],
+        environments: ['production'],
+        expiresAt: Date.now() + 60_000,
+      },
+    }).key;
+    policyScopedExpiredKey = apiKeyManager.generateKey(1000, 'policy expired', 'free', 'operator', {
+      policy: {
+        scopes: ['keys:read', 'keys:write'],
+        environments: ['production'],
+        expiresAt: Date.now() - 1_000,
+      },
+    }).key;
+    policyScopedWrongEnvKey = apiKeyManager.generateKey(1000, 'policy wrong env', 'free', 'operator', {
+      policy: {
+        scopes: ['keys:read', 'keys:write'],
+        environments: ['staging'],
+        expiresAt: Date.now() + 60_000,
+      },
+    }).key;
     unknownRoleKey = apiKeyManager.generateKey(1000, 'unknown role', 'free', 'editor' as Role).key;
     victimAdmin = apiKeyManager.generateKey(1000, 'victim admin', 'admin', 'admin');
     victimViewer = apiKeyManager.generateKey(1000, 'victim viewer', 'free', 'viewer');
@@ -228,6 +260,39 @@ describe('admin route authorization behavior', () => {
       .send({ role: 'viewer', tier: 'free' });
     expect(write.status).toBe(403);
     expect(write.body.error.code).toBe('SCOPE_DENIED');
+  });
+
+  it('allows a policy-scoped operator key to read and write within its scope', async () => {
+    const read = await request(app).get('/admin/keys').set(auth(policyScopedOperatorKey));
+    expect(read.status).toBe(200);
+
+    const write = await request(app)
+      .post('/admin/keys')
+      .set(auth(policyScopedOperatorKey))
+      .send({ role: 'viewer', tier: 'free' });
+    expect(write.status).toBe(201);
+  });
+
+  it('denies a policy-scoped key an operation outside its scopes with SCOPE_DENIED', async () => {
+    const res = await request(app)
+      .post('/admin/keys')
+      .set(auth(policyScopedReadOnlyKey))
+      .send({ role: 'viewer', tier: 'free' });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('SCOPE_DENIED');
+    expect(getRecentAuthzDenials().some((d) => d.reason === 'scope_denied')).toBe(true);
+  });
+
+  it('rejects an expired policy-scoped key with 403 CREDENTIAL_EXPIRED', async () => {
+    const res = await request(app).get('/admin/keys').set(auth(policyScopedExpiredKey));
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('CREDENTIAL_EXPIRED');
+  });
+
+  it('rejects a policy-scoped key used in the wrong environment with 403 ENVIRONMENT_DENIED', async () => {
+    const res = await request(app).get('/admin/keys').set(auth(policyScopedWrongEnvKey));
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('ENVIRONMENT_DENIED');
   });
 
   it('counts, audits, and buffers authorization denials', async () => {

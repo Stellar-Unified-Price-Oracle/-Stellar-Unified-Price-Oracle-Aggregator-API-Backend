@@ -5,6 +5,177 @@ import { DatabaseClient } from './database';
 
 export type ReconciliationLayer = 'aggregator→db' | 'db-integrity' | 'chain→db' | 'cache→db';
 
+/**
+ * Data products exposed to consumers. Each product has its own consistency and
+ * freshness objectives; see {@link DATA_PRODUCT_OBJECTIVES}.
+ */
+export type DataProduct = 'live-prices' | 'history' | 'catalog' | 'analytics';
+
+/**
+ * Consumer-visible read semantics for a data product. These describe what a
+ * consumer can expect when reading the product, so staleness can be handled
+ * explicitly rather than silently.
+ */
+export interface ReadSemantics {
+  /** Human-readable description of what a read returns. */
+  description: string;
+  /** Whether reads may return data older than the freshness bound. */
+  allowsStaleReads: boolean;
+  /** Whether responses carry staleness metadata (age, as-of timestamp). */
+  exposesStalenessMetadata: boolean;
+  /** Field name carrying the as-of timestamp in responses, if any. */
+  asOfField?: string;
+  /** Field name carrying the age in seconds in responses, if any. */
+  ageField?: string;
+}
+
+/**
+ * Measurable consistency and freshness objective for a single data product.
+ */
+export interface DataProductObjective {
+  product: DataProduct;
+  /** Owner accountable for meeting the objective. */
+  owner: string;
+  /** Maximum acceptable age (seconds) of the newest record for the product. */
+  freshnessBoundSeconds: number;
+  /** Age (seconds) beyond which data is considered stale and flagged. */
+  stalenessThresholdSeconds: number;
+  /** Supported scope of the objective. */
+  scope: string;
+  /** Consumer-visible read semantics. */
+  readSemantics: ReadSemantics;
+}
+
+export const DATA_PRODUCT_OBJECTIVES: Readonly<Record<DataProduct, DataProductObjective>> = Object.freeze({
+  'live-prices': {
+    product: 'live-prices',
+    owner: 'market-data',
+    freshnessBoundSeconds: 60,
+    stalenessThresholdSeconds: 120,
+    scope: 'Latest price per asset served from the aggregator and persisted to the DB.',
+    readSemantics: {
+      description: 'Latest known price per asset; may be served from cache.',
+      allowsStaleReads: true,
+      exposesStalenessMetadata: true,
+      asOfField: 'asOf',
+      ageField: 'ageSeconds',
+    },
+  },
+  history: {
+    product: 'history',
+    owner: 'market-data',
+    freshnessBoundSeconds: 300,
+    stalenessThresholdSeconds: 600,
+    scope: 'Append-only price history rows per asset and source.',
+    readSemantics: {
+      description: 'Historical price rows; reads are strongly consistent with the DB.',
+      allowsStaleReads: false,
+      exposesStalenessMetadata: true,
+      asOfField: 'asOf',
+      ageField: 'ageSeconds',
+    },
+  },
+  catalog: {
+    product: 'catalog',
+    owner: 'platform',
+    freshnessBoundSeconds: 900,
+    stalenessThresholdSeconds: 1800,
+    scope: 'Asset catalog metadata (symbols, sources, status).',
+    readSemantics: {
+      description: 'Asset catalog metadata; cached with explicit staleness metadata.',
+      allowsStaleReads: true,
+      exposesStalenessMetadata: true,
+      asOfField: 'asOf',
+      ageField: 'ageSeconds',
+    },
+  },
+  analytics: {
+    product: 'analytics',
+    owner: 'analytics',
+    freshnessBoundSeconds: 3600,
+    stalenessThresholdSeconds: 7200,
+    scope: 'Derived analytics aggregates computed from history.',
+    readSemantics: {
+      description: 'Derived aggregates; may lag source data and always reports as-of time.',
+      allowsStaleReads: true,
+      exposesStalenessMetadata: true,
+      asOfField: 'asOf',
+      ageField: 'ageSeconds',
+    },
+  },
+});
+
+/** Look up the objective for a data product. Throws on unknown products. */
+export function getDataProductObjective(product: DataProduct): DataProductObjective {
+  const objective = DATA_PRODUCT_OBJECTIVES[product];
+  if (!objective) {
+    throw new Error(`Unknown data product: ${String(product)}`);
+  }
+  return objective;
+}
+
+/**
+ * Classify the age of a record against a product's objectives.
+ * - `fresh`: within the freshness bound
+ * - `stale`: beyond the freshness bound but within the staleness threshold
+ * - `expired`: beyond the staleness threshold
+ */
+export type FreshnessState = 'fresh' | 'stale' | 'expired';
+
+export function classifyFreshness(product: DataProduct, ageSeconds: number): FreshnessState {
+  const objective = getDataProductObjective(product);
+  if (ageSeconds <= objective.freshnessBoundSeconds) return 'fresh';
+  if (ageSeconds <= objective.stalenessThresholdSeconds) return 'stale';
+  return 'expired';
+}
+
+/**
+ * Build consumer-visible staleness metadata for a response.
+ */
+export interface StalenessMetadata {
+  asOf: string;
+  ageSeconds: number;
+  state: FreshnessState;
+  product: DataProduct;
+}
+
+export function buildStalenessMetadata(product: DataProduct, asOfMs: number, nowMs = Date.now()): StalenessMetadata {
+  const ageSeconds = Math.max(0, Math.floor((nowMs - asOfMs) / 1000));
+  return {
+    asOf: new Date(asOfMs).toISOString(),
+    ageSeconds,
+    state: classifyFreshness(product, ageSeconds),
+    product,
+  };
+}
+
+export const objectiveBreachesTotal = new client.Counter({
+  name: 'data_product_objective_breaches_total',
+  help: 'Total data product objective breaches, by product and state',
+  labelNames: ['product', 'state'],
+});
+register.registerMetric(objectiveBreachesTotal);
+
+export const objectiveAgeSeconds = new client.Gauge({
+  name: 'data_product_age_seconds',
+  help: 'Observed age in seconds of the newest record per data product',
+  labelNames: ['product'],
+});
+register.registerMetric(objectiveAgeSeconds);
+
+/**
+ * Record the observed age of a data product's newest record and emit breach
+ * metrics when it exceeds the freshness bound or staleness threshold.
+ */
+export function recordDataProductAge(product: DataProduct, ageSeconds: number): FreshnessState {
+  const state = classifyFreshness(product, ageSeconds);
+  objectiveAgeSeconds.set({ product }, ageSeconds);
+  if (state !== 'fresh') {
+    objectiveBreachesTotal.inc({ product, state });
+  }
+  return state;
+}
+
 export const consistencyChecksTotal = new client.Counter({
   name: 'data_consistency_checks_total',
   help: 'Total data consistency checks run, by result',
@@ -71,6 +242,19 @@ export class DataConsistencyChecker {
     ]);
     this.latestResults = results;
     return results;
+  }
+
+  /**
+   * Evaluate the freshness objective for a data product given the timestamp of
+   * its newest record. Emits objective metrics and returns the freshness state.
+   */
+  evaluateObjective(product: DataProduct, newestRecordMs: number, nowMs = Date.now()): FreshnessState {
+    const ageSeconds = Math.max(0, Math.floor((nowMs - newestRecordMs) / 1000));
+    const state = recordDataProductAge(product, ageSeconds);
+    if (state !== 'fresh') {
+      this.logger.warn(`[data-consistency] ${product} is ${state} (age ${ageSeconds}s)`);
+    }
+    return state;
   }
 
   /** Verify that data written by the aggregator is visible in the DB. */

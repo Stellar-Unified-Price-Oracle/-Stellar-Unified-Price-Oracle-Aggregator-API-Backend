@@ -321,5 +321,76 @@ export const historyFileWriteFailuresTotal = new client.Counter({
   registers: [register],
 });
 
+// Issue #741 — controlled brownout mode.
+// The current brownout tier (0 = full service, higher = more shedding) so
+// operators can see at a glance which partial-service mode is active.
+export const brownoutTier = new client.Gauge({
+  name: 'brownout_tier',
+  help: 'Current brownout tier (0 = full service, 1 = light, 2 = heavy shedding)',
+  registers: [register],
+});
+
+export const brownoutTierTransitionsTotal = new client.Counter({
+  name: 'brownout_tier_transitions_total',
+  help: 'Number of brownout tier transitions by from/to tier and trigger',
+  labelNames: ['from_tier', 'to_tier', 'trigger'],
+  registers: [register],
+});
+
+// Non-critical work skipped while a brownout tier is active. Price freshness
+// and publication are never shed, so these counters must be the only work
+// dropped during a brownout.
+export const brownoutShedOperationsTotal = new client.Counter({
+  name: 'brownout_shed_operations_total',
+  help: 'Non-critical operations skipped because of brownout shedding, by feature and tier',
+  labelNames: ['feature', 'tier'],
+  registers: [register],
+});
+
+export const brownoutActiveDurationSeconds = new client.Gauge({
+  name: 'brownout_active_duration_seconds',
+  help: 'Seconds the current brownout tier has been continuously active (0 when full service)',
+  registers: [register],
+});
+
+// Issue #742 — regional maintenance windows.
+// Phase durations let operators verify prechecks, drain, fencing and
+// validation each complete within their budget.
+export const maintenanceWindowPhaseDurationMs = new client.Histogram({
+  name: 'maintenance_window_phase_duration_ms',
+  help: 'Duration of each maintenance window phase in milliseconds',
+  labelNames: ['region', 'phase', 'status'],
+  buckets: [100, 500, 1000, 5000, 10000, 30000, 60000, 120000, 300000, 600000],
+  registers: [register],
+});
+
+export const maintenanceWindowPrechecksTotal = new client.Counter({
+  name: 'maintenance_window_prechecks_total',
+  help: 'Maintenance window precheck results by region, check name and outcome (pass|fail)',
+  labelNames: ['region', 'check', 'outcome'],
+  registers: [register],
+});
+
+export const maintenanceWindowPostchecksTotal = new client.Counter({
+  name: 'maintenance_window_postchecks_total',
+  help: 'Maintenance window post-maintenance validation results by region, check name and outcome (pass|fail)',
+  labelNames: ['region', 'check', 'outcome'],
+  registers: [register],
+});
+
+export const maintenanceWindowAbortsTotal = new client.Counter({
+  name: 'maintenance_window_aborts_total',
+  help: 'Maintenance windows aborted before completion, by region and reason',
+  labelNames: ['region', 'reason'],
+  registers: [register],
+});
+
+export const maintenanceWindowActive = new client.Gauge({
+  name: 'maintenance_window_active',
+  help: 'Whether a maintenance window is currently active for a region (1) or not (0)',
+  labelNames: ['region'],
+  registers: [register],
+});
+
 export { register };
 

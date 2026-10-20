@@ -22,6 +22,18 @@ export interface SecureLookupOptions {
    * surface.
    */
   onBlocked?: (info: { host: string; addresses: string[]; reason: SsrfReason }) => void;
+  /**
+   * Addresses previously approved for a hostname (e.g. by a pre-flight
+   * validation step). When supplied, the lookup pins to these addresses and
+   * refuses any answer that differs, so a DNS change between validation and
+   * connect cannot redirect the socket.
+   */
+  pinnedAddresses?: (hostname: string) => string[] | undefined;
+  /**
+   * Invoked after a successful resolution with the addresses that were
+   * approved, so callers can record the pin for the connection's lifetime.
+   */
+  onResolved?: (info: { host: string; addresses: string[] }) => void;
 }
 
 /**
@@ -74,6 +86,40 @@ export function createSecureLookup(options: SecureLookupOptions): LookupFunction
         callback(blocked, '', 0);
         return;
       }
+
+      // Pin to previously approved addresses. If the hostname now resolves to
+      // anything outside the approved set, treat it as a rebinding attempt:
+      // the answer changed between validation and connect.
+      const pinned = options.pinnedAddresses?.(hostname);
+      if (pinned && pinned.length > 0) {
+        const pinnedSet = new Set(pinned);
+        const drifted = safe.filter((a) => !pinnedSet.has(a.address));
+        if (drifted.length > 0) {
+          options.onBlocked?.({
+            host: hostname,
+            addresses: list.map((a) => a.address),
+            reason: 'dns-rebinding',
+          });
+          const blocked = new SsrfError(
+            `Resolved addresses for "${hostname}" changed after validation`,
+            hostname,
+            'dns-rebinding',
+          ) as NodeJS.ErrnoException;
+          callback(blocked, '', 0);
+          return;
+        }
+
+        const pinnedResults = safe.filter((a) => pinnedSet.has(a.address));
+        options.onResolved?.({ host: hostname, addresses: pinnedResults.map((a) => a.address) });
+        if (lookupOptions?.all) {
+          callback(null, pinnedResults, 0);
+          return;
+        }
+        callback(null, pinnedResults[0].address, pinnedResults[0].family);
+        return;
+      }
+
+      options.onResolved?.({ host: hostname, addresses: safe.map((a) => a.address) });
 
       if (lookupOptions?.all) {
         callback(null, safe, 0);

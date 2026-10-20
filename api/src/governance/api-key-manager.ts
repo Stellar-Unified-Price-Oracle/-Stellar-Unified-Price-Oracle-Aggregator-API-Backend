@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { logger } from '../observability/logger';
 import { config } from '../infrastructure/config';
 import type { Role } from './rbac';
@@ -9,6 +9,36 @@ import { createTenantWindow, type TenantWindow } from '../platform/tenant-window
 
 export type KeyTier = RateTier;
 export { TIER_RATE_LIMITS };
+
+/**
+ * Policy scope attached to a consumer credential (issue #748).
+ *
+ * A credential may be restricted to a set of feeds, a set of operations, a set
+ * of environments, and an absolute expiry. Every dimension is optional; an
+ * absent (or empty) dimension means "unrestricted" for that dimension, which is
+ * also the documented migration default for keys created before scopes existed.
+ *
+ * - `feeds`: feed identifiers the key may read (e.g. `XLM/USD`). `*` matches all.
+ * - `operations`: operation names the key may invoke (e.g. `read`, `submit`). `*` matches all.
+ * - `environments`: deployment environments the key is valid in (e.g. `production`). `*` matches all.
+ * - `expiresAt`: epoch milliseconds after which the key is rejected. Absent means no expiry.
+ */
+export interface KeyPolicyScope {
+  feeds?: string[];
+  operations?: string[];
+  environments?: string[];
+  expiresAt?: number;
+}
+
+/** Result of evaluating a credential against a requested scope. */
+export interface ScopeCheckResult {
+  allowed: boolean;
+  /** Machine-readable reason when `allowed` is false. */
+  reason?: 'expired' | 'feed' | 'operation' | 'environment';
+}
+
+/** Wildcard token that matches any value within a scope dimension. */
+export const SCOPE_WILDCARD = '*';
 
 export interface ApiKeyMetadata {
   keyHash: string;
@@ -25,6 +55,11 @@ export interface ApiKeyMetadata {
   description?: string;
   /** If set, this key is in rotation grace period until this timestamp */
   rotationExpiresAt?: number;
+  /**
+   * Policy scope restricting feeds/operations/environments and expiry.
+   * Absent means unrestricted (the migration default for legacy keys).
+   */
+  policy?: KeyPolicyScope;
 }
 
 /** Metadata plus the plaintext key, returned only when a key is created or rotated. */
@@ -67,6 +102,81 @@ export class KeyStoreWriteError extends Error {
 
 function canonicalKeyJson(entries: Record<string, ApiKeyEntry>): string {
   return JSON.stringify(Object.keys(entries).sort().map((hash) => [hash, entries[hash]]));
+}
+
+/** Thrown when a policy scope supplied at key generation is malformed. */
+export class InvalidPolicyScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidPolicyScopeError';
+  }
+}
+
+function normalizeDimension(values: unknown, field: string): string[] | undefined {
+  if (values === undefined || values === null) return undefined;
+  if (!Array.isArray(values)) {
+    throw new InvalidPolicyScopeError(`policy.${field} must be an array of strings`);
+  }
+  const cleaned: string[] = [];
+  for (const value of values) {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new InvalidPolicyScopeError(`policy.${field} entries must be non-empty strings`);
+    }
+    const trimmed = value.trim();
+    if (!cleaned.includes(trimmed)) cleaned.push(trimmed);
+  }
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+/**
+ * Validate and normalize a caller-supplied policy scope. Throws
+ * InvalidPolicyScopeError on malformed input so bad scopes never reach the
+ * store. Returns `undefined` when the scope is absent or fully unrestricted.
+ */
+export function normalizePolicyScope(policy?: KeyPolicyScope | null): KeyPolicyScope | undefined {
+  if (!policy) return undefined;
+  const feeds = normalizeDimension(policy.feeds, 'feeds');
+  const operations = normalizeDimension(policy.operations, 'operations');
+  const environments = normalizeDimension(policy.environments, 'environments');
+  let expiresAt: number | undefined;
+  if (policy.expiresAt !== undefined && policy.expiresAt !== null) {
+    if (typeof policy.expiresAt !== 'number' || !Number.isFinite(policy.expiresAt) || policy.expiresAt <= 0) {
+      throw new InvalidPolicyScopeError('policy.expiresAt must be a positive epoch-millisecond timestamp');
+    }
+    expiresAt = Math.floor(policy.expiresAt);
+  }
+  if (!feeds && !operations && !environments && expiresAt === undefined) return undefined;
+  return { feeds, operations, environments, expiresAt };
+}
+
+function dimensionAllows(allowed: string[] | undefined, requested: string | undefined): boolean {
+  if (!allowed || allowed.length === 0) return true;
+  if (allowed.includes(SCOPE_WILDCARD)) return true;
+  if (requested === undefined) return false;
+  return allowed.includes(requested);
+}
+
+/** True when the credential's policy has an expiry that has already passed. */
+export function isPolicyExpired(policy: KeyPolicyScope | undefined, now: number = Date.now()): boolean {
+  return !!policy && typeof policy.expiresAt === 'number' && now >= policy.expiresAt;
+}
+
+/**
+ * Evaluate a credential policy against a requested feed/operation/environment.
+ * An absent policy (legacy key) is unrestricted. Expiry is checked first so an
+ * expired key is rejected regardless of the requested dimensions.
+ */
+export function checkPolicyScope(
+  policy: KeyPolicyScope | undefined,
+  request: { feed?: string; operation?: string; environment?: string },
+  now: number = Date.now(),
+): ScopeCheckResult {
+  if (!policy) return { allowed: true };
+  if (isPolicyExpired(policy, now)) return { allowed: false, reason: 'expired' };
+  if (!dimensionAllows(policy.feeds, request.feed)) return { allowed: false, reason: 'feed' };
+  if (!dimensionAllows(policy.operations, request.operation)) return { allowed: false, reason: 'operation' };
+  if (!dimensionAllows(policy.environments, request.environment)) return { allowed: false, reason: 'environment' };
+  return { allowed: true };
 }
 
 export class ApiKeyManager {
@@ -145,7 +255,16 @@ export class ApiKeyManager {
     return this.store.kind;
   }
 
-  generateKey(rateLimitPerMin: number = TIER_RATE_LIMITS.free, description?: string, tier: KeyTier = 'free', role: Role = 'viewer', scopes?: string[]): GeneratedApiKey {
+  generateKey(
+    rateLimitPerMin: number = TIER_RATE_LIMITS.free,
+    description?: string,
+    tier: KeyTier = 'free',
+    role: Role = 'viewer',
+    scopes?: string[],
+    policy?: KeyPolicyScope,
+  ): GeneratedApiKey {
+    // Validate before minting so a malformed policy never produces a key.
+    const normalizedPolicy = normalizePolicyScope(policy);
     const key = this.createKey(tier);
     const keyHash = this.hashKey(key);
     const metadata: ApiKeyMetadata = {
@@ -160,11 +279,15 @@ export class ApiKeyManager {
       role,
       scopes: scopes && scopes.length > 0 ? [...scopes] : undefined,
       description,
+      policy: normalizedPolicy,
     };
 
     this.keys.set(keyHash, metadata);
     this.persist(metadata);
-    logger.info(`Generated new API key: ${metadata.keyPrefix}... tier=${tier} role=${role} limit=${rateLimitPerMin}/min`);
+    logger.info(
+      `Generated new API key: ${metadata.keyPrefix}... tier=${tier} role=${role} limit=${rateLimitPerMin}/min` +
+      (normalizedPolicy ? ` policy=${describePolicy(normalizedPolicy)}` : ''),
+    );
 
     return { ...metadata, key };
   }
@@ -184,7 +307,38 @@ export class ApiKeyManager {
       return { valid: false, error: 'API key has been revoked' };
     }
 
+    if (isPolicyExpired(metadata.policy)) {
+      return { valid: false, error: 'API key has expired' };
+    }
+
     return { valid: true, metadata };
+  }
+
+  /**
+   * Check a validated key's policy scope against a requested feed/operation/
+   * environment. Returns `{ allowed: false }` for unknown or inactive keys so
+   * callers cannot bypass validation by calling this directly.
+   */
+  checkScope(
+    key: string,
+    request: { feed?: string; operation?: string; environment?: string },
+    now: number = Date.now(),
+  ): ScopeCheckResult {
+    const metadata = this.keys.get(this.hashKey(key));
+    if (!metadata || !metadata.isActive) return { allowed: false, reason: 'operation' };
+    return checkPolicyScope(metadata.policy, request, now);
+  }
+
+  /** Replace a key's policy scope. `undefined` clears it (unrestricted). */
+  updatePolicy(keyHash: string, policy?: KeyPolicyScope): boolean {
+    const metadata = this.keys.get(keyHash);
+    if (!metadata) return false;
+    metadata.policy = normalizePolicyScope(policy);
+    this.persist(metadata);
+    logger.info(
+      `Updated policy for ${metadata.keyPrefix}... to ${metadata.policy ? describePolicy(metadata.policy) : 'unrestricted'}`,
+    );
+    return true;
   }
 
   isAdminKey(key: string): boolean {
@@ -289,7 +443,7 @@ export class ApiKeyManager {
     return this.keys.get(keyHash) || null;
   }
 
-  getAllKeys(): Array<{ keyPrefix: string; keyHash: string; createdAt: number; lastUsed: number | null; requestCount: number; isActive: boolean; rateLimitPerMin: number; tier: KeyTier; role: Role; scopes?: string[]; description?: string }> {
+  getAllKeys(): Array<{ keyPrefix: string; keyHash: string; createdAt: number; lastUsed: number | null; requestCount: number; isActive: boolean; rateLimitPerMin: number; tier: KeyTier; role: Role; scopes?: string[]; description?: string; policy?: KeyPolicyScope }> {
     // The non-secret display prefix is returned as-is (no ellipsis suffix) so
     // consumers can match keys by prefix without string munging.
     return Array.from(this.keys.values()).map((m) => ({
@@ -304,6 +458,7 @@ export class ApiKeyManager {
       role: m.role,
       scopes: m.scopes,
       description: m.description,
+      policy: m.policy ? { ...m.policy } : undefined,
     }));
   }
 
@@ -501,6 +656,7 @@ export class ApiKeyManager {
         description: meta.description,
         createdAt: meta.createdAt,
         isActive: meta.isActive,
+        policy: meta.policy ? { ...meta.policy } : undefined,
       };
     }
     return result;
@@ -537,7 +693,24 @@ export class ApiKeyManager {
       role: (entry.role as Role) || 'viewer',
       scopes: Array.isArray(entry.scopes) ? [...entry.scopes] : undefined,
       description: entry.description,
+      // Legacy entries have no policy: they load as unrestricted, which is the
+      // documented migration default. Malformed stored policies are dropped
+      // (fail-open to unrestricted) rather than blocking the whole load.
+      policy: this.policyFromEntry(entry),
     };
+  }
+
+  private policyFromEntry(entry: ApiKeyEntry): KeyPolicyScope | undefined {
+    const raw = (entry as ApiKeyEntry & { policy?: unknown }).policy;
+    if (!raw || typeof raw !== 'object') return undefined;
+    try {
+      return normalizePolicyScope(raw as KeyPolicyScope);
+    } catch (err) {
+      logger.warn(
+        `Ignoring malformed policy on stored API key ${entry.keyHash.substring(0, 12)}...: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return undefined;
+    }
   }
 
   hashKey(key: string): string {
@@ -586,7 +759,7 @@ export class ApiKeyManager {
   private loadKeysFromEnv(): void {
     const envKeys = process.env.API_KEYS ? decryptSecret(process.env.API_KEYS) : undefined;
     if (!envKeys || !envKeys.trim()) {
-      if (this.keys.size === 0 && allowEphemeralAdminKey()) {
+      if (this.keys.size === 0 && process.env.ALLOW_EPHEMERAL_ADMIN_KEY === 'true') {
         this.generateEphemeralAdminKey();
       } else if (this.keys.size === 0) {
         logger.warn(
@@ -633,6 +806,27 @@ export class ApiKeyManager {
       logger.error('Failed to load API keys from environment', err);
     }
   }
+
+  /** Generate a single ephemeral admin key for local/dev bootstrapping. */
+  private generateEphemeralAdminKey(): void {
+    const key = 'ephemeral-admin-' + crypto.randomBytes(16).toString('hex');
+    const keyHash = crypto.createHash('sha256').update(key).digest('hex');
+    this.keys.set(keyHash, {
+      keyHash,
+      tier: 'admin',
+      createdAt: Date.now(),
+      description: 'ephemeral admin key',
+    });
+  }
+}
+
+function describePolicy(policy: KeyPolicyScope): string {
+  const parts: string[] = [];
+  if (policy.feeds) parts.push(`feeds=${policy.feeds.join('|')}`);
+  if (policy.operations) parts.push(`operations=${policy.operations.join('|')}`);
+  if (policy.environments) parts.push(`environments=${policy.environments.join('|')}`);
+  if (policy.expiresAt !== undefined) parts.push(`expiresAt=${new Date(policy.expiresAt).toISOString()}`);
+  return parts.join(',');
 }
 
 export const apiKeyManager = new ApiKeyManager();

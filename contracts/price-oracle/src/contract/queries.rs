@@ -4,9 +4,123 @@ use soroban_sdk::{Address, Env, String, Vec};
 
 use crate::errors::OracleError;
 use crate::storage;
-use crate::types::{AssetPrice, PriceDataPoint, SourceReputation};
+use crate::types::{AssetPrice, PriceDataPoint, PriceEvidence, PriceSnapshot, SourceReputation};
 
 use crate::utils;
+
+// ── Issues #724 / #726 — stable read snapshot & consumer-verifiable evidence ──
+//
+// #726 `get_price_snapshot` returns a mutually consistent view of a price:
+// the latest price, its submission timestamp, the observation timestamp and
+// the policy version that was in force when the snapshot was read.  All four
+// values are read in one call so a consumer never observes a torn view where
+// the price comes from one update and the policy version from another.
+//
+// #724 `get_price_evidence` / `verify_price_evidence` implement a
+// consumer-verifiable evidence format.  A consumer obtains the evidence
+// payload once, stores it, and can later re-verify it against on-chain state
+// with `verify_price_evidence`.
+//
+// Trust assumptions (documented, per #724):
+//   * The consumer trusts the oracle contract's storage as the source of
+//     truth; evidence proves *what the contract published*, not that the
+//     underlying market price is correct.
+//   * `policy_version` identifies the aggregation/policy rules in force.  A
+//     consumer that requires a specific policy must compare it explicitly.
+//   * Evidence is only valid while the stored price and policy version are
+//     unchanged.  Any subsequent price update or policy bump invalidates
+//     previously issued evidence (verification returns `false`).
+//   * Timestamps are ledger timestamps supplied by the host; they are
+//     monotonic within a ledger but not a wall-clock guarantee.
+//
+// Failure cases:
+//   * No price for the asset → `Ok(None)` from the getters; verification of
+//     evidence for an unknown asset returns `Ok(false)`.
+//   * Evidence asset mismatch → `Err(OracleError::InvalidEvidence)`.
+//   * Evidence price / timestamp / policy version mismatch against stored
+//     state → `Ok(false)` (stale or tampered evidence).
+//   * Query fee configured and caller not whitelisted → `NotWhitelisted`
+//     (snapshot only; evidence getters are read-only and fee-exempt so that
+//     verification remains possible for any consumer).
+
+/// #726 — atomically read price, timestamps and policy version.
+///
+/// Enforces the same query-fee/whitelist rules as `get_price`.
+pub(crate) fn get_price_snapshot(
+    env: &Env,
+    caller: &Address,
+    asset: &String,
+) -> Result<Option<PriceSnapshot>, OracleError> {
+    let fee = storage::get_query_fee(env);
+    if fee > 0 && !storage::is_whitelisted(env, caller) {
+        return Err(OracleError::NotWhitelisted);
+    }
+
+    let data_point = match storage::get_latest_price(env, asset) {
+        Some(dp) => dp,
+        None => return Ok(None),
+    };
+
+    let policy_version = storage::get_policy_version(env);
+
+    Ok(Some(PriceSnapshot {
+        asset: data_point.asset,
+        price: data_point.price,
+        decimals: data_point.decimals,
+        timestamp: data_point.timestamp,
+        observation_timestamp: env.ledger().timestamp(),
+        policy_version,
+    }))
+}
+
+/// #724 — build the structured evidence payload for the current price.
+///
+/// Returns `Ok(None)` when no price has been published for `asset`.
+pub(crate) fn get_price_evidence(
+    env: &Env,
+    asset: &String,
+) -> Result<Option<PriceEvidence>, OracleError> {
+    let data_point = match storage::get_latest_price(env, asset) {
+        Some(dp) => dp,
+        None => return Ok(None),
+    };
+
+    Ok(Some(PriceEvidence {
+        asset: data_point.asset,
+        price: data_point.price,
+        decimals: data_point.decimals,
+        timestamp: data_point.timestamp,
+        policy_version: storage::get_policy_version(env),
+    }))
+}
+
+/// #724 — verify a previously issued evidence payload against stored state.
+///
+/// Returns `Ok(true)` when the evidence matches the currently stored price
+/// and policy version, `Ok(false)` when it is stale or does not match, and
+/// `Err(OracleError::InvalidEvidence)` when the evidence is malformed (e.g.
+/// it names a different asset than the one being verified).
+pub(crate) fn verify_price_evidence(
+    env: &Env,
+    asset: &String,
+    evidence: &PriceEvidence,
+) -> Result<bool, OracleError> {
+    if evidence.asset != *asset {
+        return Err(OracleError::InvalidEvidence);
+    }
+
+    let data_point = match storage::get_latest_price(env, asset) {
+        Some(dp) => dp,
+        None => return Ok(false),
+    };
+
+    let policy_version = storage::get_policy_version(env);
+
+    Ok(evidence.price == data_point.price
+        && evidence.decimals == data_point.decimals
+        && evidence.timestamp == data_point.timestamp
+        && evidence.policy_version == policy_version)
+}
 
 // Issue #561 — the whitelist is a fee-exempt consumer allowlist.
 // get_price enforces it when a non-zero query fee is configured:
@@ -143,3 +257,14 @@ pub(crate) fn get_stake_treasury(env: &Env) -> Option<Address> {
 pub(crate) fn get_pending_admin(env: &Env) -> Option<Address> {
     storage::get_pending_admin(env).map(|(admin, _)| admin)
 }
+
+// ── Issue #725 — Feed catalog commitment queries ────────────────────────────
+
+pub(crate) fn get_feed_catalog_commitment(env: &Env) -> Option<FeedCatalogCommitment> {
+    storage::get_feed_catalog_commitment(env)
+}
+
+pub(crate) fn get_feed_catalog_version(env: &Env) -> u32 {
+    storage::get_feed_catalog_commitment(env).map(|c| c.version).unwrap_or(0)
+}
+

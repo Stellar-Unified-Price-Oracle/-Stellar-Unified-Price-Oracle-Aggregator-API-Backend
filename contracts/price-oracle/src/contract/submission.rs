@@ -22,7 +22,15 @@ pub(crate) fn submit_price(
 ) -> Result<PriceDataPoint, OracleError> {
     source.require_auth();
 
+    // Issue #731 - global pause still blocks every write path.
     if storage::is_paused(env) {
+        return Err(OracleError::ContractPaused);
+    }
+    // Issue #731 - selective pause: only the single-submission path and the
+    // targeted feed are blocked; batch submission and other feeds stay writable.
+    if storage::is_write_path_paused(env, storage::WritePath::SubmitPrice)
+        || storage::is_feed_paused(env, asset)
+    {
         return Err(OracleError::ContractPaused);
     }
 
@@ -92,7 +100,15 @@ pub(crate) fn submit_batch(
 ) -> Result<u64, OracleError> {
     source.require_auth();
 
+    // Issue #731 - global pause still blocks every write path.
     if storage::is_paused(env) {
+        return Err(OracleError::ContractPaused);
+    }
+    // Issue #731 - selective pause: only the batch-commit path is blocked.
+    // Per-feed pauses are enforced at apply time, so committing a root that
+    // covers a paused feed is still allowed (entries for that feed are rejected
+    // in apply_batch_entry).
+    if storage::is_write_path_paused(env, storage::WritePath::SubmitBatch) {
         return Err(OracleError::ContractPaused);
     }
 
@@ -135,7 +151,15 @@ pub(crate) fn apply_batch_entry(
     entry: &BatchPriceEntry,
     proof: &MerkleProof,
 ) -> Result<PriceDataPoint, OracleError> {
+    // Issue #731 - global pause still blocks every write path.
     if storage::is_paused(env) {
+        return Err(OracleError::ContractPaused);
+    }
+    // Issue #731 - selective pause: only the batch-apply path and the targeted
+    // feed are blocked; other feeds and the single-submission path stay writable.
+    if storage::is_write_path_paused(env, storage::WritePath::ApplyBatchEntry)
+        || storage::is_feed_paused(env, &entry.asset)
+    {
         return Err(OracleError::ContractPaused);
     }
 

@@ -36,6 +36,10 @@ PRE_MAX_TS=$(kubectl -n "${NAMESPACE}" exec timescaledb-0 -- \
 echo "Latest observed_at before drill: ${PRE_MAX_TS:-unknown}"
 
 RTO_SECONDS=""
+FAILBACK_RTO_SECONDS=""
+FAILBACK_PERFORMED=false
+FAILBACK_STABLE=false
+SINGLE_PUBLISHER_OK=true
 PASSED=true
 
 if [ "${TIER}" = "tier1" ]; then
@@ -72,6 +76,41 @@ POST_MAX_TS=$(kubectl -n "${NAMESPACE}" exec timescaledb-0 -- \
   psql -U oracle -d stellar_oracle -tAc "SELECT max(observed_at) FROM price_history;" 2>/dev/null || echo "")
 echo "Latest observed_at after recovery: ${POST_MAX_TS:-unknown}"
 
+# --- Failback phase (issue #738) ---
+# After the failover above, wait for stability evidence, run the automated
+# failback, then verify state reconciliation and single-publisher authority.
+# Set DR_DRILL_SKIP_FAILBACK=true to exercise failover only.
+if [ "${DR_DRILL_SKIP_FAILBACK:-false}" != "true" ]; then
+  echo "--- Failback: waiting for stability evidence ---"
+  FAILBACK_STABLE=true
+  if ! bash "${ROOT}/scripts/dr/wait-for-stability.sh" "${ENV}"; then
+    echo "FAIL: stability evidence not satisfied — refusing to fail back"
+    FAILBACK_STABLE=false
+    PASSED=false
+  fi
+
+  if [ "${FAILBACK_STABLE}" = true ]; then
+    echo "--- Failback: invoking automated failback ---"
+    FAILBACK_PERFORMED=true
+    FAILBACK_RTO_SECONDS=$(bash "${ROOT}/scripts/dr/failback.sh" "${ENV}" | tail -1)
+
+    echo "--- Failback: verifying state reconciliation ---"
+    RECONCILE_OK=$(bash "${ROOT}/scripts/dr/verify-reconciliation.sh" "${ENV}" | tail -1 || echo "false")
+    if [ "${RECONCILE_OK}" != "true" ]; then
+      echo "FAIL: state reconciliation check failed after failback"
+      PASSED=false
+    fi
+
+    echo "--- Failback: verifying single-publisher authority ---"
+    PUBLISHER_COUNT=$(bash "${ROOT}/scripts/dr/check-publisher-authority.sh" "${ENV}" | tail -1 || echo "0")
+    if [ "${PUBLISHER_COUNT}" != "1" ]; then
+      echo "FAIL: split-brain detected — ${PUBLISHER_COUNT} active publishers (expected 1)"
+      SINGLE_PUBLISHER_OK=false
+      PASSED=false
+    fi
+  fi
+fi
+
 HEALTH_OK=false
 if curl -sf "${API_BASE_URL}/api/v1/health" >/dev/null; then HEALTH_OK=true; fi
 
@@ -97,6 +136,9 @@ cat > "${REPORT_MD}" <<REPORT
 - **RTO measured**: ${RTO_SECONDS}s (target: ${RTO_TARGET_S}s)
 - **RPO measured**: ${RPO_SECONDS}s (target: ${RPO_TARGET_S}s)
 - **Health check**: ${HEALTH_OK}
+- **Failback performed**: ${FAILBACK_PERFORMED}
+- **Failback RTO measured**: ${FAILBACK_RTO_SECONDS:-n/a}s
+- **Single-publisher authority**: ${SINGLE_PUBLISHER_OK}
 - **Result**: $([ "${PASSED}" = true ] && echo "PASS" || echo "FAIL")
 REPORT
 
@@ -112,6 +154,9 @@ cat > "${REPORT_JSON}" <<JSON
   "rpoSeconds": ${RPO_SECONDS},
   "rtoTargetSeconds": ${RTO_TARGET_S},
   "rpoTargetSeconds": ${RPO_TARGET_S},
+  "failbackPerformed": ${FAILBACK_PERFORMED},
+  "failbackRtoSeconds": ${FAILBACK_RTO_SECONDS:-0},
+  "singlePublisherOk": ${SINGLE_PUBLISHER_OK},
   "passed": $([ "${PASSED}" = true ] && echo "true" || echo "false"),
   "report": "drill-${DATE_TAG}.md"
 }

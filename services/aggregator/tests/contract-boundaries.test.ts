@@ -261,6 +261,142 @@ describe('Issue #119: Consumer-driven contract tests', () => {
     });
   });
 
+  describe('Boundary 3: Snapshot and evidence contract (Issues #724, #726)', () => {
+    const SNAPSHOT_VERSION = 1;
+    const EVIDENCE_VERSION = 1;
+
+    interface PriceSnapshot {
+      asset: string;
+      price: bigint;
+      decimals: number;
+      timestamp: number;
+      policyVersion: number;
+      snapshotVersion: number;
+    }
+
+    interface PriceEvidence {
+      evidenceVersion: number;
+      asset: string;
+      price: bigint;
+      decimals: number;
+      timestamp: number;
+      policyVersion: number;
+      snapshotVersion: number;
+      sources: string[];
+      digest: string;
+    }
+
+    const isValidSnapshot = (s: PriceSnapshot): boolean =>
+      s.snapshotVersion === SNAPSHOT_VERSION &&
+      typeof s.asset === 'string' &&
+      s.asset.length > 0 &&
+      typeof s.price === 'bigint' &&
+      s.price > BigInt(0) &&
+      Number.isInteger(s.decimals) &&
+      s.decimals >= 0 &&
+      Number.isInteger(s.timestamp) &&
+      s.timestamp > 0 &&
+      Number.isInteger(s.policyVersion) &&
+      s.policyVersion >= 0;
+
+    const isValidEvidence = (e: PriceEvidence): boolean =>
+      e.evidenceVersion === EVIDENCE_VERSION &&
+      typeof e.asset === 'string' &&
+      e.asset.length > 0 &&
+      typeof e.price === 'bigint' &&
+      e.price > BigInt(0) &&
+      Number.isInteger(e.decimals) &&
+      e.decimals >= 0 &&
+      Number.isInteger(e.timestamp) &&
+      e.timestamp > 0 &&
+      Number.isInteger(e.policyVersion) &&
+      e.policyVersion >= 0 &&
+      e.snapshotVersion === SNAPSHOT_VERSION &&
+      Array.isArray(e.sources) &&
+      e.sources.length > 0 &&
+      typeof e.digest === 'string' &&
+      e.digest.length > 0;
+
+    const buildSnapshot = (overrides: Partial<PriceSnapshot> = {}): PriceSnapshot => ({
+      asset: 'XLM',
+      price: BigInt(1000000),
+      decimals: 7,
+      timestamp: 1234567890,
+      policyVersion: 3,
+      snapshotVersion: SNAPSHOT_VERSION,
+      ...overrides,
+    });
+
+    const buildEvidence = (overrides: Partial<PriceEvidence> = {}): PriceEvidence => ({
+      evidenceVersion: EVIDENCE_VERSION,
+      asset: 'XLM',
+      price: BigInt(1000000),
+      decimals: 7,
+      timestamp: 1234567890,
+      policyVersion: 3,
+      snapshotVersion: SNAPSHOT_VERSION,
+      sources: ['chainlink', 'redstone'],
+      digest: 'sha256:abc123',
+      ...overrides,
+    });
+
+    it('should expose a mutually consistent snapshot of price, timestamps, and policy version', () => {
+      const snapshot = buildSnapshot();
+
+      expect(snapshot.price).toBe(BigInt(1000000));
+      expect(snapshot.timestamp).toBe(1234567890);
+      expect(snapshot.policyVersion).toBe(3);
+      expect(snapshot.snapshotVersion).toBe(SNAPSHOT_VERSION);
+      expect(isValidSnapshot(snapshot)).toBe(true);
+    });
+
+    it('should accept a well-formed evidence payload derived from the snapshot', () => {
+      const snapshot = buildSnapshot();
+      const evidence = buildEvidence({
+        asset: snapshot.asset,
+        price: snapshot.price,
+        decimals: snapshot.decimals,
+        timestamp: snapshot.timestamp,
+        policyVersion: snapshot.policyVersion,
+        snapshotVersion: snapshot.snapshotVersion,
+      });
+
+      expect(isValidEvidence(evidence)).toBe(true);
+      expect(evidence.price).toBe(snapshot.price);
+      expect(evidence.timestamp).toBe(snapshot.timestamp);
+      expect(evidence.policyVersion).toBe(snapshot.policyVersion);
+      expect(evidence.snapshotVersion).toBe(snapshot.snapshotVersion);
+    });
+
+    it('should reject a snapshot with an unsupported snapshot version', () => {
+      const staleSnapshot = buildSnapshot({ snapshotVersion: SNAPSHOT_VERSION + 1 });
+
+      expect(isValidSnapshot(staleSnapshot)).toBe(false);
+    });
+
+    it('should reject evidence with a mismatched evidence version', () => {
+      const badEvidence = buildEvidence({ evidenceVersion: EVIDENCE_VERSION + 1 });
+
+      expect(isValidEvidence(badEvidence)).toBe(false);
+    });
+
+    it('should reject evidence whose snapshot version does not match the contract', () => {
+      const badEvidence = buildEvidence({ snapshotVersion: SNAPSHOT_VERSION + 1 });
+
+      expect(isValidEvidence(badEvidence)).toBe(false);
+    });
+
+    it('should reject evidence with no sources or empty digest', () => {
+      expect(isValidEvidence(buildEvidence({ sources: [] }))).toBe(false);
+      expect(isValidEvidence(buildEvidence({ digest: '' }))).toBe(false);
+    });
+
+    it('should reject boundary snapshots with zero price or zero timestamp', () => {
+      expect(isValidSnapshot(buildSnapshot({ price: BigInt(0) }))).toBe(false);
+      expect(isValidSnapshot(buildSnapshot({ timestamp: 0 }))).toBe(false);
+    });
+  });
+
   describe('Reconciliation with documentation', () => {
     it('should match EVENT_SCHEMA.md definitions', () => {
       const priceUpdateEvent = {

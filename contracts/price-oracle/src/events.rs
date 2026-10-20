@@ -10,6 +10,20 @@
 
 use soroban_sdk::{contractevent, Address, Bytes, BytesN, String, Symbol};
 
+// ── Event schema versioning (Issue #728) ─────────────────────────────────────
+//
+// `EVENT_SCHEMA_VERSION` is the single source of truth for the on-chain event
+// schema. It is bumped whenever an existing event's topic order or payload
+// encoding changes, or when a new event family is introduced. The decoding
+// client library (`soroban-event-decoder`) reads this constant from the
+// contract metadata and refuses to decode events whose embedded version is
+// greater than the version it was built against.
+//
+// Version history:
+//   1 — initial schema (all events prior to Issue #724/#728)
+//   2 — adds `PriceSnapshotPublished` and `PriceEvidencePublished` (Issue #724)
+pub const EVENT_SCHEMA_VERSION: u32 = 2;
+
 // ── Proxy upgrade governance (Issue #375) ─────────────────────────────────────
 
 #[contractevent(data_format = "vec")]
@@ -84,6 +98,42 @@ pub struct BatchEntryApplied {
     pub asset: String,
     pub batch_nonce: u64,
     pub price: i128,
+}
+
+// ── Consumer-verifiable price evidence (Issue #724) ──────────────────────────
+//
+// `PriceSnapshotPublished` is emitted whenever a price snapshot is committed.
+// It carries the `schema_version` (must equal `EVENT_SCHEMA_VERSION`) and the
+// `policy_version` of the aggregation policy that produced the snapshot, so a
+// consumer can (a) reject snapshots produced under an unknown policy and
+// (b) verify the evidence payload against the exact policy semantics.
+//
+// `PriceEvidencePublished` carries the digest of the evidence bundle. The
+// bundle itself is stored off-chain (or in contract storage) and is addressed
+// by `evidence_hash`; consumers recompute the hash and compare. `source_count`
+// and `quorum_bps` let a consumer check the trust assumption (how many sources
+// contributed and what quorum was required) without trusting the publisher.
+
+#[contractevent(data_format = "vec")]
+pub struct PriceSnapshotPublished {
+    #[topic]
+    pub asset: String,
+    pub schema_version: u32,
+    pub policy_version: u32,
+    pub price: i128,
+    pub timestamp: u64,
+}
+
+#[contractevent(data_format = "vec")]
+pub struct PriceEvidencePublished {
+    #[topic]
+    pub asset: String,
+    #[topic]
+    pub publisher: Address,
+    pub schema_version: u32,
+    pub evidence_hash: BytesN<32>,
+    pub source_count: u32,
+    pub quorum_bps: u32,
 }
 
 // ── Source staking ────────────────────────────────────────────────────────────
@@ -207,6 +257,49 @@ pub struct Unpaused {
     #[topic]
     pub signer: Address,
     pub proposal_id: u32,
+}
+
+// ── Selective pause / recovery (Issue #731) ───────────────────────────────────
+//
+// Selective pauses are recorded per feed and per write path so operators can
+// pause one component without disabling unrelated write paths. Each state
+// change emits its own event so monitoring can reconstruct exactly which
+// components are paused and which recovery steps have completed.
+
+#[contractevent(data_format = "vec")]
+pub struct FeedPaused {
+    #[topic]
+    pub asset: String,
+    #[topic]
+    pub signer: Address,
+    pub reason: Symbol,
+}
+
+#[contractevent(data_format = "vec")]
+pub struct FeedUnpaused {
+    #[topic]
+    pub asset: String,
+    #[topic]
+    pub signer: Address,
+    pub paused_at: u64,
+}
+
+#[contractevent(data_format = "vec")]
+pub struct WritePathPaused {
+    #[topic]
+    pub path: Symbol,
+    #[topic]
+    pub signer: Address,
+    pub reason: Symbol,
+}
+
+#[contractevent(data_format = "vec")]
+pub struct WritePathUnpaused {
+    #[topic]
+    pub path: Symbol,
+    #[topic]
+    pub signer: Address,
+    pub paused_at: u64,
 }
 
 // ── Admin-config mutations (Issue #564) ────────────────────────────────────────
@@ -362,3 +455,15 @@ pub struct WhitelistUpdated {
     pub addr: Address,
     pub status: bool,
 }
+
+// ── Feed catalog commitment (Issue #725) ─────────────────────────────────────
+
+#[contractevent(data_format = "vec")]
+pub struct FeedCatalogCommitted {
+    #[topic]
+    pub publisher: Address,
+    pub version: u32,
+    pub catalog_hash: BytesN<32>,
+    pub timestamp: u64,
+}
+

@@ -14,7 +14,7 @@
 #[cfg(test)]
 mod upgrade_migration_tests {
     use soroban_sdk::testutils::Address as TestAddress;
-    use soroban_sdk::{Address, Bytes, Env, String, Vec};
+    use soroban_sdk::{Address, Bytes, BytesN, Env, String, Vec};
 
     use crate::contract::{PriceOracleContract, PriceOracleContractClient};
     use crate::proxy::{ProxyContract, ProxyContractClient};
@@ -73,6 +73,14 @@ mod upgrade_migration_tests {
         let root = Bytes::from_array(&env, &root_bytes);
         let nonce_before = v1.submit_batch(&oracle_a, &0u64, &root);
 
+        // Feed catalog version commitment state (Issue #725).
+        let mut cat_bytes = [0u8; 32];
+        cat_bytes[0] = 0x42;
+        let cat_hash = BytesN::from_array(&env, &cat_bytes);
+        v1.commit_feed_catalog(&admin, &1u32, &cat_hash);
+        let catalog_before = v1.get_feed_catalog_commitment().expect("catalog commitment should exist");
+        assert_eq!(v1.get_feed_catalog_version(), 1u32);
+
         // Multi-sig ("governance") state living on the same contract id.
         let signers: Vec<Address> =
             Vec::from_array(&env, [oracle_a.clone(), oracle_b.clone(), admin.clone()]);
@@ -116,5 +124,14 @@ mod upgrade_migration_tests {
             .expect("multisig config should survive upgrade");
         assert_eq!(multisig_after.threshold, multisig_before.threshold);
         assert_eq!(multisig_after.signers.len(), multisig_before.signers.len());
+
+        // Feed catalog commitment survives upgrade (Issue #725).
+        assert_eq!(v2.get_feed_catalog_version(), 1u32);
+        let catalog_after = v2
+            .get_feed_catalog_commitment()
+            .expect("catalog commitment should survive upgrade");
+        assert_eq!(catalog_after.version, catalog_before.version);
+        assert_eq!(catalog_after.catalog_hash, catalog_before.catalog_hash);
+        assert_eq!(catalog_after.publisher, catalog_before.publisher);
     }
 }

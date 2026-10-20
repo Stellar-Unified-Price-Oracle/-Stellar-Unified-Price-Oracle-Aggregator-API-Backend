@@ -1,10 +1,28 @@
+import type {
+  ContractEventRecord,
+  ContractEventDecodeResult,
+} from '../../../packages/types';
+
+export type {
+  ContractEventRecord,
+  ContractEventDecodeResult,
+} from '../../../packages/types';
+
+export {
+  decodeContractEvent,
+  decodeContractEvents,
+  isSupportedEventVersion,
+  SUPPORTED_EVENT_VERSIONS,
+} from '../../../packages/types';
+
 export type DomainEvent =
   | PriceRequestedEvent
   | PriceHistoryRequestedEvent
   | ApiKeyCreatedEvent
   | ApiKeyRevokedEvent
   | WebhookReceivedEvent
-  | CorsAllowlistChangedEvent;
+  | CorsAllowlistChangedEvent
+  | ContractEventDecodedEvent;
 
 export interface PriceRequestedEvent {
   type: 'price-requested';
@@ -58,6 +76,15 @@ export interface CorsAllowlistChangedEvent {
     before: string[];
     after: string[];
     actor: string;
+  };
+  timestamp: number;
+}
+
+export interface ContractEventDecodedEvent {
+  type: 'contract-event-decoded';
+  payload: {
+    record: ContractEventRecord;
+    decode: ContractEventDecodeResult;
   };
   timestamp: number;
 }

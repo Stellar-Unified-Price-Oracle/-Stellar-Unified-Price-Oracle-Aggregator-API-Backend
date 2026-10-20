@@ -22,6 +22,59 @@ jobs:
       - name: Check audit findings table
         run: node scripts/check-audit-findings.js
 
+  tenant-isolation-fuzz:
+    name: Tenant isolation fuzz — caches, REST, GraphQL, WS, exports, jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run tenant isolation fuzz suite
+        env:
+          TENANT_FUZZ_SEED: ${{ github.run_id }}
+          TENANT_FUZZ_ITERATIONS: '500'
+        run: npm run test:tenant-isolation -- --ci --reporters=default --reporters=jest-junit
+
+      - name: Upload fuzz report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tenant-isolation-fuzz-report
+          path: reports/tenant-isolation/
+          retention-days: 30
+
+  authorization-corpus:
+    name: Authorization regression corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run authorization regression corpus
+        run: npm run test:authz-corpus -- --ci --reporters=default --reporters=jest-junit
+
+      - name: Upload corpus report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: authorization-corpus-report
+          path: reports/authz-corpus/
+          retention-days: 30
+
   codeql:
     name: SAST — CodeQL
     runs-on: ubuntu-latest
@@ -147,3 +200,144 @@ jobs:
         with:
           sarif_file: trivy-api.sarif
           category: trivy-api
+
+  # ---------------------------------------------------------------------------
+  # Reproducible release builds (issue #752)
+  #
+  # Owner: Security & Release Engineering (see CODEOWNERS for this workflow).
+  #
+  # Scope: every release tag matching `v*` (e.g. v1.4.0). On a tag push we
+  # rebuild the release artifacts from the tagged source revision inside a
+  # pinned, hermetic environment, hash them, and compare those hashes against
+  # the artifacts published on the GitHub Release. Any mismatch fails the job
+  # and opens/updates a tracking issue so the discrepancy can be investigated.
+  #
+  # Procedure (repeatable review / measurement):
+  #   1. `scripts/reproducible-build.sh` is the single source of truth. It
+  #      pins the toolchain (Node version, npm version, SOURCE_DATE_EPOCH from
+  #      the tag's commit time) and normalises timestamps/ordering so two
+  #      independent runs on the same source produce identical bytes.
+  #   2. The script writes `repro-manifest.json` (path -> sha256) for the
+  #      locally rebuilt artifacts.
+  #   3. Published artifacts are downloaded from the release and hashed with
+  #      the same manifest format; the two manifests are diffed.
+  #   4. A clean diff is the completion evidence: the published artifact is
+  #      byte-for-byte reproducible from the tagged source revision.
+  #
+  # Failure handling:
+  #   - Mismatch => job fails, the diff is uploaded as an artifact, and a
+  #     `repro-build-mismatch` issue is opened (or commented on if one is
+  #     already open) with the tag, commit SHA, and the differing paths.
+  #   - Investigation: check for non-deterministic inputs (timestamps, file
+  #     ordering, absolute paths, network fetches, unpinned deps). If the
+  #     published artifact cannot be reproduced, treat it as a supply-chain
+  #     incident and follow the rollback guidance below.
+  #
+  # Rollback guidance:
+  #   - If a release is found to be non-reproducible or tampered with, mark
+  #     the GitHub Release as a pre-release / delete the affected assets,
+  #     publish a security advisory, and re-cut the release from the verified
+  #     source revision once the build is reproducible again.
+  #   - To disable this gate temporarily (e.g. while fixing the build), set
+  #     the repository variable `REPRO_BUILD_ENFORCE` to `false`; the job then
+  #     reports the diff without failing. Re-enable by setting it back to
+  #     `true` (or removing it) once the mismatch is resolved.
+  # ---------------------------------------------------------------------------
+  reproducible-build:
+    name: Reproducible build — verify release artifacts
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      issues: write
+    env:
+      NODE_VERSION: '20.11.1'
+      NPM_VERSION: '10.2.4'
+      REPRO_BUILD_ENFORCE: ${{ vars.REPRO_BUILD_ENFORCE || 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Pin npm version
+        run: npm install -g npm@${{ env.NPM_VERSION }}
+
+      - name: Derive SOURCE_DATE_EPOCH from tagged commit
+        id: epoch
+        run: echo "value=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
+
+      - name: Rebuild artifacts from tagged source
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.epoch.outputs.value }}
+        run: bash scripts/reproducible-build.sh rebuild
+
+      - name: Download published release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p published
+          gh release download "${GITHUB_REF_NAME}" --dir published --clobber
+
+      - name: Hash published artifacts
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.epoch.outputs.value }}
+        run: bash scripts/reproducible-build.sh hash-published published
+
+      - name: Compare manifests
+        id: compare
+        run: |
+          set +e
+          diff -u published/repro-manifest.json repro-manifest.json > repro-diff.txt
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "match=true" >> "$GITHUB_OUTPUT"
+            echo "Published artifacts match the rebuilt artifacts." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "match=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Reproducible build mismatch for ${GITHUB_REF_NAME}"
+              echo ""
+              echo "Commit: \`${GITHUB_SHA}\`"
+              echo ""
+              echo '```diff'
+              cat repro-diff.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload mismatch diff
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-build-diff-${{ github.ref_name }}
+          path: |
+            repro-diff.txt
+            repro-manifest.json
+            published/repro-manifest.json
+          if-no-files-found: ignore
+
+      - name: Alert on mismatch
+        if: steps.compare.outputs.match == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Reproducible build mismatch: ${GITHUB_REF_NAME}"
+          body=$(printf 'Published artifacts for `%s` do not match a rebuild from commit `%s`.\n\nSee the workflow run: %s/%s/actions/runs/%s\n\nDiff:\n\n```diff\n%s\n```\n' \
+            "${GITHUB_REF_NAME}" "${GITHUB_SHA}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}" "$(cat repro-diff.txt)")
+          existing=$(gh issue list --label repro-build-mismatch --state open --search "${GITHUB_REF_NAME} in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label repro-build-mismatch
+          fi
+
+      - name: Fail on mismatch
+        if: steps.compare.outputs.match == 'false' && env.REPRO_BUILD_ENFORCE == 'true'
+        run: |
+          echo "::error::Reproducible build mismatch for ${GITHUB_REF_NAME}; see repro-diff.txt"
+          exit 1

@@ -1,4 +1,5 @@
 import { config, redactedConfigView } from './infrastructure/config';
+import { brownoutPolicy } from './infrastructure/brownout';
 import { tryCatchAsync } from './infrastructure/result';
 import { logger } from './observability/logger';
 import { ChainlinkSource, RedstoneSource, BandSource, ReflectorSource } from './oracle-sources';
@@ -12,6 +13,8 @@ import { FileArchivalService } from './persistence/file-archival';
 import { RegionPriceReplicator } from './replication/region-price-replicator';
 import { RegionQuarantineManager } from './replication/region-quarantine';
 import { KafkaReplicator } from './replication/kafka-replicator';
+import { FeedReplicationMonitor } from './replication/feed-replication-monitor';
+import { FeedHealthRouter } from './replication/feed-health-router';
 import {
   oracleSourceUptimePercent,
   onChainPriceStalenessSeconds,
@@ -24,6 +27,8 @@ import {
   regionDriftPercent,
   regionPeersConfigured,
   regionPeersReporting,
+  brownoutTierGauge,
+  brownoutShedTotal,
 } from './observability/metrics';
 import { DatabaseClient } from './persistence/database';
 import { BaseSource } from './oracle-sources/base';
@@ -41,6 +46,11 @@ import {
   setAllowedAssets,
   setAllowedSources,
 } from './observability/cardinality';
+import {
+  resolveCellTopology,
+  CellTopologyError,
+  type CellTopology,
+} from './infrastructure/cell-topology';
 
 // In-process counters surfaced as structured log lines; the API /metrics
 // endpoint (prom-client) collects the canonical Prometheus metrics.
@@ -59,10 +69,40 @@ function incAnomaly(asset: string, method: string): void {
   internalCounters.anomalies.set(key, (internalCounters.anomalies.get(key) ?? 0) + 1);
 }
 
+// Issue #736 — cell topology resolved once at module load so that feed
+// partitioning, dependency routing and per-cell health/metrics all agree on
+// the same cell assignment. A duplicate-feed claim is fatal (see main()).
+let cellTopology: CellTopology | null = null;
+let cellTopologyError: CellTopologyError | null = null;
+try {
+  cellTopology = resolveCellTopology(config);
+} catch (err) {
+  if (err instanceof CellTopologyError) {
+    cellTopologyError = err;
+  } else {
+    throw err;
+  }
+}
+
 const aggregator = new PriceAggregator();
 const fileArchival = new FileArchivalService();
 const regionReplicator = new RegionPriceReplicator();
 const regionQuarantine = new RegionQuarantineManager();
+// Issue #739 — per-feed replication lag and missing-sequence tracking.
+const feedReplicationMonitor = new FeedReplicationMonitor({
+  lagWarnMs: config.region.feedLagWarnMs,
+  lagCriticalMs: config.region.feedLagCriticalMs,
+  missingSequenceThreshold: config.region.feedMissingSequenceThreshold,
+  windowSize: config.region.feedLagWindowSize,
+});
+// Issue #740 — consumer routing driven by per-feed freshness and integrity.
+const feedHealthRouter = new FeedHealthRouter({
+  priority: config.region.feedRoutingPriority,
+  lagWarnMs: config.region.feedLagWarnMs,
+  lagCriticalMs: config.region.feedLagCriticalMs,
+  missingSequenceThreshold: config.region.feedMissingSequenceThreshold,
+});
+regionReplicator.setFeedMonitor(feedReplicationMonitor);
 const alertManager = new AlertManager({
   webhookUrl: process.env.ALERT_WEBHOOK_URL ? decryptSecret(process.env.ALERT_WEBHOOK_URL) : undefined,
   slackWebhookUrl: process.env.ALERT_SLACK_WEBHOOK_URL ? decryptSecret(process.env.ALERT_SLACK_WEBHOOK_URL) : undefined,
@@ -88,12 +128,31 @@ let publisher: ContractPublisher | null = null;
 let shutdownInProgress = false;
 
 async function poll(): Promise<AggregatedPrice[]> {
+  // Issue #741 — evaluate brownout tier at the start of every cycle. Price
+  // freshness and publication are never gated; only non-critical work is shed.
+  const tierChange = brownoutPolicy.evaluate();
+  if (tierChange) {
+    brownoutTierGauge.set({ tier: tierChange.tier }, 1);
+    for (const other of ['full', 'reduced', 'minimal'] as const) {
+      if (other !== tierChange.tier) brownoutTierGauge.set({ tier: other }, 0);
+    }
+    logger[tierChange.tier === 'full' ? 'info' : 'warn'](`[Brownout] Tier ${tierChange.previous} -> ${tierChange.tier}`, {
+      reason: tierChange.reason,
+      shed: brownoutPolicy.getShedFeatures(),
+    });
+  }
+
   const sources: BaseSource[] = pollSources;
   const sourcePricesByAsset: Map<string, { source: string; price: string }[]> = new Map();
   const sourceFetchStarted = performance.now();
 
+  // Issue #736 — only poll the feeds assigned to this deployment's cell. A
+  // failure in this cell's dependencies therefore cannot stall feeds owned by
+  // other cells, and vice versa.
+  const cellAssets = cellTopology ? cellTopology.assets : config.assets;
+
   for (const source of sources) {
-    const prices = await source.fetchAll(config.assets);
+    const prices = await source.fetchAll(cellAssets);
     for (const price of prices) {
       // Publish PriceFetchedEvent
       eventBus.publish({
@@ -109,23 +168,28 @@ async function poll(): Promise<AggregatedPrice[]> {
       list.push({ source: price.source, price: price.price.toString() });
       sourcePricesByAsset.set(price.asset, list);
 
-      if (db && db.isInitialized()) {
-        await db.appendHistoricalPrice(
-          price.asset,
-          price.price.toString(),
-          price.decimals,
-          price.source,
-          price.timestamp,
-        );
-      } else {
-        try {
-          appendHistoricalPrice(price.asset, price.price.toString(), price.decimals, price.source, price.timestamp);
-        } catch (err) {
-          logger.error('Failed to append historical price for asset', {
-            asset: price.asset,
-            error: err instanceof Error ? err.message : String(err),
-          });
+      // Issue #741 — history persistence is non-critical; shed under reduced/minimal.
+      if (brownoutPolicy.isFeatureEnabled('history_persistence')) {
+        if (db && db.isInitialized()) {
+          await db.appendHistoricalPrice(
+            price.asset,
+            price.price.toString(),
+            price.decimals,
+            price.source,
+            price.timestamp,
+          );
+        } else {
+          try {
+            appendHistoricalPrice(price.asset, price.price.toString(), price.decimals, price.source, price.timestamp);
+          } catch (err) {
+            logger.error('Failed to append historical price for asset', {
+              asset: price.asset,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
         }
+      } else {
+        brownoutShedTotal.inc({ feature: 'history_persistence' });
       }
     }
 
@@ -195,13 +259,16 @@ async function poll(): Promise<AggregatedPrice[]> {
       logger.warn(`[Anomaly] ${ap.asset} score=${ap.anomaly.score.toFixed(3)} method=${ap.anomaly.method}: ${ap.anomaly.details}`);
     }
 
-    // Check price against alert thresholds
+    // Check price against alert thresholds (critical: always runs)
     await alertManager.checkPrice(ap);
 
-    // Check for disagreement between live oracle sources
+    // Check for disagreement between live oracle sources — non-essential
+    // webhook fan-out is shed under brownout, but the check itself is kept.
     const sourcePrices = sourcePricesByAsset.get(ap.asset);
-    if (sourcePrices) {
+    if (sourcePrices && brownoutPolicy.isFeatureEnabled('source_disagreement_alerts')) {
       await alertManager.checkSourceDisagreement(ap.asset, sourcePrices);
+    } else if (sourcePrices) {
+      brownoutShedTotal.inc({ feature: 'source_disagreement_alerts' });
     }
   }
 
@@ -219,7 +286,7 @@ async function poll(): Promise<AggregatedPrice[]> {
   if (drift.maxDriftPercent > config.region.driftAlertPercent) {
     logger.warn('Cross-region price drift exceeds threshold', drift);
   }
-  const quarantine = regionQuarantine.evaluate(drift);
+  const quarantine = regionQuarantine.evaluate(drift, feedReplicationMonitor.getFeedHealthSnapshot());
   if (quarantine.transition) {
     logger[quarantine.quarantined ? 'error' : 'info'](`Region ${config.region.id} ${quarantine.transition}`, {
       quarantine,
@@ -241,6 +308,28 @@ async function poll(): Promise<AggregatedPrice[]> {
       !quarantine.quarantined,
       quarantine.quarantined ? quarantine.reason ?? 'cross-region drift' : 'quarantine cleared',
     );
+  }
+
+  // Issue #739/#740 — evaluate per-feed health and route consumers accordingly.
+  const feedHealth = feedReplicationMonitor.evaluate();
+  const routingDecision = feedHealthRouter.route(feedHealth);
+  if (routingDecision.failover) {
+    logger.warn('Feed health routing triggered failover', {
+      region: config.region.id,
+      decision: routingDecision,
+    });
+    await alertManager.reportFeedHealthFailover({
+      region: config.region.id,
+      decision: routingDecision,
+      feeds: feedHealth,
+    });
+  }
+  for (const feed of feedHealth) {
+    if (feed.status === 'critical') {
+      logger.error('Feed replication lag critical', { region: config.region.id, feed });
+    } else if (feed.status === 'degraded') {
+      logger.warn('Feed replication lag degraded', { region: config.region.id, feed });
+    }
   }
 
   const unhealthy = sources.filter((s) => !s.health.healthy);
@@ -268,7 +357,7 @@ async function poll(): Promise<AggregatedPrice[]> {
     // Issue #382 — on-chain price staleness heartbeat: detect when the
     // contract itself stops receiving submissions, independent of whether
     // this aggregator process looks healthy.
-    for (const asset of config.assets) {
+    for (const asset of cellTopology ? cellTopology.assets : config.assets) {
       const onChainTimestamp = await publisher.getOnChainTimestamp(asset);
       if (onChainTimestamp === null) continue;
 
@@ -290,7 +379,12 @@ async function poll(): Promise<AggregatedPrice[]> {
   lastAggregated = aggregated;
 
   for (const source of sources) {
-    appendUptimeSnapshot(source.name, source.health);
+    // Issue #741 — uptime history snapshots are non-critical background work.
+    if (brownoutPolicy.isFeatureEnabled('uptime_history')) {
+      appendUptimeSnapshot(source.name, source.health);
+    } else {
+      brownoutShedTotal.inc({ feature: 'uptime_history' });
+    }
     oracleSourceUptimePercent.set({ source: source.name }, source.health.uptimePercent);
   }
 
@@ -299,19 +393,38 @@ async function poll(): Promise<AggregatedPrice[]> {
 
 async function main(): Promise<void> {
   logger.info('Stellar Price Oracle Aggregator starting...');
+
+  // Issue #736 — refuse to start if two cells claim the same feed. Overlapping
+  // ownership would let one cell's failure bleed into another's feeds.
+  if (cellTopologyError || !cellTopology) {
+    logger.error('Cell topology is invalid; refusing to start', {
+      error: cellTopologyError?.message ?? 'cell topology not resolved',
+      duplicates: cellTopologyError?.duplicates ?? [],
+    });
+    process.exit(1);
+  }
+
+  logger.info('Cell topology resolved', {
+    cellId: cellTopology.cellId,
+    assets: cellTopology.assets,
+    dependencies: cellTopology.dependencies,
+    cells: cellTopology.cells.map((c) => ({ cellId: c.cellId, assets: c.assets })),
+  });
+
   logger.info(`Polling interval: ${config.pollingIntervalMs}ms`);
-  logger.info(`Watched assets: ${config.assets.join(', ')}`);
+  logger.info(`Watched assets (cell ${cellTopology.cellId}): ${cellTopology.assets.join(', ')}`);
   logger.info(
     'Resolved configuration (redacted)',
     redactedConfigView(config) as Record<string, unknown>,
   );
 
   // Enforce Prometheus cardinality budget for configured sources and assets (#553)
-  enforceStartupCardinalityBudget(['chainlink', 'redstone', 'band', 'reflector'], config.assets);
-  setAllowedAssets(config.assets);
+  // Issue #736 — scope the budget to this cell's feeds only.
+  enforceStartupCardinalityBudget(['chainlink', 'redstone', 'band', 'reflector'], cellTopology.assets);
+  setAllowedAssets(cellTopology.assets);
   setAllowedSources(['chainlink', 'redstone', 'band', 'reflector']);
 
-  for (const asset of config.assets) {
+  for (const asset of cellTopology.assets) {
     anomalyDetector.applyRuntimeConfig(asset);
     const summary = anomalyDetector.getConfigSummary(asset);
     logger.info(`[AnomalyConfig] ${asset}: zscore=${summary.config.zScoreThreshold}, deviation=${summary.config.movingAverageDeviationPercent}%, volatility=${summary.config.volatilityMultiplier}, false_positive_rate=${summary.falsePositiveRate.toFixed(3)}`);
@@ -365,11 +478,13 @@ async function main(): Promise<void> {
   const wss = new WebSocketServer(config.port);
   wss.start();
 
+  // Issue #736 — route each source through this cell's dependency endpoints so
+  // a dependency outage is confined to the cell that depends on it.
   const persistentSources = {
-    chainlink: new ChainlinkSource(),
-    redstone: new RedstoneSource(),
-    band: new BandSource(),
-    reflector: new ReflectorSource(),
+    chainlink: new ChainlinkSource({ endpoint: cellTopology.dependencies.chainlink }),
+    redstone: new RedstoneSource({ endpoint: cellTopology.dependencies.redstone }),
+    band: new BandSource({ endpoint: cellTopology.dependencies.band }),
+    reflector: new ReflectorSource({ endpoint: cellTopology.dependencies.reflector }),
   };
   pollSources = Object.values(persistentSources);
 
@@ -394,12 +509,20 @@ async function main(): Promise<void> {
     lastAggregated,
     replicatedPrices: regionReplicator.getLatestPrices(),
     region: regionQuarantine.getStatus(),
+    // Issue #736 — per-cell health so operators can see which cell owns which
+    // feeds and whether this cell's dependencies are degraded.
+    cell: {
+      cellId: cellTopology.cellId,
+      assets: cellTopology.assets,
+      dependencies: cellTopology.dependencies,
+    },
     circuitBreakerMetrics: aggregator.getCircuitBreakerMetrics(),
     circuitBreakerStates: sourceCircuitBreaker.getAllStatuses(),
     uptime: process.uptime(),
     startupTimeMs,
     onChainHeartbeat,
     ports: resolvedPorts,
+    brownout: brownoutPolicy.getStatus(),
   }));
   healthServer.start();
   logger.info(
@@ -408,6 +531,11 @@ async function main(): Promise<void> {
   );
 
   regionPeersConfigured.set({ region: config.region.id }, config.region.peers.length);
+  // Issue #736 — per-cell metrics: feed ownership and dependency endpoints.
+  cellFeedsAssigned.set({ cell: cellTopology.cellId }, cellTopology.assets.length);
+  for (const [source, endpoint] of Object.entries(cellTopology.dependencies)) {
+    cellDependencyEndpointInfo.set({ cell: cellTopology.cellId, source }, endpoint);
+  }
   if (config.region.activeActive && config.kafka.brokers.length > 0) {
     replicationPublisher = new KafkaReplicator(
       {
@@ -515,7 +643,13 @@ async function main(): Promise<void> {
   // Schedule first self-scheduling recurring tick
   pollTimeout = setTimeout(executeCycle, config.pollingIntervalMs);
 
-  fileArchival.start();
+  // Issue #741 — file archival is a non-critical background job; it is started
+  // only when the current tier permits it and re-evaluated on tier changes.
+  if (brownoutPolicy.isFeatureEnabled('file_archival')) {
+    fileArchival.start();
+  } else {
+    brownoutShedTotal.inc({ feature: 'file_archival' });
+  }
 
   // Issue #579 — one idempotent handler covers SIGTERM and SIGINT.
   const shutdownHooks: ShutdownHooks = {
@@ -549,6 +683,8 @@ async function main(): Promise<void> {
     closeServers: async () => {
       // #583 — flush persisted daily call counters so budgets survive restarts.
       flushDailyCounts();
+      // #739 — flush final per-feed lag metrics before listeners close.
+      feedReplicationMonitor.flushMetrics();
       wss.stop();
       healthServer.stop();
     },
@@ -563,6 +699,16 @@ async function main(): Promise<void> {
     forceExitMs: config.shutdown.forceExitMs,
   });
   shutdownCoordinator.register(['SIGTERM', 'SIGINT']);
+
+  // Issue #741 — react to tier transitions: start/stop non-critical background
+  // jobs as the tier changes. Price polling and publication are never touched.
+  brownoutPolicy.onTierChange((change) => {
+    if (change.tier === 'full') {
+      fileArchival.start();
+    } else {
+      fileArchival.stop();
+    }
+  });
 }
 
 if (require.main === module) {

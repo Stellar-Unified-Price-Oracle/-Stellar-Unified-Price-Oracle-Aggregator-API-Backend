@@ -61,4 +61,10 @@ pub enum OracleError {
     AdminTransferWindowElapsed = 44,
     // Issue #564 — Multi-sig proposal expiry
     ProposalExpired = 45,
+    // Issue #724 — consumer-verifiable price evidence
+    EvidenceVersionMismatch = 46,
+    EvidenceMismatch = 47,
+    EvidenceMissing = 48,
+    // Issue #726 — stable contract read snapshot
+    SnapshotUnavailable = 49,
 }

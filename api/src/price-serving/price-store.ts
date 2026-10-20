@@ -8,6 +8,12 @@ import { AppError } from '../infrastructure/app-error';
 import { ErrorCode } from '../infrastructure/catalog';
 import { logger } from '../observability/logger';
 import { historyFileReadFailuresTotal } from '../observability/metrics';
+import {
+  CONSISTENCY_OBJECTIVES,
+  evaluateObjective,
+  type ConsistencyObjectiveName,
+  type ObjectiveEvaluation,
+} from '../governance/consistency-objectives';
 
 // HISTORY_DIR lets the integration-test orchestrator point both services at the
 // same directory without a filesystem symlink. Falls back to the default
@@ -21,6 +27,42 @@ let db: DatabaseClient | null = null;
 export const SANDBOX_ASSETS = ['XLM', 'USDC', 'BTC', 'ETH', 'USDT'] as const;
 
 export type HistoryFailureReason = 'unreadable' | 'undecryptable' | 'malformed';
+
+/**
+ * Issue #746 — consumer-visible consistency metadata attached to every
+ * price-serving payload. `objective` names the data-product objective that
+ * governs the read, `maxStalenessSeconds` is its freshness bound and
+ * `observedAgeSeconds` is how old the freshest returned record is.
+ */
+export interface ConsistencyMetadata {
+  objective: ConsistencyObjectiveName;
+  maxStalenessSeconds: number;
+  observedAgeSeconds: number | null;
+  withinObjective: boolean;
+  evaluatedAt: number;
+}
+
+function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+function toConsistencyMetadata(evaluation: ObjectiveEvaluation): ConsistencyMetadata {
+  return {
+    objective: evaluation.objective,
+    maxStalenessSeconds: evaluation.maxStalenessSeconds,
+    observedAgeSeconds: evaluation.observedAgeSeconds,
+    withinObjective: evaluation.withinObjective,
+    evaluatedAt: evaluation.evaluatedAt,
+  };
+}
+
+/** Build metadata for a read whose freshest record is `latestTimestamp`. */
+export function priceConsistencyMetadata(
+  objective: ConsistencyObjectiveName,
+  latestTimestamp: number | null | undefined,
+): ConsistencyMetadata {
+  return toConsistencyMetadata(evaluateObjective(objective, latestTimestamp, nowSeconds()));
+}
 
 function describeCause(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -86,6 +128,23 @@ export function setDatabase(database: DatabaseClient | null): void {
   db = database;
 }
 
+/**
+ * Issue #746 — expose the objective registry so catalog and analytics reads
+ * (and their consumers) can attach the same consumer-visible semantics.
+ */
+export function consistencyObjectiveFor(
+  name: ConsistencyObjectiveName,
+): ConsistencyMetadata {
+  const objective = CONSISTENCY_OBJECTIVES[name];
+  return {
+    objective: objective.name,
+    maxStalenessSeconds: objective.maxStalenessSeconds,
+    observedAgeSeconds: null,
+    withinObjective: true,
+    evaluatedAt: nowSeconds(),
+  };
+}
+
 export async function readAssetPrices(): Promise<ApiPrice[]> {
   if (db && db.isInitialized()) {
     try {
@@ -96,6 +155,7 @@ export async function readAssetPrices(): Promise<ApiPrice[]> {
         decimals: p.decimals,
         source: p.source,
         timestamp: p.timestamp,
+        consistency: priceConsistencyMetadata('live-prices', p.timestamp),
       }));
     } catch (err) {
       console.error('Failed to read from database, falling back to files', err);
@@ -120,6 +180,7 @@ export async function readAssetPrices(): Promise<ApiPrice[]> {
           decimals: latest.decimals as number,
           source: latest.source as string,
           timestamp: latest.timestamp as number,
+          consistency: priceConsistencyMetadata('live-prices', latest.timestamp as number),
         });
       }
     } catch (err) {
@@ -148,12 +209,12 @@ export async function readPriceHistory(
   if (db && db.isInitialized()) {
     try {
       const history = await db.getHistoricalPrices(asset, from, to, limit);
-      return history.map((h: PriceHistory) => ({
+      return withHistoryConsistency(history.map((h: PriceHistory) => ({
         price: h.price,
         decimals: h.decimals,
         source: h.source,
         timestamp: h.timestamp,
-      }));
+      })));
     } catch (err) {
       console.error('Failed to read from database, falling back to files', err);
     }
@@ -166,10 +227,24 @@ export async function readPriceHistory(
     let history = readHistoryFile(filePath) as HistoricalPriceEntry[];
     if (from) history = history.filter((h) => h.timestamp >= from);
     if (to) history = history.filter((h) => h.timestamp <= to);
-    return history.slice(-limit);
+    return withHistoryConsistency(history.slice(-limit));
   } catch (err) {
     throw toHistoryReadError(filePath, asset, err);
   }
+}
+
+/**
+ * Attach the `history` data-product objective to a batch of history entries.
+ * The objective is evaluated against the freshest entry in the batch so a
+ * consumer can tell whether the returned window satisfies the freshness bound.
+ */
+function withHistoryConsistency(entries: HistoricalPriceEntry[]): HistoricalPriceEntry[] {
+  const latest = entries.reduce<number | null>(
+    (acc, entry) => (acc === null || entry.timestamp > acc ? entry.timestamp : acc),
+    null,
+  );
+  const consistency = priceConsistencyMetadata('history', latest);
+  return entries.map((entry) => ({ ...entry, consistency }));
 }
 
 /**
@@ -198,12 +273,12 @@ export async function readPriceHistoryCursor(
     try {
       const from = afterTs !== undefined ? afterTs + 1 : undefined;
       const history = await db.getHistoricalPrices(asset, from, to, limit);
-      return history.map((h: PriceHistory) => ({
+      return withHistoryConsistency(history.map((h: PriceHistory) => ({
         price: h.price,
         decimals: h.decimals,
         source: h.source,
         timestamp: h.timestamp,
-      }));
+      })));
     } catch (err) {
       console.error('Failed to read from database for cursor query, falling back to files', err);
     }
@@ -217,7 +292,7 @@ export async function readPriceHistoryCursor(
     history.sort((a, b) => a.timestamp - b.timestamp);
     if (afterTs !== undefined) history = history.filter((h) => h.timestamp > afterTs!);
     if (to !== undefined) history = history.filter((h) => h.timestamp <= to);
-    return history.slice(0, limit + 1);
+    return withHistoryConsistency(history.slice(0, limit + 1));
   } catch (err) {
     throw toHistoryReadError(filePath, asset, err);
   }

@@ -8,6 +8,14 @@ vi.mock('../src/infrastructure/database', () => ({
   },
 }));
 
+import {
+  decodeContractEvent,
+  EventVersionError,
+  EventDecodeError,
+  SUPPORTED_EVENT_VERSIONS,
+  type DecodedContractEvent,
+} from '../src/services/soroban-event-decoder';
+
 interface ContractEvent {
   id?: number;
   eventType: string;
@@ -322,5 +330,190 @@ describe('Contract Event Indexing Service', () => {
 
     expect(events).toHaveLength(2);
     expect(events.map((e) => e.eventType)).toEqual(['PriceSubmitted', 'SourceSlashed']);
+  });
+});
+
+describe('Contract Event Decoding (typed decoder)', () => {
+  const contractId = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
+
+  const priceSubmittedPayload = {
+    version: 1,
+    topics: ['PriceSubmitted', 'chainlink', 'XLM'],
+    value: {
+      source: 'chainlink',
+      asset: 'XLM',
+      price: '120000000',
+      decimals: 7,
+      timestamp: 1690000000,
+    },
+  };
+
+  it('decodes a known event version into a typed record', () => {
+    const decoded: DecodedContractEvent = decodeContractEvent({
+      contractId,
+      txHash: 'tx1',
+      ledger: 45000000,
+      ledgerClosedAt: 1690000000,
+      payload: priceSubmittedPayload,
+    });
+
+    expect(decoded.eventType).toBe('PriceSubmitted');
+    expect(decoded.version).toBe(1);
+    expect(decoded.contractId).toBe(contractId);
+    expect(decoded.data).toEqual({
+      source: 'chainlink',
+      asset: 'XLM',
+      price: '120000000',
+      decimals: 7,
+      timestamp: 1690000000,
+    });
+  });
+
+  it('decodes every supported event version', () => {
+    for (const version of SUPPORTED_EVENT_VERSIONS) {
+      const decoded = decodeContractEvent({
+        contractId,
+        txHash: `tx-v${version}`,
+        ledger: 45000000,
+        ledgerClosedAt: 1690000000,
+        payload: { ...priceSubmittedPayload, version },
+      });
+      expect(decoded.version).toBe(version);
+    }
+  });
+
+  it('returns a compatibility error for an unknown event version', () => {
+    expect(() =>
+      decodeContractEvent({
+        contractId,
+        txHash: 'tx-future',
+        ledger: 45000000,
+        ledgerClosedAt: 1690000000,
+        payload: { ...priceSubmittedPayload, version: 999 },
+      }),
+    ).toThrow(EventVersionError);
+
+    try {
+      decodeContractEvent({
+        contractId,
+        txHash: 'tx-future',
+        ledger: 45000000,
+        ledgerClosedAt: 1690000000,
+        payload: { ...priceSubmittedPayload, version: 999 },
+      });
+    } catch (err) {
+      expect(err).toBeInstanceOf(EventVersionError);
+      expect((err as EventVersionError).code).toBe('UNSUPPORTED_EVENT_VERSION');
+      expect((err as EventVersionError).receivedVersion).toBe(999);
+      expect((err as EventVersionError).supportedVersions).toEqual(SUPPORTED_EVENT_VERSIONS);
+    }
+  });
+
+  it('rejects a payload missing the version field', () => {
+    const { version: _omit, ...withoutVersion } = priceSubmittedPayload;
+    expect(() =>
+      decodeContractEvent({
+        contractId,
+        txHash: 'tx-no-version',
+        ledger: 45000000,
+        ledgerClosedAt: 1690000000,
+        payload: withoutVersion as unknown as typeof priceSubmittedPayload,
+      }),
+    ).toThrow(EventDecodeError);
+  });
+
+  it('rejects malformed payloads', () => {
+    const malformedPayloads: unknown[] = [
+      null,
+      undefined,
+      'not-an-object',
+      42,
+      { version: 1 },
+      { version: 1, topics: [], value: null },
+      { version: 1, topics: ['PriceSubmitted'], value: { source: 'chainlink' } },
+      { version: 1, topics: ['PriceSubmitted', 'chainlink', 'XLM'], value: { ...priceSubmittedPayload.value, decimals: 'seven' } },
+    ];
+
+    for (const payload of malformedPayloads) {
+      expect(() =>
+        decodeContractEvent({
+          contractId,
+          txHash: 'tx-malformed',
+          ledger: 45000000,
+          ledgerClosedAt: 1690000000,
+          payload: payload as never,
+        }),
+      ).toThrow(EventDecodeError);
+    }
+  });
+
+  it('rejects an unknown event type', () => {
+    expect(() =>
+      decodeContractEvent({
+        contractId,
+        txHash: 'tx-unknown-type',
+        ledger: 45000000,
+        ledgerClosedAt: 1690000000,
+        payload: { version: 1, topics: ['UnknownEvent'], value: {} },
+      }),
+    ).toThrow(EventDecodeError);
+  });
+
+  it('route returns typed records for indexed events', async () => {
+    const rawEvents = [
+      {
+        contractId,
+        txHash: 'tx1',
+        ledger: 45000000,
+        ledgerClosedAt: 1690000000,
+        payload: priceSubmittedPayload,
+      },
+      {
+        contractId,
+        txHash: 'tx2',
+        ledger: 45000001,
+        ledgerClosedAt: 1690000010,
+        payload: {
+          version: 1,
+          topics: ['SourceSlashed', 'band'],
+          value: { source: 'band', amount: '500000000', reason: 'price_deviation_exceeds_threshold' },
+        },
+      },
+    ];
+
+    const records = rawEvents.map((raw) => decodeContractEvent(raw));
+
+    expect(records).toHaveLength(2);
+    expect(records[0]).toMatchObject({
+      eventType: 'PriceSubmitted',
+      version: 1,
+      contractId,
+      txHash: 'tx1',
+      ledger: 45000000,
+    });
+    expect(records[1]).toMatchObject({
+      eventType: 'SourceSlashed',
+      version: 1,
+      contractId,
+      txHash: 'tx2',
+      ledger: 45000001,
+    });
+    expect(records[1].data).toEqual({
+      source: 'band',
+      amount: '500000000',
+      reason: 'price_deviation_exceeds_threshold',
+    });
+  });
+
+  it('route surfaces a compatibility error for unsupported versions', () => {
+    const rawEvent = {
+      contractId,
+      txHash: 'tx-future',
+      ledger: 45000002,
+      ledgerClosedAt: 1690000020,
+      payload: { ...priceSubmittedPayload, version: 999 },
+    };
+
+    expect(() => decodeContractEvent(rawEvent)).toThrow(EventVersionError);
   });
 });

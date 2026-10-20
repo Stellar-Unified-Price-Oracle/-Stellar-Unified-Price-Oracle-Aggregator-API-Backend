@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, String, Vec};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, String, Symbol, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,6 +46,95 @@ pub struct BatchPriceEntry {
 pub struct MerkleProof {
     pub leaf_index: u32,
     pub siblings: Vec<Bytes>,
+}
+
+// Issue #726 — stable contract read snapshot interface.
+//
+// A `PriceSnapshot` is a mutually consistent view of a published price and
+// every piece of metadata a consumer needs to reason about it. All fields are
+// captured atomically from the same ledger state, so a consumer never observes
+// a price paired with a timestamp or policy version from a different write.
+//
+// Trust assumptions (see docs/PRICE_EVIDENCE.md):
+//   * `submission_timestamp` is the ledger timestamp at which the source
+//     submitted the price; it is set by the contract, not the caller.
+//   * `observation_timestamp` is the ledger timestamp at which this snapshot
+//     was produced. Consumers should bound `observation_timestamp -
+//     submission_timestamp` by their own staleness policy.
+//   * `policy_version` identifies the aggregation/trust policy in force when
+//     the snapshot was produced. A consumer that does not recognise the
+//     version MUST treat the snapshot as unverifiable.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceSnapshot {
+    pub asset: String,
+    pub price: i128,
+    pub decimals: u32,
+    pub price_usd: Option<i128>,
+    /// Ledger timestamp of the underlying price submission.
+    pub submission_timestamp: u64,
+    /// Ledger timestamp at which this snapshot was produced.
+    pub observation_timestamp: u64,
+    /// Aggregation/trust policy version in force for this snapshot.
+    pub policy_version: u32,
+    /// Version of the snapshot layout itself (see `SNAPSHOT_VERSION`).
+    pub snapshot_version: u32,
+    /// Evidence binding the price to its inputs; `None` when the contract is
+    /// not configured to emit evidence for this asset.
+    pub evidence: Option<PriceEvidence>,
+}
+
+/// Version of the `PriceSnapshot` layout. Bumped whenever fields are added,
+/// removed, or their meaning changes. Consumers MUST reject snapshots whose
+/// `snapshot_version` they do not understand.
+pub const SNAPSHOT_VERSION: u32 = 1;
+
+/// Version of the `PriceEvidence` layout.
+pub const EVIDENCE_VERSION: u32 = 1;
+
+/// Issue #724 — consumer-verifiable evidence for a published price.
+///
+/// The evidence is a self-describing record of *how* a price was produced so a
+/// consumer can independently check it against the trust assumptions it
+/// accepts. It does not itself prove correctness; it commits to the inputs and
+/// the policy so the consumer can decide whether to trust the result.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceEvidence {
+    /// Version of this evidence layout (see `EVIDENCE_VERSION`).
+    pub evidence_version: u32,
+    /// Policy version the evidence was produced under. Must match the
+    /// snapshot's `policy_version` or the evidence is rejected.
+    pub policy_version: u32,
+    /// The set of sources whose submissions contributed to the price.
+    pub sources: Vec<Address>,
+    /// Number of source submissions aggregated (may exceed `sources.len()`
+    /// when a single source submitted more than once in the window).
+    pub num_submissions: u32,
+    /// Aggregation method applied to the submissions.
+    pub aggregation: AggregationMethod,
+    /// Merkle root committing to the per-submission leaves, when the price was
+    /// derived from a committed batch. `None` for direct submissions.
+    pub merkle_root: Option<BytesN<32>>,
+    /// Batch nonce the `merkle_root` belongs to, when applicable.
+    pub batch_nonce: Option<u64>,
+    /// Hash of the attestation record (e.g. signed source set) backing the
+    /// evidence, when the deployment uses attestations.
+    pub attestation_hash: Option<BytesN<32>>,
+}
+
+/// How multiple source submissions were combined into the published price.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AggregationMethod {
+    /// A single source submission, used verbatim.
+    Single,
+    /// Arithmetic median of the submissions.
+    Median,
+    /// Arithmetic mean of the submissions.
+    Mean,
+    /// Median after discarding the lowest and highest submissions.
+    TrimmedMedian,
 }
 
 // Issue #70 — source reputation tracking
@@ -103,6 +192,18 @@ pub enum ProposalAction {
     SetStakeTreasury(Address),
     // Issue #569 — Governed decimals change
     UpdateAssetDecimals(String, u32),
+    // Issue #725 — Feed catalog version commitment
+    CommitFeedCatalog(u32, BytesN<32>),
+}
+
+// Issue #725 — On-chain feed catalog commitment
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeedCatalogCommitment {
+    pub version: u32,
+    pub catalog_hash: BytesN<32>,
+    pub updated_at: u64,
+    pub publisher: Address,
 }
 
 // ── Multi-sig types ──────────────────────────────────────────────────────────
@@ -239,4 +340,7 @@ pub enum DataKey {
     CanaryTrafficShareBps,
     // Issue #565 — Two-step admin handover
     PendingAdmin,
+    // Issue #731 — selective pause of individual feeds and write paths
+    FeedPaused(String),
+    WritePathPaused(Symbol),
 }

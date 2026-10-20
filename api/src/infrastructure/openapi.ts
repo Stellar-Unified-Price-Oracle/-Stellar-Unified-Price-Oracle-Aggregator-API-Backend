@@ -31,6 +31,7 @@ const options: swaggerJsdoc.Options = {
       { name: 'Metrics', description: 'Prometheus monitoring' },
       { name: 'Usage', description: 'API usage analytics, reports, and anomaly detection' },
       { name: 'Webhooks', description: 'Webhook registration and delivery for price updates' },
+      { name: 'Consumer', description: 'Consumer data products: latency/freshness explorer, usage export, delivery objectives, provenance' },
       { name: 'Compliance', description: 'Audit, data lifecycle, and compliance reporting' },
     ],
     paths: {
@@ -131,7 +132,99 @@ const options: swaggerJsdoc.Options = {
           },
         },
       },
-      '/api/v1/history/{asset}': {
+      '/api/v1/prices/{asset}/provenance': {
+        get: {
+          operationId: 'getPriceProvenance',
+          tags: ['Prices'],
+          summary: 'Get price provenance: catalog version, aggregation policy, source set, observation-time semantics',
+          parameters: [
+            {
+              in: 'path',
+              name: 'asset',
+              required: true,
+              schema: { type: 'string' },
+              description: 'Asset symbol (XLM, BTC, ETH, USDC, USDT)',
+            },
+          ],
+          responses: {
+            200: { description: 'Provenance for the requested asset price' },
+            404: { description: 'Asset not found' },
+          },
+        },
+      },
+      '/api/v1/consumer/latency-freshness': {
+        get: {
+          operationId: 'getLatencyFreshness',
+          tags: ['Consumer'],
+          summary: 'Feed latency and freshness by asset and region, with methodology and sample windows',
+          parameters: [
+            { in: 'query', name: 'asset', schema: { type: 'string' }, description: 'Filter by asset symbol' },
+            { in: 'query', name: 'region', schema: { type: 'string' }, description: 'Filter by consumer region' },
+            { in: 'query', name: 'from', schema: { type: 'number' }, description: 'Window start, Unix seconds' },
+            { in: 'query', name: 'to', schema: { type: 'number' }, description: 'Window end, Unix seconds' },
+            { in: 'query', name: 'window', schema: { type: 'string', enum: ['1h', '24h', '7d', '30d'], default: '24h' }, description: 'Default sample window when from/to are omitted' },
+          ],
+          responses: {
+            200: { description: 'Latency and freshness stats grouped by feed and region' },
+            400: { description: 'Invalid query parameters' },
+          },
+        },
+      },
+      '/api/v1/consumer/usage/export': {
+        get: {
+          operationId: 'exportUsage',
+          tags: ['Consumer'],
+          summary: 'Privacy-safe machine-readable export of the caller's own request usage (no cross-tenant data)',
+          parameters: [
+            { in: 'query', name: 'from', schema: { type: 'number' }, description: 'Window start, Unix seconds' },
+            { in: 'query', name: 'to', schema: { type: 'number' }, description: 'Window end, Unix seconds' },
+            { in: 'query', name: 'format', schema: { type: 'string', enum: ['json', 'csv'], default: 'json' }, description: 'Export format' },
+          ],
+          responses: {
+            200: { description: 'Tenant-scoped usage export in stable billing dimensions' },
+            401: { description: 'API key required' },
+          },
+        },
+      },
+      '/api/v1/consumer/delivery-objectives': {
+        get: {
+          operationId: 'getDeliveryObjectives',
+          tags: ['Consumer'],
+          summary: 'Attainment of contracted consumer delivery objectives, with exclusions and incident windows',
+          responses: {
+            200: { description: 'Objective attainment with auditable calculation notes' },
+            401: { description: 'API key required' },
+          },
+        },
+      },
+      '/api/v2/consumer/latency-freshness': {
+        get: {
+          operationId: 'getLatencyFreshnessV2',
+          tags: ['Consumer'],
+          summary: 'Feed latency and freshness by asset and region (v2 envelope)',
+          parameters: [
+            { in: 'query', name: 'asset', schema: { type: 'string' } },
+            { in: 'query', name: 'region', schema: { type: 'string' } },
+          ],
+          responses: { 200: { description: 'Latency and freshness stats' } },
+        },
+      },
+      '/api/v2/consumer/usage/export': {
+        get: {
+          operationId: 'exportUsageV2',
+          tags: ['Consumer'],
+          summary: 'Privacy-safe usage export of the caller's own requests (v2 envelope)',
+          responses: { 200: { description: 'Tenant-scoped usage export' }, 401: { description: 'API key required' } },
+        },
+      },
+      '/api/v2/consumer/delivery-objectives': {
+        get: {
+          operationId: 'getDeliveryObjectivesV2',
+          tags: ['Consumer'],
+          summary: 'Contracted delivery objective attainment (v2 envelope)',
+          responses: { 200: { description: 'Objective attainment' }, 401: { description: 'API key required' } },
+        },
+      },
         get: {
           operationId: 'getPriceHistory',
           tags: ['Prices'],

@@ -88,6 +88,59 @@ class IdempotentConsumer {
   }
 }
 
+interface SorobanEventRecord {
+  contractId: string;
+  topics: string[];
+  value: unknown;
+  ledger: number;
+  txHash: string;
+}
+
+interface DecodedEvent<T> {
+  type: string;
+  version: number;
+  record: T;
+}
+
+class SorobanEventDecoder {
+  static readonly SUPPORTED_VERSIONS = [1, 2];
+
+  private schemas: Map<string, Map<number, (raw: SorobanEventRecord) => Record<string, unknown>>> = new Map();
+
+  registerSchema(
+    eventType: string,
+    version: number,
+    decode: (raw: SorobanEventRecord) => Record<string, unknown>,
+  ): void {
+    if (!this.schemas.has(eventType)) {
+      this.schemas.set(eventType, new Map());
+    }
+    this.schemas.get(eventType)!.set(version, decode);
+  }
+
+  decode<T = Record<string, unknown>>(
+    eventType: string,
+    version: number,
+    raw: SorobanEventRecord,
+  ): DecodedEvent<T> {
+    if (!SorobanEventDecoder.SUPPORTED_VERSIONS.includes(version)) {
+      throw new Error(`Unsupported event version ${version} for ${eventType}`);
+    }
+
+    const schema = this.schemas.get(eventType)?.get(version);
+    if (!schema) {
+      throw new Error(`No schema registered for ${eventType} v${version}`);
+    }
+
+    if (!raw || typeof raw !== 'object' || !Array.isArray(raw.topics) || raw.value === undefined) {
+      throw new Error(`Malformed payload for ${eventType} v${version}`);
+    }
+
+    const record = schema(raw);
+    return { type: eventType, version, record: record as T };
+  }
+}
+
 class EventLog {
   private events: DomainEvent[] = [];
   private cursor = 0;
@@ -474,6 +527,74 @@ describe('Durable Domain Events', () => {
       const retryable = outbox.getRetryableEvents();
       expect(retryable).toContain(event2);
       expect(retryable).not.toContain(event1);
+    });
+  });
+
+  describe('Soroban Event Decoding Integration', () => {
+    let decoder: SorobanEventDecoder;
+
+    const rawEvent = (overrides: Partial<SorobanEventRecord> = {}): SorobanEventRecord => ({
+      contractId: 'CABC123',
+      topics: ['transfer'],
+      value: { amount: 100 },
+      ledger: 42,
+      txHash: 'abc123',
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      decoder = new SorobanEventDecoder();
+      decoder.registerSchema('transfer', 1, (raw) => ({
+        amount: (raw.value as { amount: number }).amount,
+      }));
+      decoder.registerSchema('transfer', 2, (raw) => ({
+        amount: (raw.value as { amount: number }).amount,
+        memo: (raw.value as { memo?: string }).memo ?? null,
+      }));
+    });
+
+    it('should decode known versions into typed records', () => {
+      const decoded = decoder.decode<{ amount: number }>('transfer', 1, rawEvent());
+      expect(decoded.type).toBe('transfer');
+      expect(decoded.version).toBe(1);
+      expect(decoded.record.amount).toBe(100);
+    });
+
+    it('should decode forward-compatible additions for newer known versions', () => {
+      const decoded = decoder.decode<{ amount: number; memo: string | null }>(
+        'transfer',
+        2,
+        rawEvent({ value: { amount: 250, memo: 'hello' } }),
+      );
+      expect(decoded.version).toBe(2);
+      expect(decoded.record.amount).toBe(250);
+      expect(decoded.record.memo).toBe('hello');
+    });
+
+    it('should default optional forward-compatible fields when absent', () => {
+      const decoded = decoder.decode<{ amount: number; memo: string | null }>(
+        'transfer',
+        2,
+        rawEvent({ value: { amount: 5 } }),
+      );
+      expect(decoded.record.memo).toBeNull();
+    });
+
+    it('should reject unknown event versions', () => {
+      expect(() => decoder.decode('transfer', 99, rawEvent())).toThrow(/Unsupported event version/);
+    });
+
+    it('should reject versions with no registered schema', () => {
+      expect(() => decoder.decode('unknown-event', 1, rawEvent())).toThrow(/No schema registered/);
+    });
+
+    it('should reject malformed payloads', () => {
+      expect(() =>
+        decoder.decode('transfer', 1, rawEvent({ topics: undefined as unknown as string[] })),
+      ).toThrow(/Malformed payload/);
+      expect(() =>
+        decoder.decode('transfer', 1, rawEvent({ value: undefined })),
+      ).toThrow(/Malformed payload/);
     });
   });
 

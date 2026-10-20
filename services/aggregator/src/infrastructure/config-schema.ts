@@ -23,6 +23,7 @@ export class ConfigValidationError extends Error {
 }
 
 const LOG_LEVELS = ['error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly'] as const;
+const BROWNOUT_TIERS = ['none', 'tier1', 'tier2', 'tier3'] as const;
 const ASSET_SYMBOL = /^[A-Z0-9][A-Z0-9:_-]{0,31}$/;
 const REGION_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const HEX_KEY_64 = /^[0-9a-f]{64}$/i;
@@ -126,6 +127,44 @@ const commaListSchema = (variable: string, validate: (entry: string) => boolean,
 
 const DEFAULT_WATCHED_ASSETS = 'XLM,USDC,BTC,ETH,USDT';
 
+const DEPLOYMENT_ENVIRONMENTS = ['development', 'staging', 'production'] as const;
+type DeploymentEnvironment = (typeof DEPLOYMENT_ENVIRONMENTS)[number];
+
+const EGRESS_HOST_PATTERN =
+  /^(\*\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
+
+const REDIRECT_POLICIES = ['deny', 'same-host', 'allowlist'] as const;
+type RedirectPolicy = (typeof REDIRECT_POLICIES)[number];
+
+const DEFAULT_EGRESS_ALLOWLIST: Record<DeploymentEnvironment, string[]> = {
+  development: [],
+  staging: [],
+  production: [],
+};
+
+const DEFAULT_REDIRECT_POLICY: Record<DeploymentEnvironment, RedirectPolicy> = {
+  development: 'deny',
+  staging: 'deny',
+  production: 'deny',
+};
+
+function normalizeEgressHost(entry: string): string | undefined {
+  const trimmed = entry.trim().toLowerCase();
+  if (trimmed === '') return undefined;
+  let hostname = trimmed;
+  if (trimmed.includes('://')) {
+    try {
+      hostname = new URL(trimmed).hostname.toLowerCase();
+    } catch {
+      return undefined;
+    }
+  }
+  hostname = hostname.replace(/\.$/, '');
+  if (hostname === '' || hostname.length > 253) return undefined;
+  if (!EGRESS_HOST_PATTERN.test(hostname)) return undefined;
+  return hostname;
+}
+
 const assetsSchema = z
   .string({ invalid_type_error: 'expected a comma-separated list of asset symbols' })
   .optional()
@@ -224,7 +263,55 @@ const envShape = {
     REGION_QUARANTINE_RECOVER_PERCENT: floatVar(0.05, 0, 100),
     REGION_MAX_REPLICATION_LAG_MS: intVar(5000, 1, 600_000),
 
+    BROWNOUT_TIER: z
+      .enum(BROWNOUT_TIERS, {
+        errorMap: () => ({ message: `expected one of ${BROWNOUT_TIERS.join(', ')}` }),
+      })
+      .default('none'),
+    BROWNOUT_MAX_PRICE_AGE_MS: intVar(120000, 1, 86_400_000),
+    BROWNOUT_SHED_HISTORY: boolVar(false),
+    BROWNOUT_SHED_ARCHIVAL: boolVar(false),
+    BROWNOUT_SHED_NON_CRITICAL_FEEDS: boolVar(false),
+
+    MAINTENANCE_WINDOW_ENABLED: boolVar(false),
+    MAINTENANCE_DRAIN_TIMEOUT_MS: intVar(60000, 1000, 3_600_000),
+    MAINTENANCE_PRECHECK_MAX_STALENESS_MS: intVar(120000, 1, 86_400_000),
+    MAINTENANCE_PRECHECK_MIN_HEALTHY_PEERS: intVar(1, 0, 100),
+    MAINTENANCE_PUBLISHER_FENCING_ENABLED: boolVar(true),
+    MAINTENANCE_POSTCHECK_TIMEOUT_MS: intVar(120000, 1000, 3_600_000),
+
     KAFKA_BROKERS: commaListSchema(
+======>>> REPLACE
+export type RawEnvConfig = z.infer<typeof envSchema>;
+
+export interface CellConfig {
+  /** Cell identifier; `default` preserves single-cell behaviour. */
+  id: string;
+  /** True when CELL_ID was not set and the service runs as the single default cell. */
+  isDefault: boolean;
+  /** Upper-cased asset symbols owned by this cell (empty means all watched assets). */
+  assignedFeeds: string[];
+  /** Per-cell dependency overrides; undefined falls back to the global setting. */
+  dbUrl?: string;
+  cacheUrl?: string;
+  providerUrls: string[];
+}
+
+export const DEFAULT_CELL_ID = 'default';
+
+export function resolveCellConfig(config: RawEnvConfig): CellConfig {
+  const isDefault = config.CELL_ID === undefined;
+  return {
+    id: config.CELL_ID ?? DEFAULT_CELL_ID,
+    isDefault,
+    assignedFeeds: Array.from(
+      new Set((config.CELL_ASSIGNED_FEEDS ?? []).map((feed) => feed.toUpperCase())),
+    ),
+    dbUrl: config.CELL_DB_URL,
+    cacheUrl: config.CELL_CACHE_URL,
+    providerUrls: config.CELL_PROVIDER_URLS ?? [],
+  };
+}
       'KAFKA_BROKERS',
       (entry) => entry.length > 0 && entry.length <= 253 && !/\s/.test(entry),
       'expected a bootstrap broker as host or host:port',
@@ -261,6 +348,24 @@ const envShape = {
     ),
     SSRF_ALLOW_PRIVATE_IPS: boolVar(false),
     OUTBOUND_REQUEST_TIMEOUT_MS: intVar(10000, 100, 300_000),
+
+    DEPLOYMENT_ENVIRONMENT: z
+      .enum(DEPLOYMENT_ENVIRONMENTS, {
+        errorMap: () => ({ message: `expected one of ${DEPLOYMENT_ENVIRONMENTS.join(', ')}` }),
+      })
+      .default('development'),
+    EGRESS_ALLOWLIST: commaListSchema(
+      'EGRESS_ALLOWLIST',
+      (entry) => normalizeEgressHost(entry) !== undefined,
+      'expected a hostname, *.wildcard hostname or absolute URL',
+    ),
+    EGRESS_REDIRECT_POLICY: z
+      .enum(REDIRECT_POLICIES, {
+        errorMap: () => ({ message: `expected one of ${REDIRECT_POLICIES.join(', ')}` }),
+      })
+      .optional(),
+    EGRESS_MAX_REDIRECTS: intVar(0, 0, 10),
+    EGRESS_DNS_REVALIDATE: boolVar(true),
 
     WS_ALLOWED_ORIGINS: commaListSchema(
       'WS_ALLOWED_ORIGINS',
@@ -319,9 +424,71 @@ const envSchema = z.object(envShape).superRefine((value, ctx) => {
         'otherwise a quarantined region can never recover',
     });
   }
+  if (value.BROWNOUT_MAX_PRICE_AGE_MS > value.STALENESS_THRESHOLD_MS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['BROWNOUT_MAX_PRICE_AGE_MS'],
+      message:
+        `must be <= STALENESS_THRESHOLD_MS (${value.STALENESS_THRESHOLD_MS}) ` +
+        'otherwise brownout mode can serve prices the normal path would reject',
+    });
+  }
+  if (value.MAINTENANCE_PRECHECK_MAX_STALENESS_MS > value.STALENESS_THRESHOLD_MS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['MAINTENANCE_PRECHECK_MAX_STALENESS_MS'],
+      message:
+        `must be <= STALENESS_THRESHOLD_MS (${value.STALENESS_THRESHOLD_MS}) ` +
+        'otherwise maintenance prechecks accept stale prices',
+    });
+  }
+  if (value.MAINTENANCE_WINDOW_ENABLED && value.REGION_PEERS.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['REGION_PEERS'],
+      message:
+        'must list at least one peer when MAINTENANCE_WINDOW_ENABLED is true ' +
+        'so traffic can be drained before maintenance',
+    });
+  }
+  if (value.MAINTENANCE_WINDOW_ENABLED && value.MAINTENANCE_PRECHECK_MIN_HEALTHY_PEERS === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['MAINTENANCE_PRECHECK_MIN_HEALTHY_PEERS'],
+      message:
+        'must be >= 1 when MAINTENANCE_WINDOW_ENABLED is true ' +
+        'so maintenance cannot start without a healthy peer to take over',
+    });
+  }
 });
 
 export type RawEnvConfig = z.infer<typeof envSchema>;
+
+export interface EgressPolicy {
+  environment: DeploymentEnvironment;
+  allowedHosts: string[];
+  redirectPolicy: RedirectPolicy;
+  maxRedirects: number;
+  revalidateDns: boolean;
+}
+
+export function resolveEgressPolicy(config: RawEnvConfig): EgressPolicy {
+  const environment = config.DEPLOYMENT_ENVIRONMENT;
+  const allowedHosts = Array.from(
+    new Set(
+      (config.EGRESS_ALLOWLIST ?? [])
+        .map((entry) => normalizeEgressHost(entry))
+        .filter((host): host is string => host !== undefined),
+    ),
+  ).sort();
+  return {
+    environment,
+    allowedHosts,
+    redirectPolicy: config.EGRESS_REDIRECT_POLICY ?? DEFAULT_REDIRECT_POLICY[environment],
+    maxRedirects: config.EGRESS_MAX_REDIRECTS,
+    revalidateDns: config.EGRESS_DNS_REVALIDATE,
+  };
+}
 
 export function parseConfigEnv(env: NodeJS.ProcessEnv): RawEnvConfig {
   const result = envSchema.safeParse(env);

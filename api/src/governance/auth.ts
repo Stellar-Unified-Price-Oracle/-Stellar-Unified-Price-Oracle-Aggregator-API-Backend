@@ -6,6 +6,12 @@ import { auditLog } from './audit-logger';
 import type { Role } from './rbac';
 import { isRole, denyAuthorization } from './rbac';
 import { decryptSecret } from './crypto';
+import {
+  resolveCredentialPolicy,
+  enforceCredentialPolicy,
+  type CredentialPolicy,
+  type PolicyContext,
+} from './credential-policy';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -13,6 +19,8 @@ declare global {
     interface Request {
       apiKey?: string;
       userRole?: Role;
+      /** Resolved policy scopes for the presented credential (null when unscoped). */
+      credentialPolicy?: CredentialPolicy | null;
       rateLimitInfo?: {
         allowed: boolean;
         remaining: number;
@@ -33,6 +41,59 @@ function requestContext(req: Request) {
     path: req.path,
     userAgent: req.headers['user-agent'],
   };
+}
+
+/**
+ * Builds the policy evaluation context for a request. The operation is derived
+ * from the HTTP method (read vs write) and the feed/environment from the
+ * request path and headers so every API surface is evaluated consistently.
+ */
+function policyContext(req: Request): PolicyContext {
+  const method = req.method.toUpperCase();
+  const operation = method === 'GET' || method === 'HEAD' || method === 'OPTIONS' ? 'read' : 'write';
+  const envHeader = req.headers['x-environment'];
+  const environment = typeof envHeader === 'string' ? envHeader : undefined;
+  return {
+    operation,
+    method,
+    path: req.path,
+    environment,
+  };
+}
+
+/**
+ * Enforces the credential's policy scopes (expiry, environment, operation,
+ * feed) against the request. Returns true when the request may proceed; when
+ * false a 403 with a specific error code has already been written.
+ */
+function enforcePolicy(
+  req: Request,
+  res: Response,
+  apiKey: string,
+  metadata: { scopes?: string[]; policy?: unknown } | undefined,
+): boolean {
+  const policy = resolveCredentialPolicy(metadata);
+  req.credentialPolicy = policy;
+  if (!policy) return true;
+
+  const decision = enforceCredentialPolicy(policy, policyContext(req));
+  if (decision.allowed) return true;
+
+  const ctx = requestContext(req);
+  logger.warn(`Credential policy denied request: ${apiKey.substring(0, 8)}... (${decision.code})`);
+  auditLog('auth.failure', {
+    ...ctx,
+    apiKeyPrefix: apiKey.substring(0, 8),
+    details: { reason: decision.code, path: req.path, operation: policyContext(req).operation },
+  });
+  res.status(403).json({
+    success: false,
+    error: {
+      code: decision.code,
+      message: decision.message,
+    },
+  });
+  return false;
 }
 
 export function extractApiKey(req: Request | IncomingMessage): string | null {
@@ -113,6 +174,10 @@ export function createAuthMiddleware(deps: AuthDependencies = {}) {
         return;
       }
 
+      if (!enforcePolicy(req, res, apiKey, validation.metadata)) {
+        return;
+      }
+
       const rateLimitInfo = await manager.checkRateLimit(apiKey);
       if (!rateLimitInfo.allowed) {
         logger.warn(`Rate limit exceeded for API key: ${apiKey.substring(0, 8)}...`);
@@ -177,6 +242,10 @@ export function adminAuthMiddleware(_adminKeyPrefix: string) {
       return;
     }
 
+    if (!enforcePolicy(req, res, apiKey, metadata)) {
+      return;
+    }
+
     req.apiKey = apiKey;
     req.userRole = role;
     req.apiKeyScopes = metadata.scopes;
@@ -201,6 +270,10 @@ export function createOptionalAuthMiddleware(deps: AuthDependencies = {}) {
           success: false,
           error: { code: 'INVALID_API_KEY', message: validation.error || 'Invalid API key' },
         });
+        return;
+      }
+
+      if (!enforcePolicy(req, res, apiKey, validation.metadata)) {
         return;
       }
 
@@ -233,16 +306,29 @@ export function createOptionalAuthMiddleware(deps: AuthDependencies = {}) {
 
 export const optionalAuthMiddleware = createOptionalAuthMiddleware();
 
-export function validateWebSocketApiKey(req: IncomingMessage): { valid: boolean; error?: string } {
+export function validateWebSocketApiKey(req: IncomingMessage): { valid: boolean; error?: string; code?: string } {
   const apiKey = extractApiKey(req);
 
   if (!apiKey) {
-    return { valid: false, error: 'API key required for WebSocket connections' };
+    return { valid: false, error: 'API key required for WebSocket connections', code: 'MISSING_API_KEY' };
   }
 
   const validation = apiKeyManager.validateKey(apiKey);
   if (!validation.valid) {
-    return { valid: false, error: validation.error || 'Invalid API key' };
+    return { valid: false, error: validation.error || 'Invalid API key', code: 'INVALID_API_KEY' };
+  }
+
+  const policy = resolveCredentialPolicy(validation.metadata);
+  if (policy) {
+    const decision = enforceCredentialPolicy(policy, {
+      operation: 'read',
+      method: 'GET',
+      path: typeof req.url === 'string' ? req.url : '/',
+      environment: typeof req.headers['x-environment'] === 'string' ? req.headers['x-environment'] : undefined,
+    });
+    if (!decision.allowed) {
+      return { valid: false, error: decision.message, code: decision.code };
+    }
   }
 
   return { valid: true };

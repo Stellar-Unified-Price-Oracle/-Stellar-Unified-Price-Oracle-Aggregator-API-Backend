@@ -46,6 +46,7 @@ import { initializeAuditIntegrity, startAuditChainVerification } from './governa
 import webhooksRoutes from './webhooks/webhooks';
 import graphqlRoutes, { initializeGraphqlCache } from './graphql';
 import releaseNotesRoutes from './release-notes/router';
+import consumerRoutes from './price-serving/consumer';
 
 // Initialize distributed tracing
 initializeTracing(config.tracing);
@@ -245,6 +246,8 @@ app.use('/api/v1/governance', governanceRoutes);
 // Public status page — no authentication required (#66)
 app.use('/api/v1/status', statusRoutes);
 app.use('/api/v2', v2Headers, v2Routes);
+app.use('/api/v1/consumer', consumerRoutes);
+app.use('/api/v2/consumer', consumerRoutes);
 app.use('/graphql', graphqlRoutes);
 app.use('/api/graphql', graphqlRoutes);
 
@@ -264,6 +267,7 @@ app.use('/portal/governance', express.static(path.join(__dirname, '..', 'public'
 // Developer portal: API explorer, key management, usage/billing UI
 app.use('/portal', express.static(path.join(__dirname, '..', 'public', 'portal')));
 app.use('/docs/marketplace', express.static(path.join(__dirname, '..', '..', 'docs', 'marketplace')));
+app.use('/.well-known', express.static(path.join(__dirname, '..', 'public', '.well-known')));
 
 app.use(notFoundHandler);
 app.use(errorHandler);

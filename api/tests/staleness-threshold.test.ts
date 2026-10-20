@@ -336,4 +336,137 @@ This threshold must be identical in the API and aggregator services.
       }
     });
   });
+
+  /**
+   * #746 — Consistency objectives are defined per data product (live prices,
+   * history, catalog, analytics) rather than as a single global threshold.
+   * Each product carries its own freshness objective (max staleness) and a
+   * consumer-visible objective descriptor surfaced in response metadata.
+   */
+  describe('consistency objectives per data product', () => {
+    type DataProduct = 'live_prices' | 'history' | 'catalog' | 'analytics';
+
+    interface ConsistencyObjective {
+      product: DataProduct;
+      maxStalenessMs: number;
+      owner: string;
+      semantics: string;
+    }
+
+    const OBJECTIVES: Record<DataProduct, ConsistencyObjective> = {
+      live_prices: {
+        product: 'live_prices',
+        maxStalenessMs: 120000,
+        owner: 'pricing-team',
+        semantics: 'eventual within 120s; stale flagged per price',
+      },
+      history: {
+        product: 'history',
+        maxStalenessMs: 3600000,
+        owner: 'data-platform',
+        semantics: 'eventual within 1h; historical points immutable once written',
+      },
+      catalog: {
+        product: 'catalog',
+        maxStalenessMs: 900000,
+        owner: 'catalog-team',
+        semantics: 'eventual within 15m; asset metadata may lag listings',
+      },
+      analytics: {
+        product: 'analytics',
+        maxStalenessMs: 86400000,
+        owner: 'analytics-team',
+        semantics: 'eventual within 24h; aggregate rollups only',
+      },
+    };
+
+    interface ProductRead {
+      product: DataProduct;
+      ageMs: number;
+    }
+
+    const evaluateRead = (read: ProductRead) => {
+      const objective = OBJECTIVES[read.product];
+      const stale = read.ageMs > objective.maxStalenessMs;
+      return {
+        stale,
+        metadata: {
+          product: objective.product,
+          objective: objective.semantics,
+          maxStalenessMs: objective.maxStalenessMs,
+          owner: objective.owner,
+          ageMs: read.ageMs,
+        },
+      };
+    };
+
+    it('defines a distinct objective for every data product', () => {
+      const products: DataProduct[] = ['live_prices', 'history', 'catalog', 'analytics'];
+      products.forEach((p) => {
+        expect(OBJECTIVES[p]).toBeDefined();
+        expect(OBJECTIVES[p].product).toBe(p);
+        expect(OBJECTIVES[p].maxStalenessMs).toBeGreaterThan(0);
+        expect(OBJECTIVES[p].owner.length).toBeGreaterThan(0);
+        expect(OBJECTIVES[p].semantics.length).toBeGreaterThan(0);
+      });
+
+      // Objectives must not collapse into a single global threshold
+      const distinctThresholds = new Set(
+        products.map((p) => OBJECTIVES[p].maxStalenessMs),
+      );
+      expect(distinctThresholds.size).toBe(products.length);
+    });
+
+    it('normal reads within bounds are fresh and expose objective metadata', () => {
+      const reads: ProductRead[] = [
+        { product: 'live_prices', ageMs: 30000 },
+        { product: 'history', ageMs: 600000 },
+        { product: 'catalog', ageMs: 60000 },
+        { product: 'analytics', ageMs: 3600000 },
+      ];
+
+      reads.forEach((read) => {
+        const result = evaluateRead(read);
+        expect(result.stale).toBe(false);
+        expect(result.metadata.product).toBe(read.product);
+        expect(result.metadata.maxStalenessMs).toBe(OBJECTIVES[read.product].maxStalenessMs);
+        expect(result.metadata.objective).toBe(OBJECTIVES[read.product].semantics);
+        expect(result.metadata.owner).toBe(OBJECTIVES[read.product].owner);
+      });
+    });
+
+    it('boundary reads exactly at the objective threshold are not stale', () => {
+      (Object.keys(OBJECTIVES) as DataProduct[]).forEach((product) => {
+        const result = evaluateRead({
+          product,
+          ageMs: OBJECTIVES[product].maxStalenessMs,
+        });
+        expect(result.stale).toBe(false);
+        expect(result.metadata.ageMs).toBe(OBJECTIVES[product].maxStalenessMs);
+      });
+    });
+
+    it('failure reads beyond the objective threshold are flagged stale', () => {
+      (Object.keys(OBJECTIVES) as DataProduct[]).forEach((product) => {
+        const result = evaluateRead({
+          product,
+          ageMs: OBJECTIVES[product].maxStalenessMs + 1,
+        });
+        expect(result.stale).toBe(true);
+        expect(result.metadata.maxStalenessMs).toBe(OBJECTIVES[product].maxStalenessMs);
+      });
+    });
+
+    it('a read fresh for one product may be stale for another', () => {
+      const ageMs = 300000; // 5 minutes
+      expect(evaluateRead({ product: 'live_prices', ageMs }).stale).toBe(true);
+      expect(evaluateRead({ product: 'catalog', ageMs }).stale).toBe(false);
+      expect(evaluateRead({ product: 'history', ageMs }).stale).toBe(false);
+      expect(evaluateRead({ product: 'analytics', ageMs }).stale).toBe(false);
+    });
+
+    it('live prices objective stays aligned with the global staleness threshold', () => {
+      expect(OBJECTIVES.live_prices.maxStalenessMs).toBe(STALENESS_THRESHOLD_MS);
+    });
+  });
 });

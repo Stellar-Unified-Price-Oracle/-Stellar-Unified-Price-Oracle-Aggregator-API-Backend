@@ -6,6 +6,9 @@ import {
   getDailyCount,
   getDailyCounts,
   resetDailyCounts,
+  estimateConsumerCost,
+  getConsumerCostTable,
+  MAX_CONSUMER_FEEDS,
 } from '../src/infrastructure/cost-model';
 
 describe('Cost Model', () => {
@@ -196,6 +199,100 @@ describe('Cost Model', () => {
 
       const counts2 = getDailyCounts();
       expect(counts2['chainlink']).toBe(1);
+    });
+  });
+
+  describe('estimateConsumerCost', () => {
+    it('should estimate storage and transaction costs for a single feed', () => {
+      const estimate = estimateConsumerCost({ feedCount: 1, feeStroops: 100 });
+
+      expect(estimate.feedCount).toBe(1);
+      expect(estimate.feeStroops).toBe(100);
+      expect(estimate.storageBytes).toBeGreaterThan(0);
+      expect(estimate.storageCostStroops).toBeGreaterThan(0);
+      expect(estimate.transactionCostStroops).toBeGreaterThan(0);
+      expect(estimate.totalCostStroops).toBe(
+        estimate.storageCostStroops + estimate.transactionCostStroops,
+      );
+    });
+
+    it('should scale storage cost linearly with feed count', () => {
+      const one = estimateConsumerCost({ feedCount: 1, feeStroops: 100 });
+      const ten = estimateConsumerCost({ feedCount: 10, feeStroops: 100 });
+
+      expect(ten.storageBytes).toBe(one.storageBytes * 10);
+      expect(ten.storageCostStroops).toBe(one.storageCostStroops * 10);
+    });
+
+    it('should scale transaction cost with fee conditions', () => {
+      const low = estimateConsumerCost({ feedCount: 5, feeStroops: 100 });
+      const high = estimateConsumerCost({ feedCount: 5, feeStroops: 1000 });
+
+      expect(high.transactionCostStroops).toBeGreaterThan(low.transactionCostStroops);
+      expect(high.storageCostStroops).toBe(low.storageCostStroops);
+    });
+
+    it('should estimate costs across representative feed counts', () => {
+      for (const feedCount of [1, 5, 10, 25, 50]) {
+        const estimate = estimateConsumerCost({ feedCount, feeStroops: 100 });
+        expect(estimate.feedCount).toBe(feedCount);
+        expect(estimate.totalCostStroops).toBeGreaterThan(0);
+      }
+    });
+
+    it('should handle the maximum supported feed count boundary', () => {
+      const estimate = estimateConsumerCost({
+        feedCount: MAX_CONSUMER_FEEDS,
+        feeStroops: 100,
+      });
+
+      expect(estimate.feedCount).toBe(MAX_CONSUMER_FEEDS);
+      expect(estimate.totalCostStroops).toBeGreaterThan(0);
+    });
+
+    it('should reject feed counts above the maximum supported', () => {
+      expect(() =>
+        estimateConsumerCost({ feedCount: MAX_CONSUMER_FEEDS + 1, feeStroops: 100 }),
+      ).toThrow(/feed/i);
+    });
+
+    it('should reject non-positive feed counts', () => {
+      expect(() => estimateConsumerCost({ feedCount: 0, feeStroops: 100 })).toThrow(/feed/i);
+      expect(() => estimateConsumerCost({ feedCount: -1, feeStroops: 100 })).toThrow(/feed/i);
+    });
+
+    it('should fail when the provided fee is insufficient', () => {
+      expect(() => estimateConsumerCost({ feedCount: 1, feeStroops: 0 })).toThrow(/fee/i);
+      expect(() => estimateConsumerCost({ feedCount: 1, feeStroops: -5 })).toThrow(/fee/i);
+    });
+  });
+
+  describe('getConsumerCostTable', () => {
+    it('should produce a reproducible cost table', () => {
+      const first = getConsumerCostTable();
+      const second = getConsumerCostTable();
+
+      expect(second).toEqual(first);
+    });
+
+    it('should return a copy, not reference to internal state', () => {
+      const table = getConsumerCostTable();
+      table[0].totalCostStroops = -1;
+
+      const fresh = getConsumerCostTable();
+      expect(fresh[0].totalCostStroops).not.toBe(-1);
+    });
+
+    it('should cover representative feed counts and fee conditions', () => {
+      const table = getConsumerCostTable();
+
+      expect(table.length).toBeGreaterThan(0);
+      const feedCounts = new Set(table.map((row) => row.feedCount));
+      const fees = new Set(table.map((row) => row.feeStroops));
+
+      expect(feedCounts.size).toBeGreaterThan(1);
+      expect(fees.size).toBeGreaterThan(1);
+      expect(feedCounts.has(MAX_CONSUMER_FEEDS)).toBe(true);
     });
   });
 });

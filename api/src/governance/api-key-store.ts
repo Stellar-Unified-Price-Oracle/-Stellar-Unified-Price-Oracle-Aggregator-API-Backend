@@ -16,11 +16,30 @@ export interface RedisLikeClient {
   hdel(key: string, ...fields: string[]): Promise<unknown>;
 }
 
+/**
+ * Migration default for records written before policy scopes existed (#748).
+ *
+ * Legacy keys were issued without any scope restriction, so they are treated as
+ * unrestricted (`feeds`/`operations`/`environments` undefined) and non-expiring
+ * (`expiresAt` undefined). This preserves the behaviour of existing consumers
+ * while new keys can opt into narrower scopes. Rollback: removing the scope
+ * fields from persisted records restores the legacy shape; the store tolerates
+ * both shapes in either direction.
+ */
+export function applyScopeDefaults(entry: ApiKeyMetadata): ApiKeyMetadata {
+  const normalized: ApiKeyMetadata = { ...entry };
+  if (normalized.feeds !== undefined && !Array.isArray(normalized.feeds)) delete normalized.feeds;
+  if (normalized.operations !== undefined && !Array.isArray(normalized.operations)) delete normalized.operations;
+  if (normalized.environments !== undefined && !Array.isArray(normalized.environments)) delete normalized.environments;
+  if (normalized.expiresAt !== undefined && typeof normalized.expiresAt !== 'string') delete normalized.expiresAt;
+  return normalized;
+}
+
 function parseEntry(raw: string): ApiKeyMetadata | null {
   try {
     const parsed = JSON.parse(raw) as ApiKeyMetadata;
     if (!parsed || typeof parsed.keyHash !== 'string' || typeof parsed.isActive !== 'boolean') return null;
-    return parsed;
+    return applyScopeDefaults(parsed);
   } catch {
     return null;
   }
@@ -31,11 +50,11 @@ export class InMemoryApiKeyStore implements ApiKeyStore {
   private readonly entries = new Map<string, ApiKeyMetadata>();
 
   async load(): Promise<ApiKeyMetadata[]> {
-    return Array.from(this.entries.values()).map((entry) => ({ ...entry }));
+    return Array.from(this.entries.values()).map((entry) => applyScopeDefaults({ ...entry }));
   }
 
   async put(entry: ApiKeyMetadata): Promise<void> {
-    this.entries.set(entry.keyHash, { ...entry });
+    this.entries.set(entry.keyHash, applyScopeDefaults({ ...entry }));
   }
 
   async remove(keyHash: string): Promise<void> {
@@ -91,7 +110,7 @@ export class RedisApiKeyStore implements ApiKeyStore {
 
   async put(entry: ApiKeyMetadata): Promise<void> {
     const client = await this.conn();
-    await client.hset(this.hashKey, entry.keyHash, JSON.stringify(entry));
+    await client.hset(this.hashKey, entry.keyHash, JSON.stringify(applyScopeDefaults(entry)));
   }
 
   async remove(keyHash: string): Promise<void> {

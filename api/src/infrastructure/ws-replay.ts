@@ -24,6 +24,57 @@ export interface ReplayBounds {
   maxBytes: number;
 }
 
+/**
+ * Policy scope applied to a replay request (issue #748).
+ *
+ * A replay request is only served when the requesting credential's scope
+ * permits the asset (feed scope), the operation (`replay`), the current
+ * environment, and has not expired. Assets outside the scope are never
+ * returned, even when the caller asks for them explicitly.
+ */
+export interface ReplayScope {
+  /** Assets the credential may read. `null` means all assets. */
+  feeds: string[] | null;
+  /** Operations the credential may perform. */
+  operations: string[];
+  /** Environment the credential is bound to. */
+  environment: string;
+  /** Epoch millis after which the credential is no longer valid. */
+  expiresAt: number | null;
+}
+
+export type ReplayScopeDenial =
+  | 'operation_not_permitted'
+  | 'environment_mismatch'
+  | 'expired'
+  | 'asset_not_permitted';
+
+export interface ReplayScopeDecision {
+  allowed: boolean;
+  reason?: ReplayScopeDenial;
+}
+
+export function evaluateReplayScope(
+  scope: ReplayScope,
+  environment: string,
+  now: number = Date.now(),
+): ReplayScopeDecision {
+  if (!scope.operations.includes('replay')) {
+    return { allowed: false, reason: 'operation_not_permitted' };
+  }
+  if (scope.environment !== environment) {
+    return { allowed: false, reason: 'environment_mismatch' };
+  }
+  if (scope.expiresAt !== null && now >= scope.expiresAt) {
+    return { allowed: false, reason: 'expired' };
+  }
+  return { allowed: true };
+}
+
+export function isAssetPermitted(scope: ReplayScope, asset: string): boolean {
+  return scope.feeds === null || scope.feeds.includes(asset);
+}
+
 export interface ReplayWindow {
   messages: BufferedMessage[];
   /** True when the request wanted more than the bounds allowed. */
@@ -47,11 +98,14 @@ export function collectReplayWindow(
   sources: Iterable<BufferedMessage[]>,
   lastSequenceId: number,
   bounds: ReplayBounds,
+  scope?: ReplayScope | null,
 ): ReplayWindow {
   const candidates: BufferedMessage[] = [];
   for (const buffer of sources) {
     for (const entry of buffer) {
-      if (entry.sequenceId > lastSequenceId) candidates.push(entry);
+      if (entry.sequenceId <= lastSequenceId) continue;
+      if (scope && !isAssetPermitted(scope, entry.asset)) continue;
+      candidates.push(entry);
     }
   }
   candidates.sort((a, b) => a.sequenceId - b.sequenceId);
@@ -136,9 +190,15 @@ export class ReplayBuffer {
     while (this.totalBytes > this.maxBytes && this.totalMessages > 0) this.dropOldestFromOldestAsset();
   }
 
-  sources(assets?: string[] | null): BufferedMessage[][] {
-    if (!assets) return Array.from(this.buffers.values());
-    return assets.map((asset) => this.buffers.get(asset) ?? []);
+  sources(assets?: string[] | null, scope?: ReplayScope | null): BufferedMessage[][] {
+    if (!assets) {
+      const all = Array.from(this.buffers.values());
+      if (!scope) return all;
+      return all.map((buffer) => buffer.filter((entry) => isAssetPermitted(scope, entry.asset)));
+    }
+    return assets
+      .filter((asset) => !scope || isAssetPermitted(scope, asset))
+      .map((asset) => this.buffers.get(asset) ?? []);
   }
 
   has(asset: string): boolean {

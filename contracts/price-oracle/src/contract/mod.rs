@@ -12,14 +12,30 @@
 //
 // Shared helpers live in crate::utils (Issue #298), used by both
 // PriceOracleContract and ProxyContract.
+//
+// Issue #724 / #726 — consumer-verifiable price evidence and the stable
+// read snapshot.  `get_price_snapshot` returns a mutually consistent view of
+// price, timestamps and policy version; `get_price_evidence` returns the
+// snapshot plus a consumer-verifiable evidence envelope; and
+// `verify_price_evidence` lets a consumer re-check that envelope on-chain.
+// All three are additive, read-only entrypoints, so they are non-breaking per
+// docs/CONTRACT_VERSIONING.md and API_VERSION stays at 1.
+//
+// Rollout: deploy the upgraded wasm and call `get_api_version` to confirm it
+// still reports 1; consumers can adopt the new reads at their own pace since
+// existing entrypoints are untouched.  Rollback: redeploy the previous wasm;
+// the new reads simply disappear and no storage layout changed, so no
+// migration is required.  Monitoring: watch the snapshot/evidence read
+// counters and any `verify_price_evidence` false results, which indicate a
+// stale or tampered evidence envelope.
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, Vec};
 
 use crate::errors::OracleError;
 use crate::merkle;
 use crate::types::{
-    AssetPrice, BatchPriceEntry, MerkleProof, MultiSigConfig, MultiSigProposal, PriceDataPoint,
-    ProposalAction, SourceReputation,
+    AssetPrice, BatchPriceEntry, FeedCatalogCommitment, MerkleProof, MultiSigConfig,
+    MultiSigProposal, PriceDataPoint, ProposalAction, SourceReputation,
 };
 
 mod admin;
@@ -261,6 +277,35 @@ impl PriceOracleContract {
         queries::get_price(&env, &caller, &asset)
     }
 
+    // Issue #726 — stable read snapshot: price, timestamps and policy version
+    // are read in a single invocation so consumers see a mutually consistent
+    // view.  Additive and read-only, so API_VERSION is unchanged.
+    pub fn get_price_snapshot(
+        env: Env,
+        caller: Address,
+        asset: String,
+    ) -> Result<Option<crate::types::PriceSnapshot>, OracleError> {
+        queries::get_price_snapshot(&env, &caller, &asset)
+    }
+
+    // Issue #724 — consumer-verifiable evidence for a published price.
+    pub fn get_price_evidence(
+        env: Env,
+        caller: Address,
+        asset: String,
+    ) -> Result<Option<crate::types::PriceEvidence>, OracleError> {
+        queries::get_price_evidence(&env, &caller, &asset)
+    }
+
+    // Issue #724 — re-verify an evidence envelope on-chain.  Returns false for
+    // malformed, stale or tampered evidence rather than trapping.
+    pub fn verify_price_evidence(
+        env: Env,
+        evidence: crate::types::PriceEvidence,
+    ) -> bool {
+        queries::verify_price_evidence(&env, &evidence)
+    }
+
     pub fn get_assets(env: Env) -> Vec<String> {
         queries::get_assets(&env)
     }
@@ -370,5 +415,24 @@ impl PriceOracleContract {
         extend_to: u32,
     ) -> Result<(), OracleError> {
         admin::extend_instance_ttl(&env, &caller, threshold, extend_to)
+    }
+
+    // ── Issue #725 — Feed catalog commitment ───────────────────────────────
+
+    pub fn commit_feed_catalog(
+        env: Env,
+        admin: Address,
+        version: u32,
+        catalog_hash: BytesN<32>,
+    ) -> Result<(), OracleError> {
+        admin::commit_feed_catalog(&env, &admin, version, &catalog_hash)
+    }
+
+    pub fn get_feed_catalog_commitment(env: Env) -> Option<FeedCatalogCommitment> {
+        queries::get_feed_catalog_commitment(&env)
+    }
+
+    pub fn get_feed_catalog_version(env: Env) -> u32 {
+        queries::get_feed_catalog_version(&env)
     }
 }

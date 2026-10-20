@@ -551,205 +551,225 @@
         }
       }
     },
-    "/api/v1/catalog/feeds": {
+    "/api/v1/prices/{asset}/provenance": {
       "get": {
-        "operationId": "listCatalogFeeds",
+        "operationId": "getPriceProvenance",
         "tags": [
-          "Feed Catalog"
+          "Prices"
         ],
-        "summary": "List feed catalog entries",
+        "summary": "Get price provenance: catalog version, aggregation policy, source set, observation-time semantics",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Asset symbol (XLM, BTC, ETH, USDC, USDT)"
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "type": "object"
-                    }
-                  }
-                }
-              }
-            }
+            "description": "Provenance for the requested asset price"
+          },
+          "404": {
+            "description": "Asset not found"
           }
         }
       }
     },
-    "/api/v1/catalog/feeds/{feedId}": {
+    "/api/v1/consumer/latency-freshness": {
       "get": {
-        "operationId": "getCatalogFeed",
+        "operationId": "getLatencyFreshness",
         "tags": [
-          "Feed Catalog"
+          "Consumer"
         ],
-        "summary": "Get a feed catalog entry with its policy and change log",
+        "summary": "Feed latency and freshness by asset and region, with methodology and sample windows",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "asset",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by asset symbol"
+          },
+          {
+            "in": "query",
+            "name": "region",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by consumer region"
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "type": "number"
+            },
+            "description": "Window start, Unix seconds"
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "type": "number"
+            },
+            "description": "Window end, Unix seconds"
+          },
+          {
+            "in": "query",
+            "name": "window",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1h",
+                "24h",
+                "7d",
+                "30d"
+              ],
+              "default": "24h"
+            },
+            "description": "Default sample window when from/to are omitted"
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "type": "object"
-                    }
-                  }
-                }
-              }
-            }
+            "description": "Latency and freshness stats grouped by feed and region"
+          },
+          "400": {
+            "description": "Invalid query parameters"
           }
         }
       }
     },
-    "/api/v1/catalog/feeds/{feedId}/policy": {
-      "put": {
-        "operationId": "putCatalogFeedPolicy",
-        "tags": [
-          "Feed Catalog"
-        ],
-        "summary": "Create or replace a feed participation policy",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "type": "object"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/catalog/feeds/{feedId}/transitions": {
-      "post": {
-        "operationId": "postCatalogFeedTransition",
-        "tags": [
-          "Feed Catalog"
-        ],
-        "summary": "Apply a governed lifecycle transition to a feed",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "type": "object"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/catalog/feeds/{feedId}/aliases": {
-      "post": {
-        "operationId": "postCatalogFeedAlias",
-        "tags": [
-          "Feed Catalog"
-        ],
-        "summary": "Register a rename, merge or retirement alias for a feed",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "type": "object"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/catalog/feeds/{feedId}/quorum": {
+    "/api/v1/consumer/usage/export": {
       "get": {
-        "operationId": "getCatalogFeedQuorum",
+        "operationId": "exportUsage",
         "tags": [
-          "Feed Catalog"
+          "Consumer"
         ],
-        "summary": "Evaluate a feed quorum against reported source contributions",
+        "summary": "Privacy-safe machine-readable export of the caller's own request usage (no cross-tenant data)",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "type": "number"
+            },
+            "description": "Window start, Unix seconds"
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "type": "number"
+            },
+            "description": "Window end, Unix seconds"
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "default": "json"
+            },
+            "description": "Export format"
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "type": "object"
-                    }
-                  }
-                }
-              }
-            }
+            "description": "Tenant-scoped usage export in stable billing dimensions"
+          },
+          "401": {
+            "description": "API key required"
           }
         }
       }
     },
-    "/api/v1/catalog/assets/{alias}": {
+    "/api/v1/consumer/delivery-objectives": {
       "get": {
-        "operationId": "resolveCatalogAsset",
+        "operationId": "getDeliveryObjectives",
         "tags": [
-          "Feed Catalog"
+          "Consumer"
         ],
-        "summary": "Resolve an asset alias to its canonical asset id",
+        "summary": "Attainment of contracted consumer delivery objectives, with exclusions and incident windows",
         "responses": {
           "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "type": "object"
-                    }
-                  }
-                }
-              }
+            "description": "Objective attainment with auditable calculation notes"
+          },
+          "401": {
+            "description": "API key required"
+          }
+        }
+      }
+    },
+    "/api/v2/consumer/latency-freshness": {
+      "get": {
+        "operationId": "getLatencyFreshnessV2",
+        "tags": [
+          "Consumer"
+        ],
+        "summary": "Feed latency and freshness by asset and region (v2 envelope)",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "asset",
+            "schema": {
+              "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "region",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latency and freshness stats"
+          }
+        }
+      }
+    },
+    "/api/v2/consumer/usage/export": {
+      "get": {
+        "operationId": "exportUsageV2",
+        "tags": [
+          "Consumer"
+        ],
+        "summary": "Privacy-safe usage export of the caller's own requests (v2 envelope)",
+        "responses": {
+          "200": {
+            "description": "Tenant-scoped usage export"
+          },
+          "401": {
+            "description": "API key required"
+          }
+        }
+      }
+    },
+    "/api/v2/consumer/delivery-objectives": {
+      "get": {
+        "operationId": "getDeliveryObjectivesV2",
+        "tags": [
+          "Consumer"
+        ],
+        "summary": "Contracted delivery objective attainment (v2 envelope)",
+        "responses": {
+          "200": {
+            "description": "Objective attainment"
+          },
+          "401": {
+            "description": "API key required"
           }
         }
       }

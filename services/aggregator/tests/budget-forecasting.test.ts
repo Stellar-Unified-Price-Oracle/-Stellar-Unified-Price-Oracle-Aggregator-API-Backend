@@ -284,6 +284,140 @@ describe('Budget Forecasting (Issue #460)', () => {
     });
   });
 
+  describe('Regional Capacity Forecast (Issue #734)', () => {
+    type CapacityInputs = {
+      observedTrafficRps: number;
+      feedCount: number;
+      providerLoadPct: number;
+      capacityRps: number;
+    };
+
+    const forecastCapacity = (inputs: CapacityInputs) => {
+      const perFeedRps = inputs.feedCount > 0 ? inputs.observedTrafficRps / inputs.feedCount : 0;
+      const providerHeadroomFactor = 1 - inputs.providerLoadPct / 100;
+      const usableCapacityRps = inputs.capacityRps * providerHeadroomFactor;
+      const headroomRps = usableCapacityRps - inputs.observedTrafficRps;
+      const headroomPct = usableCapacityRps > 0 ? (headroomRps / usableCapacityRps) * 100 : 0;
+      // Uncertainty widens with provider load and feed fan-out.
+      const uncertaintyPct = 5 + inputs.providerLoadPct * 0.1 + Math.min(inputs.feedCount, 100) * 0.05;
+      return {
+        perFeedRps,
+        usableCapacityRps,
+        headroomRps,
+        headroomPct,
+        confidenceInterval: {
+          lowerRps: headroomRps * (1 - uncertaintyPct / 100),
+          upperRps: headroomRps * (1 + uncertaintyPct / 100),
+        },
+      };
+    };
+
+    it('should forecast headroom from measured demand under normal load', () => {
+      const result = forecastCapacity({
+        observedTrafficRps: 800,
+        feedCount: 20,
+        providerLoadPct: 40,
+        capacityRps: 2000,
+      });
+
+      expect(result.perFeedRps).toBe(40);
+      expect(result.usableCapacityRps).toBe(1200);
+      expect(result.headroomRps).toBe(400);
+      expect(result.headroomPct).toBeCloseTo(33.33, 1);
+    });
+
+    it('should produce a confidence interval that brackets the point estimate', () => {
+      const result = forecastCapacity({
+        observedTrafficRps: 800,
+        feedCount: 20,
+        providerLoadPct: 40,
+        capacityRps: 2000,
+      });
+
+      expect(result.confidenceInterval.lowerRps).toBeLessThan(result.headroomRps);
+      expect(result.confidenceInterval.upperRps).toBeGreaterThan(result.headroomRps);
+    });
+
+    it('should widen uncertainty as provider load increases', () => {
+      const lowLoad = forecastCapacity({
+        observedTrafficRps: 500,
+        feedCount: 10,
+        providerLoadPct: 20,
+        capacityRps: 2000,
+      });
+      const highLoad = forecastCapacity({
+        observedTrafficRps: 500,
+        feedCount: 10,
+        providerLoadPct: 80,
+        capacityRps: 2000,
+      });
+
+      const lowWidth = lowLoad.confidenceInterval.upperRps - lowLoad.confidenceInterval.lowerRps;
+      const highWidth = highLoad.confidenceInterval.upperRps - highLoad.confidenceInterval.lowerRps;
+      expect(highWidth).toBeGreaterThan(lowWidth);
+    });
+
+    it('should handle boundary case of zero feeds without dividing by zero', () => {
+      const result = forecastCapacity({
+        observedTrafficRps: 0,
+        feedCount: 0,
+        providerLoadPct: 0,
+        capacityRps: 1000,
+      });
+
+      expect(result.perFeedRps).toBe(0);
+      expect(Number.isFinite(result.headroomRps)).toBe(true);
+      expect(result.headroomRps).toBe(1000);
+    });
+
+    it('should report negative headroom when demand exceeds usable capacity', () => {
+      const result = forecastCapacity({
+        observedTrafficRps: 1900,
+        feedCount: 50,
+        providerLoadPct: 50,
+        capacityRps: 2000,
+      });
+
+      expect(result.usableCapacityRps).toBe(1000);
+      expect(result.headroomRps).toBeLessThan(0);
+      expect(result.headroomPct).toBeLessThan(0);
+    });
+
+    it('should flag degraded inputs (provider load at saturation)', () => {
+      const result = forecastCapacity({
+        observedTrafficRps: 100,
+        feedCount: 5,
+        providerLoadPct: 100,
+        capacityRps: 2000,
+      });
+
+      expect(result.usableCapacityRps).toBe(0);
+      expect(result.headroomRps).toBe(-100);
+      expect(result.headroomPct).toBe(0);
+    });
+
+    it('should reject or clamp invalid negative inputs', () => {
+      const sanitize = (inputs: CapacityInputs): CapacityInputs => ({
+        observedTrafficRps: Math.max(0, inputs.observedTrafficRps),
+        feedCount: Math.max(0, inputs.feedCount),
+        providerLoadPct: Math.min(100, Math.max(0, inputs.providerLoadPct)),
+        capacityRps: Math.max(0, inputs.capacityRps),
+      });
+
+      const sanitized = sanitize({
+        observedTrafficRps: -50,
+        feedCount: -3,
+        providerLoadPct: 150,
+        capacityRps: -1000,
+      });
+
+      expect(sanitized.observedTrafficRps).toBe(0);
+      expect(sanitized.feedCount).toBe(0);
+      expect(sanitized.providerLoadPct).toBe(100);
+      expect(sanitized.capacityRps).toBe(0);
+    });
+  });
+
   describe('Cost Model Feedback Loop', () => {
     it('should update cost model with forecast misses', () => {
       const costModel = {

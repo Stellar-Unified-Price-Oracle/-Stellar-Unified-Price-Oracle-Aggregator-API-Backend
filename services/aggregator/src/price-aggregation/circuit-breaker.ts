@@ -1,11 +1,43 @@
 import BigNumber from 'bignumber.js';
 import { NormalizedPrice } from '../infrastructure/types';
 import { logger } from '../observability/logger';
+import { alertManager } from '../observability/alert-manager';
 import { medianOnCommonScale, toScale } from './median';
+
+export interface SurgeLimitConfig {
+  // Maximum number of price evaluations allowed per rolling window before
+  // the breaker enters degraded (surge-limited) mode.
+  maxEvaluationsPerWindow: number;
+  // Rolling window length in milliseconds.
+  windowMs: number;
+  // Maximum number of sources allowed to be in recovery at once. When
+  // exceeded, remaining sources stay tripped instead of being retried,
+  // preventing a recovery stampede from blowing through provider quotas.
+  maxConcurrentRecoveries: number;
+  // Fraction (0-1) of the evaluation budget at which a warning alert fires.
+  alertThresholdRatio: number;
+}
+
+export const DEFAULT_SURGE_LIMITS: SurgeLimitConfig = {
+  maxEvaluationsPerWindow: 1000,
+  windowMs: 60_000,
+  maxConcurrentRecoveries: 5,
+  alertThresholdRatio: 0.8,
+};
 
 export interface CircuitBreakerConfig {
   deviationThreshold: number; // percentage (e.g., 20 for 20%)
   recoveryRequiredSuccesses: number; // consecutive successes needed to restore
+  surgeLimits?: Partial<SurgeLimitConfig>;
+}
+
+export interface SurgeState {
+  degraded: boolean;
+  windowStart: number;
+  evaluationsInWindow: number;
+  activeRecoveries: number;
+  rejectedEvaluations: number;
+  alertFired: boolean;
 }
 
 export interface SourceState {
@@ -20,9 +52,19 @@ export class CircuitBreaker {
   private trailingMedians: Map<string, BigNumber[]> = new Map();
   private medianHistorySize: number = 10;
   private config: CircuitBreakerConfig;
+  private surgeLimits: SurgeLimitConfig;
+  private surgeState: SurgeState = {
+    degraded: false,
+    windowStart: Date.now(),
+    evaluationsInWindow: 0,
+    activeRecoveries: 0,
+    rejectedEvaluations: 0,
+    alertFired: false,
+  };
 
   constructor(config: CircuitBreakerConfig) {
     this.config = config;
+    this.surgeLimits = { ...DEFAULT_SURGE_LIMITS, ...(config.surgeLimits ?? {}) };
   }
 
   /**
@@ -34,6 +76,17 @@ export class CircuitBreaker {
   } {
     const key = `${price.asset}:${price.source}`;
     const state = this.getOrCreateSourceState(key);
+
+    // Enforce surge limits before doing any work. When the rolling window
+    // budget is exhausted we degrade safely: the submission is treated as
+    // suspicious (excluded from aggregation) rather than hammering providers.
+    if (!this.admitEvaluation()) {
+      this.surgeState.rejectedEvaluations++;
+      state.suspicious = true;
+      state.lastSuspicionTime = Date.now();
+      state.consecutiveSuccesses = 0;
+      return { isSuspicious: true, deviation: 0 };
+    }
 
     const assetPrices = allPrices.filter((p) => p.asset === price.asset);
     if (assetPrices.length === 0) {
@@ -74,6 +127,14 @@ export class CircuitBreaker {
     } else {
       // Successful submission
       if (state.suspicious) {
+        // Cap concurrent recoveries so a mass failover does not trigger a
+        // recovery stampede that exceeds provider quotas or budgets.
+        if (this.surgeState.activeRecoveries >= this.surgeLimits.maxConcurrentRecoveries) {
+          logger.warn(
+            `Recovery deferred for ${key}: ${this.surgeState.activeRecoveries} concurrent recoveries at limit ${this.surgeLimits.maxConcurrentRecoveries}`,
+          );
+          return { isSuspicious: state.suspicious, deviation };
+        }
         state.consecutiveSuccesses++;
         if (state.consecutiveSuccesses >= this.config.recoveryRequiredSuccesses) {
           logger.info(
@@ -111,6 +172,7 @@ export class CircuitBreaker {
     totalSources: number;
     suspiciousSources: number;
     suspiciousSourcesList: Array<{ key: string; deviations: number }>;
+    surge: SurgeState & { limit: SurgeLimitConfig };
   } {
     const suspicious = this.getSuspiciousSources();
     return {
@@ -120,7 +182,66 @@ export class CircuitBreaker {
         key,
         deviations: state.deviations,
       })),
+      surge: { ...this.surgeState, limit: this.surgeLimits },
     };
+  }
+
+  /**
+   * Current surge state (for dashboards and tests).
+   */
+  getSurgeState(): SurgeState {
+    return { ...this.surgeState };
+  }
+
+  /**
+   * Admit or reject an evaluation against the rolling-window budget.
+   * Emits alerts as the budget approaches and reaches its limit.
+   */
+  private admitEvaluation(): boolean {
+    const now = Date.now();
+    if (now - this.surgeState.windowStart >= this.surgeLimits.windowMs) {
+      this.surgeState.windowStart = now;
+      this.surgeState.evaluationsInWindow = 0;
+      this.surgeState.degraded = false;
+      this.surgeState.alertFired = false;
+    }
+
+    const limit = this.surgeLimits.maxEvaluationsPerWindow;
+    const used = this.surgeState.evaluationsInWindow;
+
+    if (used >= limit) {
+      if (!this.surgeState.degraded) {
+        this.surgeState.degraded = true;
+        logger.error(
+          `Surge limit reached: ${used}/${limit} evaluations in ${this.surgeLimits.windowMs}ms; degrading safely`,
+        );
+        alertManager.raise({
+          severity: 'critical',
+          name: 'circuit_breaker_surge_limit_exhausted',
+          message: `Circuit breaker evaluation budget exhausted (${used}/${limit}); degrading to exclude new submissions`,
+          labels: { component: 'circuit-breaker' },
+        });
+      }
+      return false;
+    }
+
+    this.surgeState.evaluationsInWindow = used + 1;
+
+    const threshold = Math.floor(limit * this.surgeLimits.alertThresholdRatio);
+    if (!this.surgeState.alertFired && this.surgeState.evaluationsInWindow >= threshold) {
+      this.surgeState.alertFired = true;
+      logger.warn(
+        `Surge limit warning: ${this.surgeState.evaluationsInWindow}/${limit} evaluations used`,
+      );
+      alertManager.raise({
+        severity: 'warning',
+        name: 'circuit_breaker_surge_limit_approaching',
+        message: `Circuit breaker evaluation budget at ${this.surgeState.evaluationsInWindow}/${limit}`,
+        labels: { component: 'circuit-breaker' },
+      });
+    }
+
+    return true;
   }
 
   /**
@@ -136,6 +257,14 @@ export class CircuitBreaker {
    */
   resetAll(): void {
     this.sourceStates.clear();
+    this.surgeState = {
+      degraded: false,
+      windowStart: Date.now(),
+      evaluationsInWindow: 0,
+      activeRecoveries: 0,
+      rejectedEvaluations: 0,
+      alertFired: false,
+    };
     logger.info('All circuit breakers reset');
   }
 

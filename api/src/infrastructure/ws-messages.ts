@@ -61,6 +61,11 @@ export interface ErrorMessage {
   type: ServerMessageType.Error;
   code?: string;
   message: string;
+  /**
+   * Assets that were rejected because the credential's feed scopes do not
+   * cover them. Present only on scope-denied errors (code `scope_denied`).
+   */
+  deniedAssets?: string[];
 }
 
 export interface SubscribedMessage {

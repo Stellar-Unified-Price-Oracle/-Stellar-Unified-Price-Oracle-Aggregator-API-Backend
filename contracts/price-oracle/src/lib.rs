@@ -12,12 +12,15 @@ mod governance;
 mod merkle;
 mod multisig;
 mod proxy;
+pub mod samples;
 pub mod storage;
 mod types;
 mod utils;
 
 #[cfg(test)]
 mod compat_test;
+#[cfg(test)]
+mod consumer_sim_test;
 #[cfg(test)]
 mod events_test;
 #[cfg(test)]
@@ -29,11 +32,15 @@ mod governance_test;
 #[cfg(test)]
 mod merkle_test;
 #[cfg(test)]
+mod migration_attestation_test;
+#[cfg(test)]
 mod proxy_test;
 #[cfg(test)]
 mod ring_buffer_history_test;
 #[cfg(test)]
 mod reputation_decay_test;
+#[cfg(test)]
+mod selective_pause_test;
 #[cfg(test)]
 mod staking_test;
 #[cfg(test)]
@@ -44,6 +51,10 @@ mod test;
 mod timestamp_monotonicity_test;
 #[cfg(test)]
 mod upgrade_migration_test;
+#[cfg(test)]
+mod feed_catalog_test;
+#[cfg(test)]
+mod upgrade_rehearsal_test;
 
 pub use contract::PriceOracleContract;
 pub use governance::GovernanceContract;

@@ -853,4 +853,189 @@ mod tests_impl {
         let dummy = <Address as TestAddress>::generate(&env);
         assert!(client.try_add_oracle_source(&admin, &dummy, &String::from_str(&env, "Fail")).is_err());
     }
+
+    // ── Issue #726: Stable contract read snapshot interface ────────────────────
+
+    #[test]
+    fn test_snapshot_normal_read_is_consistent() {
+        let (env, client, _admin, oracle) = setup();
+        let asset = String::from_str(&env, "XLM");
+        let ts = env.ledger().timestamp();
+
+        client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &ts);
+
+        let snapshot = client
+            .get_price_snapshot(&asset)
+            .expect("snapshot should exist");
+
+        // Price, timestamps and policy version are returned together and agree
+        assert_eq!(snapshot.price.price, 100_000_000);
+        assert_eq!(snapshot.price.decimals, 7);
+        assert_eq!(snapshot.price.asset, asset);
+        assert_eq!(snapshot.price.timestamp, ts);
+        assert_eq!(snapshot.observed_at, ts);
+        assert_eq!(snapshot.policy_version, client.get_policy_version());
+    }
+
+    #[test]
+    fn test_snapshot_missing_price_returns_none() {
+        let (env, client, _admin, _oracle) = setup();
+        let asset = String::from_str(&env, "NONEXISTENT");
+
+        let result = client.try_get_price_snapshot(&asset);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_snapshot_boundary_timestamps() {
+        let (env, client, _admin, oracle) = setup();
+        let asset = String::from_str(&env, "XLM");
+
+        // Zero timestamp is a valid boundary
+        client.submit_price(&oracle, &asset, &1i128, &7u32, &0u64);
+        let snap_zero = client
+            .get_price_snapshot(&asset)
+            .expect("snapshot should exist");
+        assert_eq!(snap_zero.price.timestamp, 0);
+        assert_eq!(snap_zero.observed_at, 0);
+
+        // Max u64 timestamp is a valid boundary
+        let max_ts = u64::MAX;
+        client.submit_price(&oracle, &asset, &2i128, &7u32, &max_ts);
+        let snap_max = client
+            .get_price_snapshot(&asset)
+            .expect("snapshot should exist");
+        assert_eq!(snap_max.price.timestamp, max_ts);
+        assert_eq!(snap_max.observed_at, max_ts);
+    }
+
+    #[test]
+    fn test_snapshot_reflects_policy_version_change() {
+        let (env, client, admin, oracle) = setup();
+        let asset = String::from_str(&env, "XLM");
+
+        client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &env.ledger().timestamp());
+
+        let before = client
+            .get_price_snapshot(&asset)
+            .expect("snapshot should exist");
+        let version_before = before.policy_version;
+
+        // Bump the policy version
+        client.set_policy_version(&admin, &(version_before + 1));
+
+        let after = client
+            .get_price_snapshot(&asset)
+            .expect("snapshot should exist");
+        assert_eq!(after.policy_version, version_before + 1);
+        assert_ne!(after.policy_version, version_before);
+    }
+
+    // ── Issue #724: Consumer-verifiable price evidence ─────────────────────────
+
+    #[test]
+    fn test_evidence_valid_verifies_true() {
+        let (env, client, _admin, oracle) = setup();
+        let asset = String::from_str(&env, "XLM");
+
+        client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &env.ledger().timestamp());
+
+        let evidence = client
+            .get_price_evidence(&asset)
+            .expect("evidence should exist");
+
+        assert!(client.verify_price_evidence(&evidence));
+    }
+
+    #[test]
+    fn test_evidence_tampered_price_fails_verification() {
+        let (env, client, _admin, oracle) = setup();
+        let asset = String::from_str(&env, "XLM");
+
+        client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &env.ledger().timestamp());
+
+        let mut evidence = client
+            .get_price_evidence(&asset)
+            .expect("evidence should exist");
+
+        // Tamper with the published price
+        evidence.price.price += 1;
+
+        assert!(!client.verify_price_evidence(&evidence));
+    }
+
+    #[test]
+    fn test_evidence_version_mismatch_fails_verification() {
+        let (env, client, _admin, oracle) = setup();
+        let asset = String::from_str(&env, "XLM");
+
+        client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &env.ledger().timestamp());
+
+        let mut evidence = client
+            .get_price_evidence(&asset)
+            .expect("evidence should exist");
+
+        // Claim an unsupported evidence version
+        evidence.version = crate::types::EVIDENCE_VERSION + 1;
+
+        assert!(!client.verify_price_evidence(&evidence));
+    }
+
+    #[test]
+    fn test_evidence_missing_returns_none() {
+        let (env, client, _admin, _oracle) = setup();
+        let asset = String::from_str(&env, "NONEXISTENT");
+
+        let result = client.try_get_price_evidence(&asset);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    // ── Issue #728: Event shapes and version tags ──────────────────────────────
+
+    #[test]
+    fn test_price_submission_event_shape_and_version() {
+        let (env, client, _admin, oracle) = setup();
+        let asset = String::from_str(&env, "XLM");
+
+        client.submit_price(&oracle, &asset, &100_000_000i128, &7u32, &env.ledger().timestamp());
+
+        let events = env.events().all();
+        let mut found = false;
+        for event in events.iter() {
+            let topics = event.1;
+            if topics.len() >= 2 {
+                let topic0: soroban_sdk::Symbol = topics.get(0).unwrap().into_val(&env);
+                if topic0 == soroban_sdk::Symbol::new(&env, "price_submitted") {
+                    let version: u32 = topics.get(1).unwrap().into_val(&env);
+                    assert_eq!(version, crate::events::EVENT_VERSION);
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "price_submitted event with version tag not emitted");
+    }
+
+    #[test]
+    fn test_policy_version_event_shape_and_version() {
+        let (env, client, admin, _oracle) = setup();
+
+        client.set_policy_version(&admin, &1u32);
+
+        let events = env.events().all();
+        let mut found = false;
+        for event in events.iter() {
+            let topics = event.1;
+            if topics.len() >= 2 {
+                let topic0: soroban_sdk::Symbol = topics.get(0).unwrap().into_val(&env);
+                if topic0 == soroban_sdk::Symbol::new(&env, "policy_version_set") {
+                    let version: u32 = topics.get(1).unwrap().into_val(&env);
+                    assert_eq!(version, crate::events::EVENT_VERSION);
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "policy_version_set event with version tag not emitted");
+    }
 }
