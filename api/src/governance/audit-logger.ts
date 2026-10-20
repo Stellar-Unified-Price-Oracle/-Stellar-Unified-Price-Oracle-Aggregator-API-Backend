@@ -2,12 +2,18 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import winston from 'winston';
 import { decryptSecret } from './crypto';
 import { logger } from '../observability/logger';
 import {
+  auditAppendsTotal,
+  auditAppendDuration,
   auditChainValid,
   auditChainVerificationTotal,
+  auditEntriesArchivedTotal,
   auditEventsTotal,
+  auditRetentionFailuresTotal,
+  auditRetentionRunsTotal,
 } from '../observability/metrics';
 
 export type AuditEvent =
@@ -38,7 +44,16 @@ export type AuditEvent =
   | 'governance.emergency_execute'
   | 'multisig.proposal_created'
   | 'multisig.proposal_approved'
-  | 'multisig.proposal_executed';
+  | 'multisig.proposal_executed'
+  | 'governance.signer_roster_updated'
+  | 'governance.concentration_snapshot_recorded'
+  | 'governance.stage_transition'
+  | 'governance.execution_reconciled'
+  | 'governance.remediation_updated'
+  | 'governance.grant_registered'
+  | 'governance.grant_evidence_submitted'
+  | 'governance.grant_status_changed'
+  | 'governance.grant_outcome_recorded';
 
 /**
  * Every entry carries the writer and key that produced it. Entries form one
@@ -63,11 +78,71 @@ export interface AuditEntry {
   hmac: string;
 }
 
+export const AUDIT_LOG_DIR = process.env.AUDIT_LOG_DIR
+  ? path.resolve(process.env.AUDIT_LOG_DIR)
+  : process.env.AUDIT_LOG_FILE
+    ? path.dirname(path.resolve(process.env.AUDIT_LOG_FILE))
+    : path.resolve(process.cwd(), 'logs');
+
 export const AUDIT_LOG_FILE = process.env.AUDIT_LOG_FILE
   ? path.resolve(process.env.AUDIT_LOG_FILE)
-  : path.resolve(process.cwd(), 'logs/audit.log');
+  : path.join(AUDIT_LOG_DIR, 'audit.log');
 
 const EMIT_STDOUT = process.env.AUDIT_STDOUT !== 'false';
+
+export const auditRetentionDays = parseInt(process.env.AUDIT_RETENTION_DAYS || '90', 10);
+
+const AUDIT_ARCHIVE_DIR = path.join(AUDIT_LOG_DIR, 'audit-archive');
+const AUDIT_RETENTION_LOCK = path.join(AUDIT_LOG_DIR, '.audit-retention.lock');
+const AUDIT_LOG_TMP = path.join(AUDIT_LOG_DIR, `.audit.log.${process.pid}.tmp`);
+const LOCK_STALE_MS = 10 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_SWEEP_MS = 60 * 60 * 1000;
+
+export const auditRetentionSweepIntervalMs =
+  parseInt(process.env.AUDIT_RETENTION_SWEEP_MS || '', 10) > 0
+    ? parseInt(process.env.AUDIT_RETENTION_SWEEP_MS || '', 10)
+    : DEFAULT_SWEEP_MS;
+
+export interface AuditRetentionResult {
+  status: 'completed' | 'skipped' | 'failed';
+  total: number;
+  kept: number;
+  archived: number;
+  archiveDir?: string;
+  error?: string;
+}
+
+export function getAuditLogPaths(): { dir: string; file: string; archiveDir: string; lock: string } {
+  return {
+    dir: AUDIT_LOG_DIR,
+    file: AUDIT_LOG_FILE,
+    archiveDir: AUDIT_ARCHIVE_DIR,
+    lock: AUDIT_RETENTION_LOCK,
+  };
+}
+
+let auditLogDirReady = false;
+
+function ensureAuditLogDir(): void {
+  if (auditLogDirReady) return;
+  fs.mkdirSync(AUDIT_LOG_DIR, { recursive: true });
+  auditLogDirReady = true;
+}
+
+function readAuditLines(contents: string): string[] {
+  return contents.split('\n').filter((line) => line.trim().length > 0);
+}
+
+function parseLine(line: string): AuditEntry | null {
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    if (!parsed || typeof parsed !== 'object' || !('event' in parsed)) return null;
+    return parsed as AuditEntry;
+  } catch {
+    return null;
+  }
+}
 
 function openAuditLogger(file: string): winston.Logger {
   return winston.createLogger({
@@ -197,6 +272,32 @@ export function readAuditEntries(file: string = activeAuditLogFile): AuditEntry[
       }
     })
     .filter((entry): entry is AuditEntry => !!entry);
+}
+
+/**
+ * The tamper-evident chain spans the archive and the active log, so a
+ * verification run has to read both (issue #599).
+ */
+export function readAuditChain(): AuditEntry[] {
+  const entries: AuditEntry[] = [];
+  const collect = (file: string): void => {
+    if (!fs.existsSync(file)) return;
+    for (const line of readAuditLines(fs.readFileSync(file, 'utf8'))) {
+      const entry = parseLine(line);
+      if (entry) entries.push(entry);
+    }
+  };
+
+  if (fs.existsSync(AUDIT_ARCHIVE_DIR)) {
+    const archives = fs
+      .readdirSync(AUDIT_ARCHIVE_DIR)
+      .filter((file) => file.endsWith('.jsonl'))
+      .sort();
+    for (const file of archives) collect(path.join(AUDIT_ARCHIVE_DIR, file));
+  }
+  collect(AUDIT_LOG_FILE);
+
+  return entries;
 }
 
 /**
@@ -331,31 +432,9 @@ export function startAuditChainVerification(
   return timer;
 }
 
-export function enforceAuditRetention(retentionDays = auditRetentionDays): number {
+function releaseRetentionLock(): void {
   try {
-    if (!fs.existsSync(activeAuditLogFile)) return 0;
-    const contents = fs.readFileSync(activeAuditLogFile, 'utf8');
-    const entries = contents
-      .split('\n')
-      .filter((line) => line.trim())
-      .map((line) => {
-        try {
-          return JSON.parse(line) as AuditEntry;
-        } catch {
-          return null;
-        }
-      })
-      .filter((entry): entry is AuditEntry => !!entry)
-      .filter((entry) => {
-        const timestampMs = new Date(entry.timestamp).getTime();
-        if (Number.isNaN(timestampMs)) return true;
-        const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-        return timestampMs >= cutoffMs;
-      });
-
-    const output = entries.map((entry) => JSON.stringify(entry)).join('\n') + (entries.length ? '\n' : '');
-    fs.writeFileSync(activeAuditLogFile, output, 'utf8');
-    return entries.length;
+    if (fs.existsSync(AUDIT_RETENTION_LOCK)) fs.unlinkSync(AUDIT_RETENTION_LOCK);
   } catch {
     /* a stale lock is recovered by the staleness check on the next run */
   }
@@ -661,21 +740,19 @@ export function auditLog(
   writerSeq = seq;
 
   const entry: AuditEntry = { ...data, hmac };
+  const startedAt = performance.now();
   auditFileLogger.info('audit', entry);
   if (EMIT_STDOUT) process.stdout.write(`${JSON.stringify(entry)}\n`);
-  auditEventsTotal.inc({ result: 'appended' });
-  enforceAuditRetention();
-}
 
   try {
     ensureAuditLogDir();
-    fs.appendFileSync(AUDIT_LOG_FILE, `${JSON.stringify(entry)}\n`, 'utf8');
+    fs.appendFileSync(activeAuditLogFile, `${JSON.stringify(entry)}\n`, 'utf8');
     auditAppendsTotal.inc({ status: 'ok' });
   } catch (err) {
     auditAppendsTotal.inc({ status: 'failed' });
     logger.error('Failed to append audit entry', {
       event,
-      file: AUDIT_LOG_FILE,
+      file: activeAuditLogFile,
       error: err instanceof Error ? err.message : String(err),
       severity: 'error',
       alert: 'audit-write',
@@ -683,4 +760,6 @@ export function auditLog(
   } finally {
     auditAppendDuration.observe({ status: 'ok' }, (performance.now() - startedAt) / 1000);
   }
+
+  auditEventsTotal.inc({ result: 'appended' });
 }
