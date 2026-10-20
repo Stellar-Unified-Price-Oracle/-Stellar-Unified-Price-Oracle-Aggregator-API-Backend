@@ -58,6 +58,7 @@ const IGNORE_MOUNTED = new Map([
   ['/api/v1/releases',       'Release notes endpoint; not yet in the public OpenAPI spec'],
   ['/api/v1/sandbox',        'Sandbox environment endpoint; not yet in the public OpenAPI spec'],
   ['/api/v1/governance',     'On-chain governance proposals; not yet in the public OpenAPI spec'],
+  ['/api/v1/governance/decentralization', 'Governance/decentralization reporting (issues #782-#785); documented in docs/GOVERNANCE_ACCOUNTABILITY.md and admin-only, like the rest of /api/v1/governance'],
   ['/api/v1/status',         'Operational status page; not yet in the public OpenAPI spec'],
   ['/api/v1/admin',          'Admin-only management surface; intentionally excluded from public spec'],
   ['/api/v1',                'Platform routes (plugins, lineage, self-healing, rate-limits, compliance); not yet in public spec'],

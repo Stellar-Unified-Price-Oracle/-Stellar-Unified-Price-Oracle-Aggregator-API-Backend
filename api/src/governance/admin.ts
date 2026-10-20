@@ -1,5 +1,12 @@
 import { Router, Request, Response } from 'express';
-import { apiKeyManager, TIER_RATE_LIMITS, KeyTier } from './api-key-manager';
+import {
+  apiKeyManager,
+  TIER_RATE_LIMITS,
+  KeyTier,
+  KeyStoreWriteError,
+  type GeneratedApiKey,
+} from './api-key-manager';
+import { keyMutation } from './key-mutation';
 import { clampOverride } from '../platform/limit-model';
 import { corsManager } from './cors-manager';
 import { recordComplianceAudit } from './compliance';
@@ -211,7 +218,7 @@ router.put('/keys/:keyHash/rate-limit', requireRole('operator', 'keys:write'), k
       clamped: decision.clamped,
     },
   });
-});
+}));
 
 router.post('/keys/:keyHash/revoke', requireRole('operator', 'keys:write'), keyMutation(async (req: Request, res: Response) => {
   const existing = guardTargetKey(req, res);

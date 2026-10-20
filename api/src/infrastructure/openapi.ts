@@ -174,7 +174,7 @@ const options: swaggerJsdoc.Options = {
         get: {
           operationId: 'exportUsage',
           tags: ['Consumer'],
-          summary: 'Privacy-safe machine-readable export of the caller's own request usage (no cross-tenant data)',
+          summary: 'Privacy-safe machine-readable export of the caller\'s own request usage (no cross-tenant data)',
           parameters: [
             { in: 'query', name: 'from', schema: { type: 'number' }, description: 'Window start, Unix seconds' },
             { in: 'query', name: 'to', schema: { type: 'number' }, description: 'Window end, Unix seconds' },
@@ -213,7 +213,7 @@ const options: swaggerJsdoc.Options = {
         get: {
           operationId: 'exportUsageV2',
           tags: ['Consumer'],
-          summary: 'Privacy-safe usage export of the caller's own requests (v2 envelope)',
+          summary: 'Privacy-safe usage export of the caller\'s own requests (v2 envelope)',
           responses: { 200: { description: 'Tenant-scoped usage export' }, 401: { description: 'API key required' } },
         },
       },
@@ -225,6 +225,7 @@ const options: swaggerJsdoc.Options = {
           responses: { 200: { description: 'Objective attainment' }, 401: { description: 'API key required' } },
         },
       },
+      '/api/v1/history/{asset}': {
         get: {
           operationId: 'getPriceHistory',
           tags: ['Prices'],
