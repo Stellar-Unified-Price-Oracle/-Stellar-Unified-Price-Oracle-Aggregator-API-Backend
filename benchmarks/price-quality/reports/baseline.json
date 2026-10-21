@@ -1,0 +1,451 @@
+{
+  "corpusVersion": "1",
+  "corpusSha256": "87def83d9a7ccf1d199b6b6f3400c59e1a839d8840571bdea58325a0d817c1c5",
+  "predictionsSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "interpretation": "Observed source-count-ratio score bands, not probability guarantees. 100 bps is a review budget, not a validated SLA. No matched production outputs means no production calibration claim.",
+  "calibration2024": {
+    "version": "1",
+    "confidenceVersion": "source-count-ratio-v1",
+    "start": 1704153600,
+    "end": 1735776000,
+    "acceptableErrorBps": 100,
+    "minSamples": 30,
+    "eligibleReferences": 732,
+    "matched": 0,
+    "unmatched": 0,
+    "outsideWindow": 0,
+    "unverifiedAge": 0,
+    "coverage": 0,
+    "curve": [
+      {
+        "lower": 0,
+        "upper": 0.2,
+        "count": 0,
+        "meanConfidence": null,
+        "meanErrorBps": null,
+        "p95ErrorBps": null,
+        "withinBoundRate": null,
+        "wilsonLower95": null,
+        "status": "insufficient-data"
+      },
+      {
+        "lower": 0.2,
+        "upper": 0.4,
+        "count": 0,
+        "meanConfidence": null,
+        "meanErrorBps": null,
+        "p95ErrorBps": null,
+        "withinBoundRate": null,
+        "wilsonLower95": null,
+        "status": "insufficient-data"
+      },
+      {
+        "lower": 0.4,
+        "upper": 0.6,
+        "count": 0,
+        "meanConfidence": null,
+        "meanErrorBps": null,
+        "p95ErrorBps": null,
+        "withinBoundRate": null,
+        "wilsonLower95": null,
+        "status": "insufficient-data"
+      },
+      {
+        "lower": 0.6,
+        "upper": 0.8,
+        "count": 0,
+        "meanConfidence": null,
+        "meanErrorBps": null,
+        "p95ErrorBps": null,
+        "withinBoundRate": null,
+        "wilsonLower95": null,
+        "status": "insufficient-data"
+      },
+      {
+        "lower": 0.8,
+        "upper": 1,
+        "count": 0,
+        "meanConfidence": null,
+        "meanErrorBps": null,
+        "p95ErrorBps": null,
+        "withinBoundRate": null,
+        "wilsonLower95": null,
+        "status": "insufficient-data"
+      }
+    ]
+  },
+  "heldOut2025": {
+    "version": "1",
+    "confidenceVersion": "source-count-ratio-v1",
+    "start": 1735776000,
+    "end": 1767312000,
+    "acceptableErrorBps": 100,
+    "minSamples": 30,
+    "eligibleReferences": 730,
+    "matched": 0,
+    "unmatched": 0,
+    "outsideWindow": 0,
+    "unverifiedAge": 0,
+    "coverage": 0,
+    "curve": [
+      {
+        "lower": 0,
+        "upper": 0.2,
+        "count": 0,
+        "meanConfidence": null,
+        "meanErrorBps": null,
+        "p95ErrorBps": null,
+        "withinBoundRate": null,
+        "wilsonLower95": null,
+        "status": "insufficient-data"
+      },
+      {
+        "lower": 0.2,
+        "upper": 0.4,
+        "count": 0,
+        "meanConfidence": null,
+        "meanErrorBps": null,
+        "p95ErrorBps": null,
+        "withinBoundRate": null,
+        "wilsonLower95": null,
+        "status": "insufficient-data"
+      },
+      {
+        "lower": 0.4,
+        "upper": 0.6,
+        "count": 0,
+        "meanConfidence": null,
+        "meanErrorBps": null,
+        "p95ErrorBps": null,
+        "withinBoundRate": null,
+        "wilsonLower95": null,
+        "status": "insufficient-data"
+      },
+      {
+        "lower": 0.6,
+        "upper": 0.8,
+        "count": 0,
+        "meanConfidence": null,
+        "meanErrorBps": null,
+        "p95ErrorBps": null,
+        "withinBoundRate": null,
+        "wilsonLower95": null,
+        "status": "insufficient-data"
+      },
+      {
+        "lower": 0.8,
+        "upper": 1,
+        "count": 0,
+        "meanConfidence": null,
+        "meanErrorBps": null,
+        "p95ErrorBps": null,
+        "withinBoundRate": null,
+        "wilsonLower95": null,
+        "status": "insufficient-data"
+      }
+    ]
+  },
+  "perAsset": {
+    "BTC": {
+      "calibration2024": {
+        "version": "1",
+        "confidenceVersion": "source-count-ratio-v1",
+        "start": 1704153600,
+        "end": 1735776000,
+        "acceptableErrorBps": 100,
+        "minSamples": 30,
+        "eligibleReferences": 366,
+        "matched": 0,
+        "unmatched": 0,
+        "outsideWindow": 0,
+        "unverifiedAge": 0,
+        "coverage": 0,
+        "curve": [
+          {
+            "lower": 0,
+            "upper": 0.2,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.2,
+            "upper": 0.4,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.4,
+            "upper": 0.6,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.6,
+            "upper": 0.8,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.8,
+            "upper": 1,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          }
+        ]
+      },
+      "heldOut2025": {
+        "version": "1",
+        "confidenceVersion": "source-count-ratio-v1",
+        "start": 1735776000,
+        "end": 1767312000,
+        "acceptableErrorBps": 100,
+        "minSamples": 30,
+        "eligibleReferences": 365,
+        "matched": 0,
+        "unmatched": 0,
+        "outsideWindow": 0,
+        "unverifiedAge": 0,
+        "coverage": 0,
+        "curve": [
+          {
+            "lower": 0,
+            "upper": 0.2,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.2,
+            "upper": 0.4,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.4,
+            "upper": 0.6,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.6,
+            "upper": 0.8,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.8,
+            "upper": 1,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          }
+        ]
+      }
+    },
+    "ETH": {
+      "calibration2024": {
+        "version": "1",
+        "confidenceVersion": "source-count-ratio-v1",
+        "start": 1704153600,
+        "end": 1735776000,
+        "acceptableErrorBps": 100,
+        "minSamples": 30,
+        "eligibleReferences": 366,
+        "matched": 0,
+        "unmatched": 0,
+        "outsideWindow": 0,
+        "unverifiedAge": 0,
+        "coverage": 0,
+        "curve": [
+          {
+            "lower": 0,
+            "upper": 0.2,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.2,
+            "upper": 0.4,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.4,
+            "upper": 0.6,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.6,
+            "upper": 0.8,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.8,
+            "upper": 1,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          }
+        ]
+      },
+      "heldOut2025": {
+        "version": "1",
+        "confidenceVersion": "source-count-ratio-v1",
+        "start": 1735776000,
+        "end": 1767312000,
+        "acceptableErrorBps": 100,
+        "minSamples": 30,
+        "eligibleReferences": 365,
+        "matched": 0,
+        "unmatched": 0,
+        "outsideWindow": 0,
+        "unverifiedAge": 0,
+        "coverage": 0,
+        "curve": [
+          {
+            "lower": 0,
+            "upper": 0.2,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.2,
+            "upper": 0.4,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.4,
+            "upper": 0.6,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.6,
+            "upper": 0.8,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          },
+          {
+            "lower": 0.8,
+            "upper": 1,
+            "count": 0,
+            "meanConfidence": null,
+            "meanErrorBps": null,
+            "p95ErrorBps": null,
+            "withinBoundRate": null,
+            "wilsonLower95": null,
+            "status": "insufficient-data"
+          }
+        ]
+      }
+    }
+  },
+  "freshness": {
+    "policy": {
+      "minAgeMs": 5000,
+      "baseAgeMs": 30000,
+      "hardMaxAgeMs": 60000,
+      "sensitivity": 10
+    },
+    "comparisons": 10220,
+    "adaptiveAccepted": 4380,
+    "fixedAccepted": 5840,
+    "hardLimitViolations": 0,
+    "limitation": "Daily historical volatility with synthetic age probes; not an intraday latency or trading backtest."
+  }
+}

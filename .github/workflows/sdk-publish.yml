@@ -1,4 +1,7 @@
 name: Publish SDKs
+concurrency:
+  group: sdk-publish-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   workflow_dispatch:
