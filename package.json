@@ -45,7 +45,8 @@
     "validate:prices": "node scripts/validate-price-correctness.mjs",
     "rent:extend": "tsx scripts/extend-ttl-job.ts",
     "install:all": "npm install",
-    "prepare": "(husky || true) && npm run build:packages"
+    "prepare": "(husky || true) && npm run build:packages",
+    "quality:report": "tsx scripts/price-quality-report.ts"
   },
   "devDependencies": {
     "husky": "^9.1.0"
