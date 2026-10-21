@@ -491,6 +491,9 @@ async function main(): Promise<void> {
     }
     logger.info('Vault secrets engine initialized');
   } catch (err) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(`Vault is required in production and is unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    }
     logger.warn('Vault not available — using environment-based secrets fallback', err);
   }
 

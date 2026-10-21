@@ -130,6 +130,9 @@ async function initializeApp(): Promise<void> {
     }, 30_000);
     keyRefreshTimer.unref();
   } catch (err) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(`Vault is required in production and is unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    }
     logger.warn('Vault not available — using in-memory API key store fallback', err);
   }
 

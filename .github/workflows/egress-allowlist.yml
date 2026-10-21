@@ -1,4 +1,7 @@
 name: Egress allowlist — blocked destination tests
+concurrency:
+  group: egress-allowlist-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # #394: Run after every change to k8s network policies or Terraform SG module.
 # Also runs nightly to catch FQDN drift.
