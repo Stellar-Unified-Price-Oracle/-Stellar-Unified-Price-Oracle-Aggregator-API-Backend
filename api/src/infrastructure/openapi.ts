@@ -225,6 +225,61 @@ const options: swaggerJsdoc.Options = {
           responses: { 200: { description: 'Objective attainment' }, 401: { description: 'API key required' } },
         },
       },
+      '/api/v2/consumer/snapshots/{asset}': {
+        get: {
+          operationId: 'getSignedSnapshot',
+          tags: ['Consumer'],
+          summary: 'Cryptographically signed price snapshot binding feed identity, price, precision, observation time, policy version and key id (#708)',
+          parameters: [
+            { in: 'path', name: 'asset', required: true, schema: { type: 'string' }, description: 'Asset symbol' },
+          ],
+          responses: { 200: { description: 'SchemaVersion 2 signed snapshot; verify with snapshot-verifier' }, 401: { description: 'API key required' }, 404: { description: 'No price data' } },
+        },
+      },
+      '/api/v2/consumer/feeds': {
+        get: {
+          operationId: 'listConsumerFeeds',
+          tags: ['Consumer'],
+          summary: 'Feed catalog for consumers with network, quote unit, source coverage and lifecycle state filters (#709)',
+          parameters: [
+            { in: 'query', name: 'network', schema: { type: 'string' }, description: 'mainnet or testnet' },
+            { in: 'query', name: 'quoteUnit', schema: { type: 'string' }, description: 'Quote unit parsed from the feed id, e.g. USD' },
+            { in: 'query', name: 'sourceCoverage', schema: { type: 'integer' }, description: 'Minimum eligible source count' },
+            { in: 'query', name: 'lifecycleState', schema: { type: 'string' }, description: 'Feed lifecycle state' },
+          ],
+          responses: { 200: { description: 'Offset-paginated feed list with stable feedId ordering' } },
+        },
+      },
+      '/api/v2/consumer/exports': {
+        post: {
+          operationId: 'createHistoricalExport',
+          tags: ['Consumer'],
+          summary: 'Request a bounded asynchronous historical export job (202 accepted, poll status) (#710)',
+          responses: { 202: { description: 'Export job accepted' }, 400: { description: 'Invalid request body' }, 401: { description: 'API key required' } },
+        },
+      },
+      '/api/v2/consumer/exports/{jobId}': {
+        get: {
+          operationId: 'getHistoricalExport',
+          tags: ['Consumer'],
+          summary: 'Export job status, progress, checksum and download URL (#710)',
+          parameters: [
+            { in: 'path', name: 'jobId', required: true, schema: { type: 'string' }, description: 'Export job id' },
+          ],
+          responses: { 200: { description: 'Job status with progress and integrity metadata' }, 404: { description: 'Unknown job' } },
+        },
+      },
+      '/api/v2/consumer/exports/{jobId}/download': {
+        get: {
+          operationId: 'downloadHistoricalExport',
+          tags: ['Consumer'],
+          summary: 'Resumable export download with X-Export-Checksum and expiry (#710)',
+          parameters: [
+            { in: 'path', name: 'jobId', required: true, schema: { type: 'string' }, description: 'Export job id' },
+          ],
+          responses: { 200: { description: 'Export JSON payload' }, 400: { description: 'Export not ready' }, 410: { description: 'Export expired' } },
+        },
+      },
       '/api/v1/history/{asset}': {
         get: {
           operationId: 'getPriceHistory',
