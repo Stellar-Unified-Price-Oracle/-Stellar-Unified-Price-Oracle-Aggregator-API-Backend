@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "owner": "Feed catalog workstream (API team)",
+  "updatedAt": "2026-10-21",
+  "productionRegions": ["us-east-1", "eu-west-1", "ap-southeast-1"],
+  "runtimeEvidence": {
+    "status": "not-measured",
+    "measuredAt": null,
+    "limitations": ["This repository manifest describes configured provider and region coverage; it does not prove live provider availability or successful quotes."]
+  },
+  "feeds": [
+    {"feedId":"xlm-usd","asset":"XLM","sources":["chainlink","redstone","band","reflector"],"quorum":null,"limitations":["The production feed catalog has no checked-in quorum policy; catalog policies are process-local and are not persisted across API restarts.","Live provider availability is not verified by this matrix."]},
+    {"feedId":"usdc-usd","asset":"USDC","sources":["chainlink","redstone","band","reflector"],"quorum":null,"limitations":["The production feed catalog has no checked-in quorum policy; catalog policies are process-local and are not persisted across API restarts.","Live provider availability is not verified by this matrix."]},
+    {"feedId":"btc-usd","asset":"BTC","sources":["chainlink","redstone","band","reflector"],"quorum":null,"limitations":["The production feed catalog has no checked-in quorum policy; catalog policies are process-local and are not persisted across API restarts.","Live provider availability is not verified by this matrix."]},
+    {"feedId":"eth-usd","asset":"ETH","sources":["chainlink","redstone","band","reflector"],"quorum":null,"limitations":["The production feed catalog has no checked-in quorum policy; catalog policies are process-local and are not persisted across API restarts.","Live provider availability is not verified by this matrix."]},
+    {"feedId":"usdt-usd","asset":"USDT","sources":["chainlink","redstone","band","reflector"],"quorum":null,"limitations":["The production feed catalog has no checked-in quorum policy; catalog policies are process-local and are not persisted across API restarts.","Live provider availability is not verified by this matrix."]}
+  ]
+}
