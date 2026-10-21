@@ -111,6 +111,30 @@ export function computeFeedStats(
   return stats;
 }
 
+export function buildQualityReport(assets: string[], from: number, to: number, region?: string) {
+  const normalized = [...new Set(assets.map((asset) => asset.trim().toUpperCase()))].sort();
+  const selectedRegion = region ?? 'global';
+  const stats = computeFeedStats(undefined, selectedRegion, from, to);
+  const byAsset = new Map(stats.map((entry) => [entry.asset, entry]));
+  const feeds = normalized.map((asset) => {
+    const measured = byAsset.get(asset);
+    return measured
+      ? { asset, status: 'measured' as const, sampleCount: measured.sampleCount, freshness: measured.freshness, latency: measured.latency }
+      : { asset, status: 'no_data' as const, sampleCount: 0, freshness: null, latency: null };
+  });
+  const covered = feeds.filter((feed) => feed.status === 'measured').length;
+  const quality = feeds.filter((feed) => feed.status === 'measured' && feed.freshness!.staleCount === 0).length;
+  return {
+    reportVersion: '1.0.0',
+    window: { from, to },
+    region: selectedRegion,
+    feeds,
+    coverage: { requested: feeds.length, measured: covered, ratio: feeds.length ? covered / feeds.length : 1 },
+    quality: { feedsWithoutStaleSamples: quality, measuredFeeds: covered, ratio: covered ? quality / covered : null },
+    methodology: 'Samples are API price responses retained in the process-local 50,000 sample ring. Freshness is data age at delivery; stale means greater than 120,000 ms. Percentiles use linear interpolation over the selected Unix-second window.',
+  };
+}
+
 export function recordUsageEvent(event: UsageEvent): void {
   usageAnalytics.record(event);
 }
