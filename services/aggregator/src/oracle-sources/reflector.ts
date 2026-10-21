@@ -3,20 +3,9 @@ import { httpClient } from '../infrastructure/http-client';
 import { config } from '../infrastructure/config';
 import { NormalizedPrice, OracleSourceName } from '../infrastructure/types';
 import { BaseSource } from './base';
-import { resolveDecimals } from './decimals';
 import { DEFAULT_CAPABILITIES, type ProviderCapabilities } from './capabilities';
 import { providerEvidenceArchive } from '../persistence/provider-evidence-archive';
 import { parseProviderResponse, reportInvalidPayload, type ProviderSchemaName } from './response-validation';
-
-interface ReflectorPriceData {
-  price: string | number;
-  decimals?: number;
-  timestamp?: number;
-}
-
-interface ReflectorPricesResponse {
-  prices?: Record<string, ReflectorPriceData | undefined>;
-}
 
 export class ReflectorSource extends BaseSource {
   name: OracleSourceName = 'reflector';
@@ -31,7 +20,7 @@ export class ReflectorSource extends BaseSource {
   }
 
   async fetchPrice(asset: string): Promise<NormalizedPrice | null> {
-    const symbol = `Crypto.${asset}/USD`;
+    const symbol = `Crypto.${asset.toUpperCase()}/USD`;
     const response = await httpClient.get<unknown>(`${this.baseUrl}/v1/prices`, {
       params: { asset: symbol },
     });
@@ -57,11 +46,6 @@ export class ReflectorSource extends BaseSource {
       return null;
     }
 
-    return this.normalize(
-      asset,
-      data.price,
-      resolveDecimals(this.name, data.decimals),
-      data.timestamp ?? null,
-    );
+    return this.normalizeValidated(asset, result);
   }
 }

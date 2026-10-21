@@ -98,7 +98,7 @@ to bring the API back first, then call the `/admin/backup/*` endpoints directly 
 ### Tier 2 configuration
 
 `BackupService`'s snapshot cadence is controlled by `BACKUP_INTERVAL_MS`
-(`api/src/config.ts`, default `86400000` = 24h). To keep Tier 2 alone under the 5-minute
+(`api/src/infrastructure/config.ts`, default `86400000` = 24h). To keep Tier 2 alone under the 5-minute
 RPO target — i.e. even if Tier 1's WAL archive is unavailable — set:
 
 ```bash

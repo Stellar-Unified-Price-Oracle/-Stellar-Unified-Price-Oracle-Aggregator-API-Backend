@@ -82,7 +82,10 @@ npm run check:contracts
 make check-contracts
 ```
 
-They also run as the `config-contracts` CI job on every push and PR.
+They also run as the `config-contracts` CI job on every push and PR. The same
+job enforces the [secret-storage guard](./SECRET_STORAGE.md), the
+[workflow inventory](./CI_WORKFLOWS.md), and signed feed-catalog validation
+([releases](./FEED_CATALOG_RELEASES.md)).
 
 ### Env-var contract (`check:env` / `make check-env`)
 
@@ -128,3 +131,9 @@ from `PORT` in `.env.example`. Nothing should declare a listener on the base
 4. Follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages (e.g. `fix(api): ...`, `feat(aggregator): ...`, `docs: ...`).
 5. Open a PR against `main` with a concise summary, `Closes #<issue>` where applicable, and a note on what validation you ran.
 6. See [docs/runbooks/](runbooks/) for operational context and [docs/adr/](adr/) for architectural decisions that may affect your change.
+
+## Documentation contract
+
+Documentation changes are checked by `npm run check:docs` and the configuration-contract CI job. New runbooks and design documents must start with `**Owner:** <team or role>` and `**Review date:** YYYY-MM-DD`. Update the date whenever the operational procedure or design claim is reviewed.
+
+Keep claims mechanically checkable: cite repository paths as inline code, use exact environment variable names from `.env.example`, include exact metric and alert names from the exporter registries and `monitoring/`, and document endpoint paths from the mounted Express routes. Use executable commands that invoke checked-in scripts. CI reports the document, missing claim and source path. Environment, route and port contracts are checked by `check-env-contract.mjs`, `check-route-contract.mjs` and `check-port-consistency.mjs`; documentation path and metadata checks run with them. SLO definitions live only in `monitoring/slo.yml`; regenerate rules with `npm run generate:slo-rules` and verify with `npm run check:slo-rules`.

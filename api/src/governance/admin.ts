@@ -5,6 +5,8 @@ import {
   KeyTier,
   KeyStoreWriteError,
   type GeneratedApiKey,
+  normalizePolicyScope,
+  type KeyPolicyScope,
 } from './api-key-manager';
 import { keyMutation } from './key-mutation';
 import { clampOverride } from '../platform/limit-model';
@@ -190,6 +192,50 @@ router.put('/keys/:keyHash/tier', requireRole('operator', 'keys:write'), keyMuta
     success: true,
     data: { keyHash: req.params.keyHash, tier, rateLimitPerMin: TIER_RATE_LIMITS[tier as KeyTier] },
   });
+}));
+
+router.put('/consumer-entitlements/:keyHash', requireRole('operator', 'keys:write'), keyMutation(async (req: Request, res: Response) => {
+  const existing = guardTargetKey(req, res);
+  if (!existing) return;
+  const body = req.body ?? {};
+  const effectiveAt = typeof body.effectiveAt === 'string' ? Date.parse(body.effectiveAt) : NaN;
+  if (!Number.isFinite(effectiveAt) || !Array.isArray(body.feeds) || body.feeds.length === 0 || body.feeds.length > 100) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_ENTITLEMENTS', message: 'effectiveAt must be a valid ISO date and feeds must contain 1 to 100 feed identifiers' } });
+  }
+  if (body.feeds.some((feed: unknown) => typeof feed !== 'string' || !/^[A-Za-z0-9:_*./-]{1,100}$/.test(feed))) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_ENTITLEMENTS', message: 'feeds contains an invalid identifier' } });
+  }
+  const expiresAt = body.expiresAt === undefined ? undefined : typeof body.expiresAt === 'string' ? Date.parse(body.expiresAt) : NaN;
+  if (expiresAt !== undefined && (!Number.isFinite(expiresAt) || expiresAt <= effectiveAt)) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_ENTITLEMENTS', message: 'expiresAt must be a valid ISO date later than effectiveAt' } });
+  }
+  if (body.operations !== undefined && (!Array.isArray(body.operations) || body.operations.length === 0 || body.operations.some((item: unknown) => typeof item !== 'string'))) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_ENTITLEMENTS', message: 'operations must be a non-empty array of strings' } });
+  }
+  if (body.environments !== undefined && (!Array.isArray(body.environments) || body.environments.length === 0 || body.environments.some((item: unknown) => typeof item !== 'string'))) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_ENTITLEMENTS', message: 'environments must be a non-empty array of strings' } });
+  }
+  const policy: KeyPolicyScope = {
+    feeds: body.feeds as string[],
+    operations: body.operations === undefined ? ['read'] : body.operations as string[],
+    environments: body.environments === undefined ? ['production'] : body.environments as string[],
+    effectiveAt,
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
+  };
+  let normalized: KeyPolicyScope | undefined;
+  try { normalized = normalizePolicyScope(policy); } catch {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_ENTITLEMENTS', message: 'Entitlement policy is invalid' } });
+  }
+  await apiKeyManager.transact(() => apiKeyManager.updatePolicy(req.params.keyHash, normalized));
+  auditLog('admin.entitlements_updated', {
+    ip: req.ip,
+    userAgent: req.get('user-agent'),
+    apiKeyPrefix: req.apiKey?.substring(0, 8),
+    details: { keyPrefix: existing.keyPrefix, effectiveAt: new Date(effectiveAt).toISOString() },
+    prevState: { policy: existing.policy ?? null },
+    newState: { policy: normalized ?? null },
+  });
+  return res.json({ success: true, data: { keyPrefix: existing.keyPrefix, effectiveAt: new Date(effectiveAt).toISOString(), policy: normalized ?? null } });
 }));
 
 router.put('/keys/:keyHash/rate-limit', requireRole('operator', 'keys:write'), keyMutation(async (req: Request, res: Response) => {

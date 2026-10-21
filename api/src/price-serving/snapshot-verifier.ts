@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 
 /** Schema versions the client-side verifier accepts. Bump only with a new ADR. */
-export const SUPPORTED_SCHEMA_VERSIONS = [1];
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2];
 
 /** Trusted verification keys published by the oracle operator. */
 export interface TrustedKey {
@@ -31,6 +31,12 @@ export interface SignedPriceSnapshot {
   sources: string[];
   keyId: string;
   signature: string;
+  /** v2 — canonical feed identifier the snapshot was produced for. */
+  feedId?: string;
+  /** v2 — provider observation time (Unix seconds), bound separately from serve time. */
+  observedAt?: number | null;
+  /** v2 — feed-catalog policy version in force when the snapshot was signed. */
+  policyVersion?: number;
 }
 
 /** Outcome of verifying a snapshot. */
@@ -54,6 +60,22 @@ export interface VerificationResult {
 
 /** Canonical payload over which the signature is computed. Field order is fixed. */
 function canonicalPayload(snapshot: SignedPriceSnapshot): string {
+  if (snapshot.schemaVersion >= 2) {
+    // v2 binds the feed identity, observation time, catalog policy version and
+    // the signature key id so none of them can be swapped after signing.
+    return JSON.stringify({
+      schemaVersion: snapshot.schemaVersion,
+      feedId: snapshot.feedId ?? null,
+      asset: snapshot.asset,
+      price: snapshot.price,
+      decimals: snapshot.decimals,
+      timestamp: snapshot.timestamp,
+      observedAt: snapshot.observedAt ?? null,
+      policyVersion: snapshot.policyVersion ?? null,
+      sources: snapshot.sources,
+      keyId: snapshot.keyId,
+    });
+  }
   return JSON.stringify({
     schemaVersion: snapshot.schemaVersion,
     asset: snapshot.asset,
@@ -121,7 +143,7 @@ export function verifyPriceSnapshot(snapshot: SignedPriceSnapshot): Verification
 
   const provided = Buffer.from(snapshot.signature, 'hex');
   const expectedBuf = Buffer.from(expected, 'hex');
-  if (!crypto.timingSafeEqual(provided, expectedBuf)) {
+  if (provided.length !== expectedBuf.length || !crypto.timingSafeEqual(provided, expectedBuf)) {
     return {
       valid: false,
       rejection: {

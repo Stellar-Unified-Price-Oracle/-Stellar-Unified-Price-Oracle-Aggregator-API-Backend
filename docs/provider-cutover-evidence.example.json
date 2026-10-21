@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "provider": "band",
+  "fromVersion": "repository-v1",
+  "toVersion": "REPLACE_WITH_VERIFIED_VERSION",
+  "owner": "REPLACE_OWNER",
+  "reviewer": "REPLACE_INDEPENDENT_REVIEWER",
+  "reviewedAt": 0,
+  "decision": "no-go",
+  "fixtureReport": "REPLACE_ARTIFACT",
+  "upstreamContractEvidence": "REPLACE_OFFICIAL_REFERENCE",
+  "sandboxIsolationReport": "REPLACE_ARTIFACT",
+  "monitoringDashboard": "REPLACE_DASHBOARD",
+  "rollback": {
+    "owner": "REPLACE_OWNER",
+    "steps": "REPLACE_EXACT_PINNED_CONFIG_AND_COMMANDS",
+    "rehearsalReport": "REPLACE_ARTIFACT",
+    "recoverySeconds": 301
+  },
+  "feeds": [
+    {
+      "asset": "XLM",
+      "shadowReport": "REPLACE_ARTIFACT",
+      "shadowDurationHours": 0,
+      "pairedSamples": 0,
+      "errors": 0,
+      "staleSamples": 0,
+      "maxDeviationBps": 0,
+      "p99LatencyMs": 0,
+      "requiredQuorum": 2,
+      "healthyIndependentSourcesAfter": 0,
+      "healthyIndependentSourcesWithoutCandidate": 0
+    }
+  ]
+}

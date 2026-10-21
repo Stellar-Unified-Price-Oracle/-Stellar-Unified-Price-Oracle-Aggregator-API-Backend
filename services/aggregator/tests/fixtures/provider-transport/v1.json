@@ -1,0 +1,142 @@
+{
+  "fixtureVersion": 1,
+  "owner": "Provider ecosystem maintainer",
+  "records": [
+    {
+      "provider": "chainlink",
+      "contractVersion": "repository-v1",
+      "status": "current",
+      "provenance": {
+        "kind": "local-stub-recording",
+        "source": "scripts/stub-oracle-server.mjs",
+        "recordedAt": "2026-10-20T22:45:56.612Z",
+        "upstreamAnnouncement": null
+      },
+      "request": {
+        "method": "GET",
+        "path": "/price",
+        "params": {
+          "fsym": "XLM",
+          "tsym": "USD",
+          "api_key": "[REDACTED]"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "USD": {
+            "PRICE": 0.12
+          }
+        }
+      },
+      "expected": {
+        "asset": "XLM",
+        "price": "12000000",
+        "decimals": 8,
+        "observedAt": null
+      }
+    },
+    {
+      "provider": "redstone",
+      "contractVersion": "repository-v1",
+      "status": "current",
+      "provenance": {
+        "kind": "local-stub-recording",
+        "source": "scripts/stub-oracle-server.mjs",
+        "recordedAt": "2026-10-20T22:45:56.615Z",
+        "upstreamAnnouncement": null
+      },
+      "request": {
+        "method": "GET",
+        "path": "/prices",
+        "params": {
+          "symbols": "XLM",
+          "provider": "redstone"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "XLM": {
+            "value": "0.12",
+            "decimals": 8
+          }
+        }
+      },
+      "expected": {
+        "asset": "XLM",
+        "price": "12000000",
+        "decimals": 8,
+        "observedAt": null
+      }
+    },
+    {
+      "provider": "band",
+      "contractVersion": "repository-v1",
+      "status": "current",
+      "provenance": {
+        "kind": "local-stub-recording",
+        "source": "scripts/stub-oracle-server.mjs",
+        "recordedAt": "2026-10-20T22:45:56.617Z",
+        "upstreamAnnouncement": null
+      },
+      "request": {
+        "method": "GET",
+        "path": "/oracle/v1/feeds/XLM",
+        "params": {}
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "price": "0.12",
+            "decimals": 9,
+            "updated_at": 1792536356
+          }
+        }
+      },
+      "expected": {
+        "asset": "XLM",
+        "price": "120000000",
+        "decimals": 9,
+        "observedAt": 1792536356
+      }
+    },
+    {
+      "provider": "reflector",
+      "contractVersion": "repository-v1",
+      "status": "current",
+      "provenance": {
+        "kind": "local-stub-recording",
+        "source": "scripts/stub-oracle-server.mjs",
+        "recordedAt": "2026-10-20T22:45:56.619Z",
+        "upstreamAnnouncement": null
+      },
+      "request": {
+        "method": "GET",
+        "path": "/v1/prices",
+        "params": {
+          "asset": "Crypto.XLM/USD"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "prices": {
+            "Crypto.XLM/USD": {
+              "price": "0.12",
+              "decimals": 8,
+              "timestamp": 1792536356
+            }
+          }
+        }
+      },
+      "expected": {
+        "asset": "XLM",
+        "price": "12000000",
+        "decimals": 8,
+        "observedAt": 1792536356
+      }
+    }
+  ]
+}

@@ -197,6 +197,40 @@ const options: swaggerJsdoc.Options = {
           },
         },
       },
+      '/api/v1/consumer/quality-report': {
+        get: {
+          operationId: 'getConsumerQualityReportV1',
+          tags: ['Consumer'],
+          summary: 'Consumer-selected feed quality, freshness, coverage, and reproducible time window',
+          security: [{ ApiKeyAuth: [] }],
+          parameters: [
+            { in: 'query', name: 'assets', required: true, schema: { type: 'string' }, description: 'Comma-separated list of 1 to 50 feed identifiers' },
+            { in: 'query', name: 'from', required: true, schema: { type: 'integer' }, description: 'Window start, Unix seconds' },
+            { in: 'query', name: 'to', required: true, schema: { type: 'integer' }, description: 'Window end, Unix seconds; maximum 30 days after from' },
+            { in: 'query', name: 'region', schema: { type: 'string' } },
+          ],
+          responses: { 200: { description: 'Versioned feed quality report including no-data feeds and reportId' }, 400: { description: 'Invalid feed set or window' }, 401: { description: 'API key required' } },
+        },
+      },
+      '/api/v1/consumer/schemas': {
+        get: {
+          operationId: 'getApiSchemaRegistryV1',
+          tags: ['Consumer'],
+          summary: 'Versioned REST and WebSocket event schema registry with compatibility and deprecation metadata',
+          responses: { 200: { description: 'Machine-readable schema registry' } },
+        },
+      },
+      '/api/v1/admin/consumer-entitlements/{keyHash}': {
+        put: {
+          operationId: 'setConsumerEntitlements',
+          tags: ['Administration'],
+          summary: 'Grant, reduce, or schedule consumer feed entitlements with an audit record',
+          security: [{ ApiKeyAuth: [] }],
+          parameters: [{ in: 'path', name: 'keyHash', required: true, schema: { type: 'string' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['effectiveAt', 'feeds'], properties: { effectiveAt: { type: 'string', format: 'date-time' }, expiresAt: { type: 'string', format: 'date-time' }, feeds: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' } }, operations: { type: 'array', items: { type: 'string' } }, environments: { type: 'array', items: { type: 'string' } } } } } } },
+          responses: { 200: { description: 'Entitlement policy updated and audit event recorded' }, 400: { description: 'Invalid entitlement policy' }, 403: { description: 'Operator role with keys:write permission required' }, 404: { description: 'API key not found' } },
+        },
+      },
       '/api/v2/consumer/latency-freshness': {
         get: {
           operationId: 'getLatencyFreshnessV2',
@@ -223,6 +257,61 @@ const options: swaggerJsdoc.Options = {
           tags: ['Consumer'],
           summary: 'Contracted delivery objective attainment (v2 envelope)',
           responses: { 200: { description: 'Objective attainment' }, 401: { description: 'API key required' } },
+        },
+      },
+      '/api/v2/consumer/snapshots/{asset}': {
+        get: {
+          operationId: 'getSignedSnapshot',
+          tags: ['Consumer'],
+          summary: 'Cryptographically signed price snapshot binding feed identity, price, precision, observation time, policy version and key id (#708)',
+          parameters: [
+            { in: 'path', name: 'asset', required: true, schema: { type: 'string' }, description: 'Asset symbol' },
+          ],
+          responses: { 200: { description: 'SchemaVersion 2 signed snapshot; verify with snapshot-verifier' }, 401: { description: 'API key required' }, 404: { description: 'No price data' } },
+        },
+      },
+      '/api/v2/consumer/feeds': {
+        get: {
+          operationId: 'listConsumerFeeds',
+          tags: ['Consumer'],
+          summary: 'Feed catalog for consumers with network, quote unit, source coverage and lifecycle state filters (#709)',
+          parameters: [
+            { in: 'query', name: 'network', schema: { type: 'string' }, description: 'mainnet or testnet' },
+            { in: 'query', name: 'quoteUnit', schema: { type: 'string' }, description: 'Quote unit parsed from the feed id, e.g. USD' },
+            { in: 'query', name: 'sourceCoverage', schema: { type: 'integer' }, description: 'Minimum eligible source count' },
+            { in: 'query', name: 'lifecycleState', schema: { type: 'string' }, description: 'Feed lifecycle state' },
+          ],
+          responses: { 200: { description: 'Offset-paginated feed list with stable feedId ordering' } },
+        },
+      },
+      '/api/v2/consumer/exports': {
+        post: {
+          operationId: 'createHistoricalExport',
+          tags: ['Consumer'],
+          summary: 'Request a bounded asynchronous historical export job (202 accepted, poll status) (#710)',
+          responses: { 202: { description: 'Export job accepted' }, 400: { description: 'Invalid request body' }, 401: { description: 'API key required' } },
+        },
+      },
+      '/api/v2/consumer/exports/{jobId}': {
+        get: {
+          operationId: 'getHistoricalExport',
+          tags: ['Consumer'],
+          summary: 'Export job status, progress, checksum and download URL (#710)',
+          parameters: [
+            { in: 'path', name: 'jobId', required: true, schema: { type: 'string' }, description: 'Export job id' },
+          ],
+          responses: { 200: { description: 'Job status with progress and integrity metadata' }, 404: { description: 'Unknown job' } },
+        },
+      },
+      '/api/v2/consumer/exports/{jobId}/download': {
+        get: {
+          operationId: 'downloadHistoricalExport',
+          tags: ['Consumer'],
+          summary: 'Resumable export download with X-Export-Checksum and expiry (#710)',
+          parameters: [
+            { in: 'path', name: 'jobId', required: true, schema: { type: 'string' }, description: 'Export job id' },
+          ],
+          responses: { 200: { description: 'Export JSON payload' }, 400: { description: 'Export not ready' }, 410: { description: 'Export expired' } },
         },
       },
       '/api/v1/history/{asset}': {

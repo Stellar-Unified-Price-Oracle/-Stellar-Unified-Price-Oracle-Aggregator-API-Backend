@@ -1,4 +1,7 @@
 name: Security control evidence
+concurrency:
+  group: security-evidence-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   schedule:

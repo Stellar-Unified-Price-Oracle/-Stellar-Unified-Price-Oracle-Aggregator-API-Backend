@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Alert → Runbook Mapping
 
 This file maps Prometheus alert names and observed failure modes to their canonical runbooks. Use this as the single source of truth when updating alerts or authoring new runbooks.

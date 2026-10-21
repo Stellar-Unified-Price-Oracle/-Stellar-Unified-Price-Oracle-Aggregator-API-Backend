@@ -17,8 +17,15 @@ import * as path from 'path';
 // ── Configuration ────────────────────────────────────────────────────────────
 
 const DEFAULT_VAULT_URL = 'http://127.0.0.1:8200';
-const DEFAULT_VAULT_TOKEN = 'dev-root-super-secret-token';
 const DEFAULT_AUDIT_LOG_PATH = './logs/vault_audit.log';
+const DEV_PLACEHOLDER_TOKENS = new Set([
+  'dev-root-super-secret-token',
+  'root',
+  'change-me',
+  'replace-me',
+  'vault-dev-token',
+]);
+const IS_PRODUCTION = () => process.env.NODE_ENV === 'production';
 
 export interface VaultConfig {
   url?: string;
@@ -81,8 +88,22 @@ export class VaultClient {
   private initialized = false;
 
   constructor(config: VaultConfig = {}) {
-    this.vaultUrl = config.url ?? process.env.VAULT_ADDR ?? DEFAULT_VAULT_URL;
-    this.vaultToken = config.token ?? process.env.VAULT_TOKEN ?? DEFAULT_VAULT_TOKEN;
+    const production = IS_PRODUCTION();
+    const configuredUrl = config.url ?? process.env.VAULT_ADDR;
+    const configuredToken = config.token ?? process.env.VAULT_TOKEN;
+
+    if (production && !configuredUrl) {
+      throw new Error('VAULT_ADDR is required in production: Vault must not fall back to a local dev server');
+    }
+    if (production && !configuredToken) {
+      throw new Error('VAULT_TOKEN is required in production: environment-variable fallback is disabled');
+    }
+    if (production && configuredToken && DEV_PLACEHOLDER_TOKENS.has(configuredToken)) {
+      throw new Error('a development Vault token was supplied in production; refusing to start');
+    }
+
+    this.vaultUrl = configuredUrl ?? DEFAULT_VAULT_URL;
+    this.vaultToken = configuredToken ?? '';
     this.auditLogPath = config.auditLogPath ?? DEFAULT_AUDIT_LOG_PATH;
     this.maxRetries = config.maxRetries ?? 3;
     this.retryBaseMs = config.retryBaseMs ?? 200;
