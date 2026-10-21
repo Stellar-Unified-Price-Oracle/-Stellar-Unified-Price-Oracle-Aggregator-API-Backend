@@ -14,7 +14,7 @@ restored — breaking price history reads and governance state.
 ## TTL extension
 
 `PriceOracleContract::extend_storage_ttl` (see
-`contracts/price-oracle/src/contract.rs`) bumps:
+`contracts/price-oracle/src/lib.rs`) bumps:
 
 - the instance storage entry TTL (covers `Admin`, `GovernanceConfig`,
   `GovernanceProposal`, `MultiSigConfig`, `DeviationThreshold`, etc. — Soroban

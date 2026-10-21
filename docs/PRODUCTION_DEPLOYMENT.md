@@ -139,7 +139,7 @@ Redis (`k8s/base/redis/`) and TimescaleDB (`k8s/base/timescaledb/`) are stateful
   `monitoring/grafana-dashboard.json`; alert rules:
   `k8s/base/prometheus-rule.yaml`.
 - **Tracing** — OpenTelemetry exporters send traces to Jaeger
-  (`api/src/services/tracing.ts`); `docker-compose.yml` runs the all-in-one
+  (`api/src/observability/tracing.ts`); `docker-compose.yml` runs the all-in-one
   image for local dev; `k8s/istio/observability/` provisions Prometheus,
   Grafana, Jaeger, and Kiali.
 - **Key SLOs to watch** (see `scripts/generate-slo-report.ts`):
@@ -201,7 +201,7 @@ The blue-green deployments (`k8s/overlays/*/blue-green/`) are a pair of
 Deployments behind a single Service.  Each colour gets its own PDB with the
 same `minAvailable: 1` math, so a drain during a cutover cannot evict both the
 active and the standby colour at once.  The failover policy resources
-(`k8s/base/failover-policy.yaml`) reference the Service, not the individual
+(`k8s/base/multi-region/failover-policy.yaml`) reference the Service, not the individual
 Deployments, so they inherit the PDB guarantee — confirm the failover policy
 still points at the Service after any blue-green change.
 
@@ -220,3 +220,9 @@ uses for its pods.
 - The API takes periodic encrypted backups of p
 
 /* … truncated 3920 chars — edit only what you need near the top … */
+
+## Image promotion and managed secrets
+
+Pushes build and sign images only when API, aggregator, shared packages, Dockerfiles, deployment configuration or the workflow changes. A `workflow_dispatch` build remains available for a full manual release. Main pushes no longer deploy staging. To promote, use **Actions → Promote immutable release**, provide both GHCR `sha256:` digests and the source commit printed by the build run, and approve the protected `staging` environment. The workflow records the supplied digest and commit in the run summary, serializes staging promotions, checks External Secrets readiness and rejects placeholders before applying the release. Production remains a separate manually dispatched, protected environment and is also serialized.
+
+Runtime credentials are stored in AWS Secrets Manager and synchronized by External Secrets Operator. Provision the `aws-secrets-manager` ClusterSecretStore and workload identity in each cluster before rollout. `scripts/validate-deployed-secrets.sh` checks the synchronized API and database secrets before a production or staging promotion. See [Key Management](KEY_MANAGEMENT.md) for key names, bootstrap, rotation and recovery.

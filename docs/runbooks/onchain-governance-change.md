@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Runbook: On-Chain Governance Change
 
 **Linked alert:** `OnChainGovernanceChange`

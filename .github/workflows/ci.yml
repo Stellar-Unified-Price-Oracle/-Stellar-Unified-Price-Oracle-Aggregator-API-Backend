@@ -65,6 +65,12 @@ jobs:
         # Pre-existing check (issue #590); kept here for grouping clarity.
         run: node scripts/check-port-consistency.mjs
 
+      - name: Documentation claims and metadata
+        run: npm run check:docs
+
+      - name: SLO schema, exporter metrics and generated Prometheus rules
+        run: npm run check:slo-rules
+
   aggregator:
     name: Aggregator service build
     runs-on: ubuntu-latest

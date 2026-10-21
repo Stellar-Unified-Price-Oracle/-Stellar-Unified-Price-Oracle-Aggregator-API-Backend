@@ -20,7 +20,7 @@ key — and never exposes one.
 ## Published artifacts
 
 The API reads four JSON artifacts from `GOVERNANCE_TRANSPARENCY_DIR`
-(default `api/data/governance`):
+(default the API data directory):
 
 | File | Producer | Consumed by |
 |---|---|---|

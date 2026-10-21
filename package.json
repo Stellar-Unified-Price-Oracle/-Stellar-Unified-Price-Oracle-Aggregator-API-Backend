@@ -26,7 +26,7 @@
     "check:env": "node scripts/check-env-contract.mjs",
     "check:routes": "node scripts/check-route-contract.mjs",
     "check:ports": "node scripts/check-port-consistency.mjs",
-    "check:contracts": "npm run check:env && npm run check:routes && npm run check:ports",
+    "check:contracts": "npm run check:env && npm run check:routes && npm run check:ports && npm run check:docs && npm run check:slo-rules",
     "check:release-windows": "cd api && npm run check:release-windows",
     "rehearsal:governance": "cd api && npm run rehearsal:governance",
     "typecheck:all": "cd packages/types && npx tsc --noEmit && cd ../../packages/vault-client && npx tsc --noEmit && cd ../../services/aggregator && npx tsc --noEmit && cd ../../api && npx tsc --noEmit",
@@ -41,7 +41,10 @@
     "validate:prices": "node scripts/validate-price-correctness.mjs",
     "rent:extend": "tsx scripts/extend-ttl-job.ts",
     "install:all": "npm install",
-    "prepare": "(husky || true) && npm run build:packages"
+    "prepare": "(husky || true) && npm run build:packages",
+    "generate:slo-rules": "node scripts/generate-slo-rules.mjs",
+    "check:slo-rules": "node scripts/generate-slo-rules.mjs --check",
+    "check:docs": "node scripts/check-doc-contract.mjs"
   },
   "devDependencies": {
     "husky": "^9.1.0"

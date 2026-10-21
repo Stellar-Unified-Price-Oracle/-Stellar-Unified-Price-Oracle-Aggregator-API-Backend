@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Cross-region distributed tracing
 
 Issue #419. Trace a request end-to-end across regions: **source fetch ->
@@ -9,7 +12,7 @@ HTTP hops already propagate W3C trace context via the OpenTelemetry auto
 instrumentation in `api/src/observability/tracing.ts`. The gap was the
 region-to-region replication bus, which is not HTTP.
 
-- `api/src/observability/trace-propagation.ts` — `injectTraceContext(carrier)` /
+- `api/src/observability/tracing.ts` — `injectTraceContext(carrier)` /
   `withExtractedContext(carrier, fn)` serialize the active context into a plain
   string map that rides on any bus transport (Kafka/NATS headers, SQS message
   attributes, or a `trace` field in the JSON envelope).
@@ -48,7 +51,7 @@ replicator.mergeRemotePrice({ region, asset, price, decimals, timestamp,
    - `replication.publish` -> `replication.consume` spans with
      `region.source=a`, `region.target=b`, `region.cross_region=true`
    - `GET /api/v2/prices/:asset` span served from region B's replica
-4. Automated check: `api/tests/trace-propagation.test.ts` asserts an
+4. Automated check: `api/tests/tracing-propagation.test.ts` asserts an
    inject -> extract round trip preserves the trace id and that
    `propagateForHop` keeps the id while changing the span id.
 
