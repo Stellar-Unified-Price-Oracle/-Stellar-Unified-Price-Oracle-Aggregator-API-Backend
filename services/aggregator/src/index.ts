@@ -32,6 +32,13 @@ import {
 } from './observability/metrics';
 import { DatabaseClient } from './persistence/database';
 import { BaseSource } from './oracle-sources/base';
+import {
+  assessProviderConcentration,
+  parseShadowSources,
+  recordProviderConcentration,
+  recordProviderFreshness,
+  recordShadowObservation,
+} from './oracle-sources/provider-operations';
 import { WebSocketServer } from './infrastructure/ws-server';
 import { HealthServer } from './observability/health-server';
 import { GracefulShutdownCoordinator, type ShutdownHooks } from './infrastructure/shutdown';
@@ -123,6 +130,7 @@ let startupTimeMs = 0;
 const onChainHeartbeat: Record<string, number> = {};
 let db: DatabaseClient | null = null;
 let pollSources: BaseSource[] = [];
+let shadowSourceNames = parseShadowSources(process.env.SHADOW_PROVIDER_SOURCES);
 let publisher: ContractPublisher | null = null;
 // Issue #579 — readiness flag flipped before any other shutdown step.
 let shutdownInProgress = false;
@@ -154,7 +162,12 @@ async function poll(): Promise<AggregatedPrice[]> {
   for (const source of sources) {
     const prices = await source.fetchAll(cellAssets);
     for (const price of prices) {
-      // Publish PriceFetchedEvent
+      recordProviderFreshness(price);
+      if (shadowSourceNames.has(price.source.toLowerCase())) {
+        recordShadowObservation(price, aggregator.getFreshSourcePricesForAsset(price.asset));
+        continue;
+      }
+
       eventBus.publish({
         type: 'price_fetched',
         payload: price,
@@ -210,6 +223,12 @@ async function poll(): Promise<AggregatedPrice[]> {
 
   const aggregationStarted = performance.now();
   const aggregated = aggregator.getAllPrices();
+  for (const asset of cellAssets) {
+    for (const price of aggregator.getSourcePricesForAsset(asset)) recordProviderFreshness(price);
+    const price = aggregated.find((candidate) => candidate.asset === asset);
+    const concentration = assessProviderConcentration(asset, price?.sources ?? []);
+    recordProviderConcentration(concentration);
+  }
   pipelineStageLatencyMs.observe({ stage: 'aggregation', status: 'ok' }, performance.now() - aggregationStarted);
 
   const replicationStarted = performance.now();
@@ -487,6 +506,18 @@ async function main(): Promise<void> {
     reflector: new ReflectorSource({ endpoint: cellTopology.dependencies.reflector }),
   };
   pollSources = Object.values(persistentSources);
+  shadowSourceNames = parseShadowSources(process.env.SHADOW_PROVIDER_SOURCES);
+  const knownSources = new Set(pollSources.map((source) => source.name));
+  for (const source of shadowSourceNames) {
+    if (!knownSources.has(source)) {
+      throw new Error(`SHADOW_PROVIDER_SOURCES contains unregistered adapter: ${source}`);
+    }
+  }
+  if (shadowSourceNames.size > 0) {
+    logger.warn('[ProviderShadow] Shadow mode enabled; listed adapters will not contribute to aggregation', {
+      sources: [...shadowSourceNames],
+    });
+  }
 
   // Subscribe to SLA breach events and route to alert manager
   eventBus.subscribe('sla_breach', (event) => {

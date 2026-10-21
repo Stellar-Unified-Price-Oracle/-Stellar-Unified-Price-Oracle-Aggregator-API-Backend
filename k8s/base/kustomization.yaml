@@ -8,6 +8,7 @@ resources:
   - prometheus-cardinality-rules.yaml
   - synthetic-probes.yaml
   - onchain-events-prometheus-rules.yaml
+  - prometheus-rule.yaml
   - aggregator/deployment.yaml
   - aggregator/service.yaml
   - aggregator/hpa.yaml

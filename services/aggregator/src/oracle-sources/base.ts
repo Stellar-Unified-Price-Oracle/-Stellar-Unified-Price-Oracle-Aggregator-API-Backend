@@ -9,6 +9,7 @@ import {
   oracleSourceSlaBreaches,
   oracleSourceBudgetBlockedTotal,
   oracleSourceInvalidPayloadsTotal,
+  oracleProviderFetchesTotal,
   oracleApiCallsTotal,
   oracleApiCostTotal,
   oracleApiBudgetUtilization,
@@ -96,6 +97,7 @@ export abstract class BaseSource {
 
   /** Issue #584 — most recent payload-validation failure, for /health surfacing. */
   lastInvalidPayloadAt: number | null = null;
+  invalidPayloadCount = 0;
 
   private startedAt = Date.now();
 
@@ -127,6 +129,7 @@ export abstract class BaseSource {
    * (at a sustained rate) alerted (issue #584).
    */
   protected recordInvalidPayload(asset: string, issues: string): void {
+    this.invalidPayloadCount++;
     oracleSourceInvalidPayloadsTotal.inc({ source: sanitizeSourceLabel(this.name) });
     this.lastInvalidPayloadAt = Math.floor(Date.now() / 1000);
     void invalidPayloadAlerter.checkInvalidPayload(this.name, asset, issues);
@@ -151,6 +154,7 @@ export abstract class BaseSource {
       });
       oracleSourceInvalidPayloadsTotal.inc({ source: sanitizeSourceLabel(this.name) });
       this.lastInvalidPayloadAt = Math.floor(Date.now() / 1000);
+      this.invalidPayloadCount++;
       void invalidPayloadAlerter.checkInvalidPayload(this.name, asset, scaled.reason);
       return null;
     }
@@ -227,9 +231,15 @@ export abstract class BaseSource {
 
     try {
       this.health.totalRequests++;
+      const invalidPayloadCount = this.invalidPayloadCount;
       const price = await this.fetchPrice(asset);
+      oracleProviderFetchesTotal.inc({
+        source: safeSource,
+        asset: safeAsset,
+        outcome: price ? 'available' : invalidPayloadCount === this.invalidPayloadCount ? 'no_price' : 'invalid_payload',
+      });
 
-      const elapsed = timer({ status: 'success' });
+      const elapsed = timer({ status: price ? 'success' : 'no_price' });
       oracleSourceRequestsTotal.inc({ source: safeSource, status: 'success' });
       if (elapsed > SLA_THRESHOLD_SECONDS) {
         oracleSourceSlaBreaches.inc({ source: safeSource });
@@ -255,6 +265,7 @@ export abstract class BaseSource {
       oracleSourceRequestsTotal.inc({ source: safeSource, status: 'error' });
 
       this.health.totalFailures++;
+      oracleProviderFetchesTotal.inc({ source: safeSource, asset: safeAsset, outcome: 'error' });
       this.health.lastFailure = Math.floor(Date.now() / 1000);
       this.health.consecutiveFailures++;
 

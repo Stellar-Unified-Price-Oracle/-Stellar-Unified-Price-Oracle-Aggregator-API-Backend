@@ -35,6 +35,8 @@ export interface HistoricalAvailability {
 
 export interface ProviderCapabilities {
   source: OracleSourceName;
+  /** Shared upstream or operator dependency; providers in one group are not independent. */
+  dependencyGroup?: string;
   /** Assets this provider is configured to quote. */
   supportedAssets: string[];
   /** Expected update interval in milliseconds. */
@@ -140,6 +142,7 @@ const WATCHED_ASSETS = ['XLM', 'USDC', 'BTC', 'ETH', 'USDT'];
 export const DEFAULT_CAPABILITIES: ProviderCapabilities[] = [
   {
     source: 'chainlink',
+    dependencyGroup: 'chainlink',
     supportedAssets: [...WATCHED_ASSETS],
     updateCadenceMs: 10_000,
     precision: DEFAULT_PRECISION,
@@ -147,6 +150,7 @@ export const DEFAULT_CAPABILITIES: ProviderCapabilities[] = [
   },
   {
     source: 'redstone',
+    dependencyGroup: 'redstone',
     supportedAssets: [...WATCHED_ASSETS],
     updateCadenceMs: 15_000,
     precision: DEFAULT_PRECISION,
@@ -154,6 +158,7 @@ export const DEFAULT_CAPABILITIES: ProviderCapabilities[] = [
   },
   {
     source: 'band',
+    dependencyGroup: 'band',
     supportedAssets: [...WATCHED_ASSETS],
     updateCadenceMs: 20_000,
     precision: DEFAULT_PRECISION,
@@ -161,6 +166,7 @@ export const DEFAULT_CAPABILITIES: ProviderCapabilities[] = [
   },
   {
     source: 'reflector',
+    dependencyGroup: 'reflector',
     supportedAssets: [...WATCHED_ASSETS],
     updateCadenceMs: 12_000,
     precision: DEFAULT_PRECISION,
