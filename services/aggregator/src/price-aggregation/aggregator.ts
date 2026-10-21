@@ -4,6 +4,7 @@ import { logger } from '../observability/logger';
 import { CircuitBreaker, CircuitBreakerConfig } from './circuit-breaker';
 import { anomalyDetector } from './anomaly-detector';
 import { medianOnCommonScale, isAgeVerified } from './median';
+import { freshnessThresholdSeconds } from '@stellar-oracle/types';
 
 export class PriceAggregator {
   private sources: Map<string, NormalizedPrice> = new Map();
@@ -41,9 +42,8 @@ export class PriceAggregator {
     if (prices.length === 0) return null;
 
     const totalSources = prices.length;
-    const validPrices = prices.filter(
-      (p) => Date.now() - p.timestamp * 1000 < config.stalenessThresholdMs,
-    );
+    const thresholdMs = Math.min(config.stalenessThresholdMs, freshnessThresholdSeconds(normalized, config.stalenessThresholdMs / 1000) * 1000);
+    const validPrices = prices.filter((p) => Date.now() - p.timestamp * 1000 < thresholdMs);
     const stale = validPrices.length === 0;
 
     // Fall back to all prices (stale) rather than returning null for degraded mode
