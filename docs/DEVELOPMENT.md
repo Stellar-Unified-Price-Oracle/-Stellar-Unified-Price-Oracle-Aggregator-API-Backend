@@ -82,7 +82,10 @@ npm run check:contracts
 make check-contracts
 ```
 
-They also run as the `config-contracts` CI job on every push and PR.
+They also run as the `config-contracts` CI job on every push and PR. The same
+job enforces the [secret-storage guard](./SECRET_STORAGE.md), the
+[workflow inventory](./CI_WORKFLOWS.md), and signed feed-catalog validation
+([releases](./FEED_CATALOG_RELEASES.md)).
 
 ### Env-var contract (`check:env` / `make check-env`)
 

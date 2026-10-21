@@ -392,5 +392,42 @@ export const maintenanceWindowActive = new client.Gauge({
   registers: [register],
 });
 
+
+// Issue #707 — provider semantic drift detection metrics
+export const providerDriftDetected = new client.Gauge({
+  name: 'provider_drift_detected',
+  help: 'Whether semantic drift was detected for a provider/asset pair (1=drift, 0=none)',
+  labelNames: ['asset', 'source', 'baseline_version'],
+  registers: [register],
+});
+
+export const providerDriftMeanPriceChangePercent = new client.Gauge({
+  name: 'provider_drift_mean_price_change_percent',
+  help: 'Percent change in mean price compared to baseline',
+  labelNames: ['asset', 'source', 'baseline_version'],
+  registers: [register],
+});
+
+export const providerDriftObservedAtCoverageChange = new client.Gauge({
+  name: 'provider_drift_observed_at_coverage_change',
+  help: 'Change in observedAt coverage fraction compared to baseline',
+  labelNames: ['asset', 'source', 'baseline_version'],
+  registers: [register],
+});
+
+export const providerDriftReportingLagChangeSeconds = new client.Gauge({
+  name: 'provider_drift_reporting_lag_change_seconds',
+  help: 'Change in median reporting lag in seconds compared to baseline',
+  labelNames: ['asset', 'source', 'baseline_version'],
+  registers: [register],
+});
+
 export { register };
 
+
+export const oracleProviderFailuresTotal = new client.Counter({
+  name: 'oracle_provider_failures_total',
+  help: 'Provider fetch failures by stable category, including local policy skips',
+  labelNames: ['source', 'category'],
+  registers: [register],
+});
