@@ -55,6 +55,8 @@ mod upgrade_migration_test;
 mod feed_catalog_test;
 #[cfg(test)]
 mod upgrade_rehearsal_test;
+#[cfg(test)]
+mod price_arithmetic_vectors_test;
 
 pub use contract::PriceOracleContract;
 pub use governance::GovernanceContract;
