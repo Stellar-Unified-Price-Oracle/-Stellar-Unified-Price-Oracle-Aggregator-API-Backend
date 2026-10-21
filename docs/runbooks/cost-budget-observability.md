@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Cost & budget observability
 
 Issue #418. Keeps infrastructure cost continuously visible against the monthly

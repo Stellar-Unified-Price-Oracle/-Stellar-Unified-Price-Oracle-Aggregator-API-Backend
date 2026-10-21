@@ -1,4 +1,5 @@
 import http from 'http';
+import type { AggregationEvidence } from '../price-aggregation/aggregator';
 import { logger } from './logger';
 import { correlationHeaders } from '../infrastructure/correlation';
 import { SourceCBStatus } from '../price-aggregation/source-circuit-breaker';
@@ -35,6 +36,7 @@ export interface FeedOwnership {
 }
 
 export interface HealthSnapshot {
+  evidence?: (asset: string) => AggregationEvidence | null;
   sourceHealth: Record<string, SourceHealthStatus>;
   lastAggregated: AggregatedPrice[];
   uptime: number;
@@ -99,6 +101,16 @@ export class HealthServer {
           res.writeHead(500);
           res.end();
         }
+        return;
+      }
+
+      const evidenceMatch = url.pathname.match(/^\/evidence\/([A-Za-z0-9_-]{1,32})$/);
+      if (evidenceMatch) {
+        const bundle = this.getSnapshot().evidence?.(evidenceMatch[1]) ?? null;
+        const requestedId = url.searchParams.get('id');
+        const found = bundle && (!requestedId || bundle.id === requestedId);
+        res.writeHead(found ? 200 : 404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(found ? bundle : { error: 'Evidence not retained' }));
         return;
       }
 

@@ -1,4 +1,7 @@
 name: CI
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   push:
@@ -64,6 +67,21 @@ jobs:
       - name: Port contract — compose/k8s/docs vs real listeners
         # Pre-existing check (issue #590); kept here for grouping clarity.
         run: node scripts/check-port-consistency.mjs
+
+      - name: Secret storage — no dev Vault settings in staging/production
+        # Issue #628. See docs/SECRET_STORAGE.md.
+        run: node scripts/check-no-dev-secrets.mjs
+
+      - name: Workflow inventory — every workflow classified and owned
+        # Issue #627. See docs/CI_WORKFLOWS.md.
+        run: node scripts/check-workflow-inventory.mjs
+
+      - name: Script tests — catalog signing, secret and workflow guards
+        run: node --test scripts/tests/*.test.mjs
+
+      - name: Feed catalog — validate signed releases
+        # Issue #670. Fails on an invalid catalog or a broken signature chain.
+        run: node scripts/feed-catalog-release.mjs --check
 
   aggregator:
     name: Aggregator service build

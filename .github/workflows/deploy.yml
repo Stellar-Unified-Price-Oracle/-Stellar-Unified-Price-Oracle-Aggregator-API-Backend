@@ -1,8 +1,20 @@
 name: Deploy
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   push:
     branches: [develop, main]
+    paths:
+      - 'api/**'
+      - 'services/aggregator/**'
+      - 'packages/**'
+      - 'Dockerfile'
+      - '**/Dockerfile'
+      - 'docker-compose*.yml'
+      - 'k8s/**'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
     inputs:
       environment:
@@ -10,7 +22,6 @@ on:
         required: true
         type: choice
         options:
-          - staging
           - production
       slo_override_reason:
         description: "Emergency override reason to bypass SLO error-budget gate"
@@ -132,6 +143,20 @@ jobs:
           subject-digest: ${{ steps.build-aggregator.outputs.digest }}
           push-to-registry: true
 
+      - name: Record immutable release identity
+        env:
+          API_IMAGE: ${{ steps.tags.outputs.api-base }}
+          API_DIGEST: ${{ steps.build-api.outputs.digest }}
+          AGGREGATOR_IMAGE: ${{ steps.tags.outputs.aggregator-base }}
+          AGGREGATOR_DIGEST: ${{ steps.build-aggregator.outputs.digest }}
+        run: |
+          {
+            echo "## Immutable image release"
+            echo "Source commit: `$GITHUB_SHA`"
+            echo "API: `$API_IMAGE@$API_DIGEST`"
+            echo "Aggregator: `$AGGREGATOR_IMAGE@$AGGREGATOR_DIGEST`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   verify-images:
     name: Verify image signatures
     needs: [build-images]
@@ -206,66 +231,15 @@ jobs:
             "${{ needs.build-images.outputs.api-tag }}" \
             "${{ needs.build-images.outputs.aggregator-tag }}"
 
-  deploy-staging:
-    name: Deploy to Staging
-    if: >
-      ( github.ref == 'refs/heads/main' && github.event_name == 'push' ) ||
-      ( github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging' )
-    needs: [build-images, verify-images]
-    runs-on: ubuntu-latest
-    environment: staging
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Check KUBECONFIG_STAGING is configured
-        id: guard
-        env:
-          KUBECONFIG_VALUE: ${{ secrets.KUBECONFIG_STAGING }}
-        run: |
-          if [ -z "$KUBECONFIG_VALUE" ]; then
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::KUBECONFIG_STAGING is not set — skipping the staging deploy."
-          else
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install kustomize
-        if: steps.guard.outputs.configured == 'true'
-        run: |
-          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-          sudo mv kustomize /usr/local/bin/
-
-      - name: Configure kubectl
-        if: steps.guard.outputs.configured == 'true'
-        run: |
-          mkdir -p ~/.kube
-          echo "${{ secrets.KUBECONFIG_STAGING }}" > ~/.kube/config
-
-      - name: Gate release on SLO error-budget burn rate (#552)
-        if: steps.guard.outputs.configured == 'true'
-        env:
-          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL || 'http://prometheus.monitoring.svc:9090' }}
-          SLO_OVERRIDE_REASON: ${{ github.event.inputs.slo_override_reason }}
-          SLO_OVERRIDE_APPROVER: ${{ github.actor }}
-        run: |
-          node scripts/slo-release-gate.ts --environment=staging || {
-            echo "::error::Staging deployment blocked by SLO error-budget release gate (#552)"
-            exit 1
-          }
-
-      - name: Deploy to staging
-        if: steps.guard.outputs.configured == 'true'
-        run: |
-          bash scripts/deploy-k8s.sh staging \
-            "${{ needs.build-images.outputs.api-tag }}" \
-            "${{ needs.build-images.outputs.aggregator-tag }}"
-
   deploy-prod:
     name: Deploy to Production
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
     needs: [build-images, verify-images]
     runs-on: ubuntu-latest
     environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -293,6 +267,10 @@ jobs:
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG_PROD }}" > ~/.kube/config
 
+      - name: Validate managed secrets before rollout
+        if: steps.guard.outputs.configured == 'true'
+        run: bash scripts/validate-deployed-secrets.sh stellar-oracle-prod
+
       - name: Gate release on SLO error-budget burn rate (#552)
         if: steps.guard.outputs.configured == 'true'
         env:
@@ -309,5 +287,5 @@ jobs:
         if: steps.guard.outputs.configured == 'true'
         run: |
           bash scripts/deploy-k8s.sh prod \
-            "${{ needs.build-images.outputs.api-tag }}" \
-            "${{ needs.build-images.outputs.aggregator-tag }}"
+            "${{ needs.build-images.outputs.api-image }}@${{ needs.build-images.outputs.api-digest }}" \
+            "${{ needs.build-images.outputs.aggregator-image }}@${{ needs.build-images.outputs.aggregator-digest }}"

@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Runbook: Price Anomaly Detected
 
 **Linked alerts:** `PriceDeviation`, `stellar_oracle_anomalies_detected_total > 0`
@@ -42,7 +45,7 @@ curl "https://<api-host>/api/v1/prices/XLM" | jq '.data'
 
 Monitor `stellar_oracle_anomalies_detected_total` vs confirmed incidents. If false positives are high, tune sensitivity:
 
-1. Open `services/aggregator/src/anomaly-detector.ts`
+1. Open `services/aggregator/src/price-aggregation/anomaly-detector.ts`
 2. Call `anomalyDetector.setConfig(asset, { zScoreThreshold: 4.0 })` to reduce sensitivity
 3. Or increase `movingAverageDeviationPercent`
 

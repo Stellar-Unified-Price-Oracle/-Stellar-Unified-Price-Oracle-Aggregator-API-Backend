@@ -11,6 +11,14 @@ function message(sequenceId: number, asset = 'BTC'): BufferedMessage {
 }
 
 describe('replay window bounds (issue #606)', () => {
+  it('exposes the oldest retained sequence so consumers can detect a cursor gap', () => {
+    const buffer = new ReplayBuffer(2, 2, 10_000);
+    buffer.push('BTC', message(8));
+    buffer.push('BTC', message(9));
+    buffer.push('BTC', message(10));
+    expect(buffer.oldestSequence()).toBe(9);
+  });
+
   it('is bounded by message count when every buffered asset is replayed', () => {
     const sources = [Array.from({ length: 50 }, (_, i) => message(i + 1)), Array.from({ length: 50 }, (_, i) => message(i + 51, 'XLM'))];
 

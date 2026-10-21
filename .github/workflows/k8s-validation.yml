@@ -1,4 +1,7 @@
 name: K8s Manifest Validation
+concurrency:
+  group: k8s-validation-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   push:

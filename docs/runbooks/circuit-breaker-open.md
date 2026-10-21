@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Runbook: Circuit Breaker Open
 
 **Linked alerts:** `CircuitBreakerOpen` (if present), related to DB / source circuit breaker metrics

@@ -143,3 +143,11 @@ and admin API calls, not on-chain writes, and they are managed by
   call), documented in `docs/security/secret-rotation.md` and exercised by
   the quarterly drill in `.github/workflows/secret-rotation-drill.yml` — the
   drill's dry-run output and this document describe the same code path.
+
+## Managed runtime secrets
+
+Kubernetes runtime secrets are synchronized from AWS Secrets Manager by External Secrets Operator. The `aws-secrets-manager` `ClusterSecretStore` must use workload identity and be restricted to the environment's `stellar-oracle/runtime` secret; cluster roles may read that secret but may not write it. Store JSON properties `API_KEYS`, `ADMIN_SECRET_KEY`, `ORACLE_API_KEY`, `DATABASE_URL`, and `POSTGRES_PASSWORD` there. The ExternalSecret manifests create the Kubernetes Secret objects consumed by the API, aggregator and database. Never commit values or copy a filled secret manifest into this repository.
+
+Before a release, run `scripts/validate-deployed-secrets.sh <namespace>`: it waits for External Secrets synchronization and rejects missing or placeholder values. To bootstrap, install External Secrets Operator, provision the `aws-secrets-manager` ClusterSecretStore and workload identity, then create the versioned secret in AWS Secrets Manager using the listed property names. Rotation updates the provider secret; the operator refreshes it within one hour. Restart affected workloads after synchronization and verify readiness. AWS CloudTrail records writes and actor identity. For recovery, restore the previous Secrets Manager version, wait for ExternalSecret Ready, then roll back the affected workload. The quarterly rotation drill validates the rotation scripts; operators must also verify provider version change and synchronization in the target environment.
+
+**Owners:** Security Engineering owns AWS secret policies and recovery; Platform Operations owns External Secrets and workload rollout. Break-glass access requires incident commander approval, a time-limited audited AWS role, and a post-incident CloudTrail review. Revoke the role immediately after recovery.

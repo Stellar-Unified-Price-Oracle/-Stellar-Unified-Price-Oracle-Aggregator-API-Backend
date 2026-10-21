@@ -21,12 +21,14 @@ export { TIER_RATE_LIMITS };
  * - `feeds`: feed identifiers the key may read (e.g. `XLM/USD`). `*` matches all.
  * - `operations`: operation names the key may invoke (e.g. `read`, `submit`). `*` matches all.
  * - `environments`: deployment environments the key is valid in (e.g. `production`). `*` matches all.
+ * - `effectiveAt`: epoch milliseconds at which the entitlement becomes active.
  * - `expiresAt`: epoch milliseconds after which the key is rejected. Absent means no expiry.
  */
 export interface KeyPolicyScope {
   feeds?: string[];
   operations?: string[];
   environments?: string[];
+  effectiveAt?: number;
   expiresAt?: number;
 }
 
@@ -34,7 +36,7 @@ export interface KeyPolicyScope {
 export interface ScopeCheckResult {
   allowed: boolean;
   /** Machine-readable reason when `allowed` is false. */
-  reason?: 'expired' | 'feed' | 'operation' | 'environment';
+  reason?: 'expired' | 'not_yet_effective' | 'feed' | 'operation' | 'environment';
 }
 
 /** Wildcard token that matches any value within a scope dimension. */
@@ -139,14 +141,24 @@ export function normalizePolicyScope(policy?: KeyPolicyScope | null): KeyPolicyS
   const operations = normalizeDimension(policy.operations, 'operations');
   const environments = normalizeDimension(policy.environments, 'environments');
   let expiresAt: number | undefined;
+  let effectiveAt: number | undefined;
+  if (policy.effectiveAt !== undefined && policy.effectiveAt !== null) {
+    if (typeof policy.effectiveAt !== 'number' || !Number.isFinite(policy.effectiveAt) || policy.effectiveAt <= 0) {
+      throw new InvalidPolicyScopeError('policy.effectiveAt must be a positive epoch-millisecond timestamp');
+    }
+    effectiveAt = Math.floor(policy.effectiveAt);
+  }
   if (policy.expiresAt !== undefined && policy.expiresAt !== null) {
     if (typeof policy.expiresAt !== 'number' || !Number.isFinite(policy.expiresAt) || policy.expiresAt <= 0) {
       throw new InvalidPolicyScopeError('policy.expiresAt must be a positive epoch-millisecond timestamp');
     }
     expiresAt = Math.floor(policy.expiresAt);
   }
-  if (!feeds && !operations && !environments && expiresAt === undefined) return undefined;
-  return { feeds, operations, environments, expiresAt };
+  if (effectiveAt !== undefined && expiresAt !== undefined && expiresAt <= effectiveAt) {
+    throw new InvalidPolicyScopeError('policy.expiresAt must be later than policy.effectiveAt');
+  }
+  if (!feeds && !operations && !environments && effectiveAt === undefined && expiresAt === undefined) return undefined;
+  return { feeds, operations, environments, effectiveAt, expiresAt };
 }
 
 function dimensionAllows(allowed: string[] | undefined, requested: string | undefined): boolean {
@@ -161,6 +173,10 @@ export function isPolicyExpired(policy: KeyPolicyScope | undefined, now: number 
   return !!policy && typeof policy.expiresAt === 'number' && now >= policy.expiresAt;
 }
 
+export function isPolicyEffective(policy: KeyPolicyScope | undefined, now: number = Date.now()): boolean {
+  return !policy || typeof policy.effectiveAt !== 'number' || now >= policy.effectiveAt;
+}
+
 /**
  * Evaluate a credential policy against a requested feed/operation/environment.
  * An absent policy (legacy key) is unrestricted. Expiry is checked first so an
@@ -173,6 +189,7 @@ export function checkPolicyScope(
 ): ScopeCheckResult {
   if (!policy) return { allowed: true };
   if (isPolicyExpired(policy, now)) return { allowed: false, reason: 'expired' };
+  if (!isPolicyEffective(policy, now)) return { allowed: false, reason: 'not_yet_effective' };
   if (!dimensionAllows(policy.feeds, request.feed)) return { allowed: false, reason: 'feed' };
   if (!dimensionAllows(policy.operations, request.operation)) return { allowed: false, reason: 'operation' };
   if (!dimensionAllows(policy.environments, request.environment)) return { allowed: false, reason: 'environment' };
@@ -310,6 +327,9 @@ export class ApiKeyManager {
     if (isPolicyExpired(metadata.policy)) {
       return { valid: false, error: 'API key has expired' };
     }
+  if (!isPolicyEffective(metadata.policy)) {
+    return { valid: false, error: 'API key entitlement is not yet effective' };
+  }
 
     return { valid: true, metadata };
   }
@@ -825,6 +845,7 @@ function describePolicy(policy: KeyPolicyScope): string {
   if (policy.feeds) parts.push(`feeds=${policy.feeds.join('|')}`);
   if (policy.operations) parts.push(`operations=${policy.operations.join('|')}`);
   if (policy.environments) parts.push(`environments=${policy.environments.join('|')}`);
+  if (policy.effectiveAt !== undefined) parts.push(`effectiveAt=${new Date(policy.effectiveAt).toISOString()}`);
   if (policy.expiresAt !== undefined) parts.push(`expiresAt=${new Date(policy.expiresAt).toISOString()}`);
   return parts.join(',');
 }

@@ -1,4 +1,7 @@
 name: Dependabot auto-merge
+concurrency:
+  group: dependabot-auto-merge-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   pull_request:

@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Runbook: Rollback Decision Tree
 
 **Severity:** P0–P1 (varies by path)

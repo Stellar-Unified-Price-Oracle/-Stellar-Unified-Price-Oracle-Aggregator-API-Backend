@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Price correctness validation suite
 
 Issue #420. Proves aggregated prices are *correct*, not merely *available* — a

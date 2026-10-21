@@ -6,6 +6,11 @@ Closes #455.
 
 Give consumers a safe and deterministic integration environment without exposing production secrets, billing data, or real market data.
 
+Secret storage for this environment is documented in
+[Secret Storage by Environment](./SECRET_STORAGE.md): sandbox credentials are
+created out of band and are never committed; `secret.example.yaml` is a template,
+not an applied manifest.
+
 ## Environment model
 
 The sandbox is explicitly isolated from production:

@@ -52,6 +52,7 @@ const IGNORE_READ_ONLY = new Map([
  * directories.  Each entry MUST explain where the variable is actually consumed.
  */
 const IGNORE_DOC_ONLY = new Map([
+  ['SANDBOX_PROVIDER_LEASE_FILE', 'read through the env parameter of providerApiKey in oracle-sources/sandbox-credentials.ts'],
   // Consumed by the PostgreSQL Docker image entrypoint, not by our config.ts.
   ['POSTGRES_USER',              'Docker image entrypoint; not read by service source code'],
   ['POSTGRES_PASSWORD',          'Docker image entrypoint; not read by service source code'],
@@ -88,6 +89,12 @@ const IGNORE_DOC_ONLY = new Map([
   ['WEBHOOK_ALLOWED_HOSTS_BY_TENANT', 'read in api/src/infrastructure/config.ts hostMapEnv() helper'],
   ['WEBHOOK_ALLOW_PRIVATE_IPS',       'read in api/src/webhooks/ssrf.ts (SSRF policy guard)'],
   ['WEBHOOK_REQUIRE_HTTPS',           'read in api/src/webhooks/ssrf.ts (scheme enforcement)'],
+
+  // Consumed by packages/vault-client (outside the scanned api/src and
+  // services/aggregator/src trees) and by docker-compose for the dev server.
+  ['VAULT_ADDR',                 'read in packages/vault-client/src/index.ts; injected by compose/platform'],
+  ['VAULT_TOKEN',                'read in packages/vault-client/src/index.ts; injected by compose/platform'],
+  ['VAULT_DEV_ROOT_TOKEN_ID',    'docker-compose dev Vault only; generated per run by scripts/dev-up.mjs'],
 ]);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

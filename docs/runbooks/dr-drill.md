@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Runbook: DR Drill — Regional Failover
 
 **Linked workflow:** `.github/workflows/dr-drill.yml`
