@@ -209,6 +209,15 @@ export class ReplayBuffer {
     return { assets: this.buffers.size, messages: this.totalMessages, bytes: this.totalBytes };
   }
 
+  oldestSequence(assets?: string[] | null): number | null {
+    let oldest: number | null = null;
+    const buffers = assets ? assets.map((asset) => this.buffers.get(asset) ?? []) : this.buffers.values();
+    for (const buffer of buffers) {
+      if (buffer.length && (oldest === null || buffer[0].sequenceId < oldest)) oldest = buffer[0].sequenceId;
+    }
+    return oldest;
+  }
+
   clear(): void {
     this.buffers.clear();
     this.totalBytes = 0;

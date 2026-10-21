@@ -197,6 +197,40 @@ const options: swaggerJsdoc.Options = {
           },
         },
       },
+      '/api/v1/consumer/quality-report': {
+        get: {
+          operationId: 'getConsumerQualityReportV1',
+          tags: ['Consumer'],
+          summary: 'Consumer-selected feed quality, freshness, coverage, and reproducible time window',
+          security: [{ ApiKeyAuth: [] }],
+          parameters: [
+            { in: 'query', name: 'assets', required: true, schema: { type: 'string' }, description: 'Comma-separated list of 1 to 50 feed identifiers' },
+            { in: 'query', name: 'from', required: true, schema: { type: 'integer' }, description: 'Window start, Unix seconds' },
+            { in: 'query', name: 'to', required: true, schema: { type: 'integer' }, description: 'Window end, Unix seconds; maximum 30 days after from' },
+            { in: 'query', name: 'region', schema: { type: 'string' } },
+          ],
+          responses: { 200: { description: 'Versioned feed quality report including no-data feeds and reportId' }, 400: { description: 'Invalid feed set or window' }, 401: { description: 'API key required' } },
+        },
+      },
+      '/api/v1/consumer/schemas': {
+        get: {
+          operationId: 'getApiSchemaRegistryV1',
+          tags: ['Consumer'],
+          summary: 'Versioned REST and WebSocket event schema registry with compatibility and deprecation metadata',
+          responses: { 200: { description: 'Machine-readable schema registry' } },
+        },
+      },
+      '/api/v1/admin/consumer-entitlements/{keyHash}': {
+        put: {
+          operationId: 'setConsumerEntitlements',
+          tags: ['Administration'],
+          summary: 'Grant, reduce, or schedule consumer feed entitlements with an audit record',
+          security: [{ ApiKeyAuth: [] }],
+          parameters: [{ in: 'path', name: 'keyHash', required: true, schema: { type: 'string' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['effectiveAt', 'feeds'], properties: { effectiveAt: { type: 'string', format: 'date-time' }, expiresAt: { type: 'string', format: 'date-time' }, feeds: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' } }, operations: { type: 'array', items: { type: 'string' } }, environments: { type: 'array', items: { type: 'string' } } } } } } },
+          responses: { 200: { description: 'Entitlement policy updated and audit event recorded' }, 400: { description: 'Invalid entitlement policy' }, 403: { description: 'Operator role with keys:write permission required' }, 404: { description: 'API key not found' } },
+        },
+      },
       '/api/v2/consumer/latency-freshness': {
         get: {
           operationId: 'getLatencyFreshnessV2',
@@ -223,6 +257,29 @@ const options: swaggerJsdoc.Options = {
           tags: ['Consumer'],
           summary: 'Contracted delivery objective attainment (v2 envelope)',
           responses: { 200: { description: 'Objective attainment' }, 401: { description: 'API key required' } },
+        },
+      },
+      '/api/v2/consumer/quality-report': {
+        get: {
+          operationId: 'getConsumerQualityReportV2',
+          tags: ['Consumer'],
+          summary: 'Consumer-selected feed quality, freshness, coverage, and reproducible time window',
+          security: [{ ApiKeyAuth: [] }],
+          parameters: [
+            { in: 'query', name: 'assets', required: true, schema: { type: 'string' } },
+            { in: 'query', name: 'from', required: true, schema: { type: 'integer' } },
+            { in: 'query', name: 'to', required: true, schema: { type: 'integer' } },
+            { in: 'query', name: 'region', schema: { type: 'string' } },
+          ],
+          responses: { 200: { description: 'Versioned feed quality report' }, 400: { description: 'Invalid feed set or window' }, 401: { description: 'API key required' } },
+        },
+      },
+      '/api/v2/consumer/schemas': {
+        get: {
+          operationId: 'getApiSchemaRegistryV2',
+          tags: ['Consumer'],
+          summary: 'Versioned REST and WebSocket event schema registry',
+          responses: { 200: { description: 'Machine-readable schema registry' } },
         },
       },
       '/api/v1/history/{asset}': {
