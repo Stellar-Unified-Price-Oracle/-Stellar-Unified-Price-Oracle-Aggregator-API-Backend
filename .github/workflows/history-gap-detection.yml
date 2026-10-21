@@ -1,4 +1,7 @@
 name: History gap detection
+concurrency:
+  group: history-gap-detection-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Issue #421 — keep the price_history dataset continuous and complete.
 # Runs hourly and on demand; fails (alerts) when a gap exceeds the threshold.

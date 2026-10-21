@@ -89,6 +89,12 @@ const IGNORE_DOC_ONLY = new Map([
   ['WEBHOOK_ALLOWED_HOSTS_BY_TENANT', 'read in api/src/infrastructure/config.ts hostMapEnv() helper'],
   ['WEBHOOK_ALLOW_PRIVATE_IPS',       'read in api/src/webhooks/ssrf.ts (SSRF policy guard)'],
   ['WEBHOOK_REQUIRE_HTTPS',           'read in api/src/webhooks/ssrf.ts (scheme enforcement)'],
+
+  // Consumed by packages/vault-client (outside the scanned api/src and
+  // services/aggregator/src trees) and by docker-compose for the dev server.
+  ['VAULT_ADDR',                 'read in packages/vault-client/src/index.ts; injected by compose/platform'],
+  ['VAULT_TOKEN',                'read in packages/vault-client/src/index.ts; injected by compose/platform'],
+  ['VAULT_DEV_ROOT_TOKEN_ID',    'docker-compose dev Vault only; generated per run by scripts/dev-up.mjs'],
 ]);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

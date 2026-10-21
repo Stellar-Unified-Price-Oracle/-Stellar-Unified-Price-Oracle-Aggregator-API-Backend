@@ -9,7 +9,9 @@ This guide is for operators deploying the Stellar Unified Price Oracle to a
 production Kubernetes cluster.  It complements the quick-start in
 [`DEPLOY.md`](../DEPLOY.md), the runbooks in
 [`docs/runbooks/`](./runbooks/README.md), and the security controls in
-[`docs/SECURITY_ARCHITECTURE.md`](./SECURITY_ARCHITECTURE.md).
+[`docs/SECURITY_ARCHITECTURE.md`](./SECURITY_ARCHITECTURE.md). Secret storage,
+Vault fail-closed behaviour, and the staging/sandbox templates are documented in
+[`docs/SECRET_STORAGE.md`](./SECRET_STORAGE.md).
 
 ## Architecture at a glance
 
