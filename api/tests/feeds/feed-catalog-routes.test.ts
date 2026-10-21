@@ -84,6 +84,33 @@ describe('feed catalog routes', () => {
     expect(Array.isArray(res.body.data.feeds)).toBe(true);
   });
 
+  it('serves immutable snapshot pages with ETags and deterministic cursors', async () => {
+    await request(app).put('/catalog/feeds/snapshot-btc/policy').set(auth(operatorKey)).send(policyBody('snapshot-btc'));
+    const first = await request(app).get('/catalog/snapshots?limit=1');
+    expect(first.status).toBe(200);
+    expect(first.body.data.snapshots).toHaveLength(1);
+    expect(first.body.data.nextCursor).toBeTruthy();
+    const snapshotId = first.body.data.snapshots[0].id;
+    const detail = await request(app).get(`/catalog/snapshots/${snapshotId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.headers.etag).toBe(`"${snapshotId}"`);
+    const cached = await request(app).get(`/catalog/snapshots/${snapshotId}`).set('If-None-Match', `"${snapshotId}"`);
+    expect(cached.status).toBe(304);
+    const next = await request(app).get(`/catalog/snapshots?limit=1&cursor=${encodeURIComponent(first.body.data.nextCursor)}`);
+    expect(next.status).toBe(200);
+    expect(next.body.data.snapshots[0].id).not.toBe(snapshotId);
+  });
+
+  it('rejects unknown snapshot cursors and fails closed when signing is unavailable', async () => {
+    const cursor = await request(app).get('/catalog/snapshots?cursor=unknown').set(auth(viewerKey));
+    expect(cursor.status).toBe(400);
+    await request(app).put('/catalog/feeds/signing-btc/policy').set(auth(operatorKey)).send(policyBody('signing-btc'));
+    const snapshots = await request(app).get('/catalog/snapshots');
+    const signing = await request(app).post('/catalog/releases/canary').set(auth(operatorKey)).send({ snapshotId: snapshots.body.data.snapshots[0].id });
+    expect(signing.status).toBe(503);
+    expect(signing.body.error.code).toBe('SIGNING_UNAVAILABLE');
+  });
+
   it('blocks a viewer from writing a policy', async () => {
     const res = await request(app)
       .put('/catalog/feeds/btc-usd/policy')

@@ -74,6 +74,55 @@ export const priceDeviation = new client.Histogram({
 });
 register.registerMetric(priceDeviation);
 
+export const feedPolicySavedTotal = new client.Counter({
+  name: 'feed_policy_saved_total',
+  help: 'Feed policy save attempts by result',
+  labelNames: ['result'],
+});
+register.registerMetric(feedPolicySavedTotal);
+
+export const feedPolicyValidationErrorsTotal = new client.Counter({
+  name: 'feed_policy_validation_errors_total',
+  help: 'Feed policy validation failures by feed',
+  labelNames: ['feed'],
+});
+register.registerMetric(feedPolicyValidationErrorsTotal);
+
+export const feedTransitionsTotal = new client.Counter({
+  name: 'feed_transitions_total',
+  help: 'Accepted feed lifecycle transitions by transition and resulting state',
+  labelNames: ['transition', 'to'],
+});
+register.registerMetric(feedTransitionsTotal);
+
+export const feedTransitionDeniedTotal = new client.Counter({
+  name: 'feed_transition_denied_total',
+  help: 'Denied feed lifecycle transitions by error code',
+  labelNames: ['code'],
+});
+register.registerMetric(feedTransitionDeniedTotal);
+
+export const feedAliasHitsTotal = new client.Counter({
+  name: 'feed_alias_hits_total',
+  help: 'Feed alias lookups by alias kind and expiry state',
+  labelNames: ['kind', 'expired'],
+});
+register.registerMetric(feedAliasHitsTotal);
+
+export const feedQuorumEvaluatedTotal = new client.Counter({
+  name: 'feed_quorum_evaluated_total',
+  help: 'Feed quorum evaluations by feed and result',
+  labelNames: ['feed', 'result'],
+});
+register.registerMetric(feedQuorumEvaluatedTotal);
+
+export const feedQuorumReportingSources = new client.Gauge({
+  name: 'feed_quorum_reporting_sources',
+  help: 'Number of eligible source contributions in the latest quorum evaluation',
+  labelNames: ['feed'],
+});
+register.registerMetric(feedQuorumReportingSources);
+
 // ── Database connection pool & resilience (issues #44, #45) ──────────────────
 
 export const dbPoolTotalConnections = new client.Gauge({
