@@ -1,0 +1,25 @@
+name: Periodic price quality report
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 1 * *'
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Generate report
+        run: npm run report:price-quality -- docs/price-quality/periodic-report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: price-quality-report-${{ github.run_number }}
+          path: docs/price-quality/periodic-report.md
+          retention-days: 90

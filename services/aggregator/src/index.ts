@@ -120,6 +120,7 @@ const alertManager = new AlertManager({
   slaBreachMaxPerWindow: parseInt(process.env.ALERT_SLA_BREACH_MAX_PER_WINDOW || '10', 10),
   slaBreachWindowSeconds: parseInt(process.env.ALERT_SLA_BREACH_WINDOW_SECONDS || '300', 10),
 });
+const sourceBiasTracker = new SourceBiasTracker();
 
 let lastAggregated: AggregatedPrice[] = [];
 const startupStartedAt = Date.now();
@@ -306,6 +307,12 @@ async function poll(): Promise<AggregatedPrice[]> {
     const sourcePrices = sourcePricesByAsset.get(ap.asset);
     if (sourcePrices && brownoutPolicy.isFeatureEnabled('source_disagreement_alerts')) {
       await alertManager.checkSourceDisagreement(ap.asset, sourcePrices);
+      const parsed = sourcePrices.map((entry) => ({ source: entry.source, price: Number(entry.price) }));
+      for (const entry of parsed) {
+        const estimate = sourceBiasTracker.observe(ap.asset, entry.source, entry.price,
+          parsed.filter((peer) => peer.source !== entry.source).map((peer) => peer.price));
+        if (estimate?.significant) await alertManager.reportSourceBias(ap.asset, entry.source, estimate);
+      }
     } else if (sourcePrices) {
       brownoutShedTotal.inc({ feature: 'source_disagreement_alerts' });
     }
