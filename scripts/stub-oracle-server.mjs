@@ -15,6 +15,8 @@
 // exercised in CI rather than only in unit tests.
 
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
+import { timingSafeEqual } from 'node:crypto';
 
 const PORT = parseInt(process.env.STUB_ORACLE_PORT || '4010', 10);
 
@@ -46,10 +48,26 @@ function send(res, status, body) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
-  const log = (label) => console.log(`[stub-oracle] ${label} ${req.url}`);
+  const log = (label) => console.log(`[stub-oracle] ${label} ${path}`);
 
   // Chainlink — { USD: { PRICE: <decimal> } }, scaled by the source at 8 dp.
   if (path === '/price') {
+    if (process.env.SANDBOX_PROVIDER_LEASE_FILE) {
+      try {
+        const lease = JSON.parse(readFileSync(process.env.SANDBOX_PROVIDER_LEASE_FILE, 'utf8'));
+        const supplied = Buffer.from(url.searchParams.get('api_key') || '');
+        const expected = Buffer.from(lease.token || '');
+        if (lease.version !== 1 || lease.environment !== 'sandbox' || lease.provider !== 'chainlink' ||
+            lease.origin !== `http://127.0.0.1:${PORT}` || !/^sbx_[a-f0-9]{64}$/.test(lease.token) ||
+            !Number.isSafeInteger(lease.issuedAt) || !Number.isSafeInteger(lease.expiresAt) ||
+            lease.expiresAt - lease.issuedAt > 86400000 || Date.now() < lease.issuedAt || Date.now() >= lease.expiresAt ||
+            supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+          return send(res, 401, { error: 'invalid sandbox lease' });
+        }
+      } catch {
+        return send(res, 401, { error: 'sandbox lease unavailable' });
+      }
+    }
     const price = priceFor(url.searchParams.get('fsym'));
     if (price === null) return send(res, 200, {});
     log('chainlink');

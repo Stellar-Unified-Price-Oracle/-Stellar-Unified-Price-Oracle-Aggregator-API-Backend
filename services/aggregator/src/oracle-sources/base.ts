@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'async_hooks';
+import { classifyProviderError, providerFailure, type ProviderFailure } from './provider-errors';
 import BigNumber from 'bignumber.js';
 import { logger } from '../observability/logger';
 import { NormalizedPrice, OracleSourceName, SourceHealthStatus } from '../infrastructure/types';
@@ -5,6 +7,7 @@ import { sourceCircuitBreaker } from '../price-aggregation/source-circuit-breake
 import { eventBus } from '../domain-events';
 import {
   oracleSourceLatency,
+  oracleProviderFailuresTotal,
   oracleSourceRequestsTotal,
   oracleSourceSlaBreaches,
   oracleSourceBudgetBlockedTotal,
@@ -73,6 +76,7 @@ export type SourceFailureKind = 'transport-error' | 'invalid-payload' | 'no-pric
 export interface SourceFetchOutcome {
   price: NormalizedPrice | null;
   failureKind?: SourceFailureKind;
+  failure?: ProviderFailure;
 }
 
 export abstract class BaseSource {
@@ -98,6 +102,7 @@ export abstract class BaseSource {
   lastInvalidPayloadAt: number | null = null;
 
   private startedAt = Date.now();
+  private readonly payloadValidation = new AsyncLocalStorage<{ invalid: boolean }>();
 
   protected normalize(
     asset: string,
@@ -127,6 +132,8 @@ export abstract class BaseSource {
    * (at a sustained rate) alerted (issue #584).
    */
   protected recordInvalidPayload(asset: string, issues: string): void {
+    const validation = this.payloadValidation.getStore();
+    if (validation) validation.invalid = true;
     oracleSourceInvalidPayloadsTotal.inc({ source: sanitizeSourceLabel(this.name) });
     this.lastInvalidPayloadAt = Math.floor(Date.now() / 1000);
     void invalidPayloadAlerter.checkInvalidPayload(this.name, asset, issues);
@@ -149,9 +156,7 @@ export abstract class BaseSource {
         price: String(result.price),
         decimals: result.decimals,
       });
-      oracleSourceInvalidPayloadsTotal.inc({ source: sanitizeSourceLabel(this.name) });
-      this.lastInvalidPayloadAt = Math.floor(Date.now() / 1000);
-      void invalidPayloadAlerter.checkInvalidPayload(this.name, asset, scaled.reason);
+      this.recordInvalidPayload(asset, scaled.reason);
       return null;
     }
     const fetchedAt = Math.floor(Date.now() / 1000);
@@ -185,12 +190,12 @@ export abstract class BaseSource {
       logger.error(
         `[${this.name}] Daily API budget exhausted — skipping fetch for ${asset} until UTC rollover`,
       );
-      return { price: null, failureKind: 'transport-error' };
+      return this.failedOutcome('transport-error', providerFailure('budget-exhausted'));
     }
 
     if (!sourceCircuitBreaker.isAllowed(this.name)) {
       logger.warn(`[${this.name}] Circuit breaker OPEN — skipping fetch for ${asset}`);
-      return { price: null, failureKind: 'transport-error' };
+      return this.failedOutcome('transport-error', providerFailure('circuit-open'));
     }
 
     // Issue #684 — reject incompatible feed assignments before any network
@@ -198,7 +203,7 @@ export abstract class BaseSource {
     // instead of fetching and discarding the quote.
     if (!capabilityRegistry.supportsAsset(this.name, asset)) {
       logger.debug(`[${this.name}] Asset ${asset} not in supported capability set — skipping fetch`);
-      return { price: null, failureKind: 'no-price' };
+      return this.failedOutcome('no-price', providerFailure('no-price'));
     }
 
     const maxAttempts = 3;
@@ -227,7 +232,23 @@ export abstract class BaseSource {
 
     try {
       this.health.totalRequests++;
-      const price = await this.fetchPrice(asset);
+      const validation = { invalid: false };
+      const price = await this.payloadValidation.run(validation, () => this.fetchPrice(asset));
+      if (!price) {
+        const invalid = validation.invalid;
+        const failure = providerFailure(invalid ? 'invalid-payload' : 'no-price');
+        timer({ status: 'error' });
+        oracleSourceRequestsTotal.inc({ source: safeSource, status: 'error' });
+        if (invalid) {
+          this.health.totalFailures++;
+          this.health.consecutiveFailures++;
+          this.health.lastFailure = Math.floor(Date.now() / 1000);
+          this.health.healthy = this.health.consecutiveFailures < 3;
+          this.health.uptimePercent = this.calcUptime();
+          sourceCircuitBreaker.recordFailure(this.name);
+        }
+        return this.failedOutcome(invalid ? 'invalid-payload' : 'no-price', failure);
+      }
 
       const elapsed = timer({ status: 'success' });
       oracleSourceRequestsTotal.inc({ source: safeSource, status: 'success' });
@@ -265,15 +286,16 @@ export abstract class BaseSource {
       this.health.uptimePercent = this.calcUptime();
       sourceCircuitBreaker.recordFailure(this.name);
 
-      if (attempt < maxAttempts) {
+      const failure = classifyProviderError(err);
+      if (failure.retryable && attempt < maxAttempts) {
         const delay = Math.min(baseDelay * Math.pow(2, attempt - 1) + Math.random() * 500, 10000);
         logger.warn(`[${this.name}] Retry ${asset} (attempt ${attempt}/${maxAttempts}) after ${delay}ms`, err);
         await new Promise(r => setTimeout(r, delay));
         return this.fetchWithOutcome(asset, attempt + 1);
       }
 
-      logger.error(`[${this.name}] Failed to fetch ${asset} after ${maxAttempts} attempts`, err);
-      return { price: null, failureKind: 'transport-error' };
+      logger.error(`[${this.name}] Failed to fetch ${asset} after ${attempt} attempt(s)`, err);
+      return this.failedOutcome('transport-error', failure);
     }
   }
 
@@ -284,6 +306,11 @@ export abstract class BaseSource {
       if (price) results.push(price);
     }
     return results;
+  }
+
+  private failedOutcome(failureKind: SourceFailureKind, failure: ProviderFailure): SourceFetchOutcome {
+    oracleProviderFailuresTotal.inc({ source: sanitizeSourceLabel(this.name), category: failure.category });
+    return { price: null, failureKind, failure };
   }
 
   private calcUptime(): number {

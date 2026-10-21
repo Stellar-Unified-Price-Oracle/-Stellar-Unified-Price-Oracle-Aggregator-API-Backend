@@ -3,17 +3,9 @@ import { httpClient } from '../infrastructure/http-client';
 import { config } from '../infrastructure/config';
 import { NormalizedPrice, OracleSourceName } from '../infrastructure/types';
 import { BaseSource } from './base';
-import { resolveDecimals } from './decimals';
 import { DEFAULT_CAPABILITIES, type ProviderCapabilities } from './capabilities';
 import { providerEvidenceArchive } from '../persistence/provider-evidence-archive';
 import { parseProviderResponse, reportInvalidPayload, type ProviderSchemaName } from './response-validation';
-
-interface RedstonePriceData {
-  value: string | number;
-  decimals?: number;
-}
-
-type RedstonePricesResponse = Record<string, RedstonePriceData | undefined>;
 
 export class RedstoneSource extends BaseSource {
   name: OracleSourceName = 'redstone';
@@ -54,8 +46,6 @@ export class RedstoneSource extends BaseSource {
       return null;
     }
 
-    // The response carries no observation time, so the age of this price
-    // cannot be established from the provider (`null`, not `Date.now()`).
-    return this.normalize(asset, data.value, resolveDecimals(this.name, data.decimals), null);
+    return this.normalizeValidated(asset, result);
   }
 }
