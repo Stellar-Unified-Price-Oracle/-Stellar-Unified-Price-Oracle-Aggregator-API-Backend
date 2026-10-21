@@ -1,4 +1,7 @@
 name: SBOM
+concurrency:
+  group: sbom-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   release:

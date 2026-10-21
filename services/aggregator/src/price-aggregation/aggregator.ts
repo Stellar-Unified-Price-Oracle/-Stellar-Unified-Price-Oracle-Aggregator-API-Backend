@@ -152,6 +152,11 @@ export class PriceAggregator {
       .filter((p): p is AggregatedPrice => p !== null);
   }
 
+  getSourcePrices(asset: string): NormalizedPrice[] {
+    const normalized = asset.toUpperCase();
+    return Array.from(this.sources.values()).filter((p) => p.asset === normalized);
+  }
+
   getSourceCount(): number {
     return Array.from(
       new Set(Array.from(this.sources.values()).map((p) => p.source)),
