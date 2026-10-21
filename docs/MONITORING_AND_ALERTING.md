@@ -259,3 +259,8 @@ current set and recommended thresholds:
 
 See also: `docs/TRACING.md` (distributed tracing), `docs/PERFORMANCE_TUNING.md`,
 and the runbooks in `docs/runbooks/`.
+## Generated SLO pipeline
+
+`monitoring/slo.yml` is the sole SLO definition source. It defines each target, SLI, evaluation window and per-objective fast/slow burn policy. `npm run generate:slo-rules` validates targets, windows, burn policy and SLI metric names against API and aggregator exporter registries, then writes `k8s/base/generated-slo-rules.yaml`. Kustomize loads that committed file into Prometheus. CI runs `npm run check:slo-rules` to reject malformed definitions, missing exporter metrics or stale generated rules.
+
+The same YAML is loaded by `scripts/generate-slo-report.ts`; there is no second report-side SLO list. Generated alerts use the SLO name label and fast/slow severity labels for routing in `monitoring/alertmanager.yml`. Dashboards should query the generated `stellar_slo:<name>:error_ratio:rate5m` recording rules and group by `slo`. Update the YAML, regenerate rules, and update dashboards or routing together when an objective changes.

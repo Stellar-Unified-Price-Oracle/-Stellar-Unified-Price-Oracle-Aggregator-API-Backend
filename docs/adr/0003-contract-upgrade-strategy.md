@@ -16,7 +16,7 @@ side without a recorded decision between them:
 - `ProxyContract` (`contracts/price-oracle/src/proxy.rs`) — an admin-gated,
   in-place WASM swap (`upgrade_wasm`) plus a logical implementation pointer
   (`upgrade`) and a `StorageLayoutVersion` counter for migrations.
-- `PriceOracleContract` (`contracts/price-oracle/src/contract.rs`) — the
+- `PriceOracleContract` (`contracts/price-oracle/src/lib.rs`) — the
   oracle's core read/write surface, deployable and usable directly without
   ever going through the proxy.
 

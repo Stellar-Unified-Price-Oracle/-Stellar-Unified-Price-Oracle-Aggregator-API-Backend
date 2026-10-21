@@ -1,0 +1,75 @@
+name: Promote immutable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_digest:
+        description: Immutable API image digest (sha256:...)
+        required: true
+        type: string
+      aggregator_digest:
+        description: Immutable aggregator image digest (sha256:...)
+        required: true
+        type: string
+      source_commit:
+        description: Full source commit SHA associated with both images
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  promote-staging:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate immutable release identity
+        env:
+          API_DIGEST: ${{ inputs.api_digest }}
+          AGGREGATOR_DIGEST: ${{ inputs.aggregator_digest }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          [[ "$API_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$AGGREGATOR_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$SOURCE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+          echo "Promoting source commit $SOURCE_COMMIT"
+          echo "API digest: $API_DIGEST"
+          echo "Aggregator digest: $AGGREGATOR_DIGEST"
+      - uses: azure/setup-kubectl@v4
+      - name: Install kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+      - name: Configure staging cluster
+        env:
+          KUBECONFIG_VALUE: ${{ secrets.KUBECONFIG_STAGING }}
+        run: |
+          test -n "$KUBECONFIG_VALUE"
+          mkdir -p "$RUNNER_TEMP/kube"
+          printf '%s' "$KUBECONFIG_VALUE" > "$RUNNER_TEMP/kube/config"
+          chmod 600 "$RUNNER_TEMP/kube/config"
+          echo "KUBECONFIG=$RUNNER_TEMP/kube/config" >> "$GITHUB_ENV"
+      - name: Fail if managed secret sync is missing or unsafe
+        run: bash scripts/validate-deployed-secrets.sh stellar-oracle-staging
+      - name: Gate promotion on SLO burn rate
+        env:
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL || 'http://prometheus.monitoring.svc:9090' }}
+        run: node scripts/slo-release-gate.ts --environment=staging
+      - name: Promote digests
+        env:
+          API_DIGEST: ${{ inputs.api_digest }}
+          AGGREGATOR_DIGEST: ${{ inputs.aggregator_digest }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          namespace="${GITHUB_REPOSITORY_OWNER,,}"
+          bash scripts/deploy-k8s.sh staging \
+            "ghcr.io/${namespace}/stellar-oracle-api@${API_DIGEST}" \
+            "ghcr.io/${namespace}/stellar-oracle-aggregator@${AGGREGATOR_DIGEST}"
+          echo "Promoted API=$API_DIGEST Aggregator=$AGGREGATOR_DIGEST Source=$SOURCE_COMMIT" >> "$GITHUB_STEP_SUMMARY"

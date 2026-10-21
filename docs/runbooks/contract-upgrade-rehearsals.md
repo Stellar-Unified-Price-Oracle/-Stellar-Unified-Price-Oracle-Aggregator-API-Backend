@@ -1,6 +1,7 @@
 # Runbook: Automated Contract Upgrade Rehearsals on an Isolated Network
 
 **Owner:** Smart Contract Engineering / Release Engineering  
+**Review date:** 2026-10-21
 **Scope:** `contracts/price-oracle/` (`PriceOracleContract`, `ProxyContract`)  
 **Status:** Approved & Enforced  
 **Frequency:** Mandatory before every Release Candidate (RC) approval  

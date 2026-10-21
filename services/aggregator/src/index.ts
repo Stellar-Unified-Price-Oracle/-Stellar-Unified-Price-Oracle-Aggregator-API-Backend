@@ -500,6 +500,10 @@ async function main(): Promise<void> {
 
   if (!config.soroban.contractId) {
     logger.warn('No contract ID configured — running in dry-run mode');
+  } else if (!config.soroban.adminSecret) {
+    logger.error('ADMIN_SECRET_KEY is required when CONTRACT_ID is configured');
+    process.exitCode = 1;
+    return;
   }
 
   if (config.database.url) {

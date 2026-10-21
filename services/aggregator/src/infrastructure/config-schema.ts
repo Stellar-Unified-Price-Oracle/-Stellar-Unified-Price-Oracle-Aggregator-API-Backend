@@ -458,6 +458,36 @@ const envSchema = z.object(envShape).superRefine((value, ctx) => {
 
 export type RawEnvConfig = z.infer<typeof envSchema>;
 
+export interface CellConfig {
+  /** Cell identifier; `default` preserves single-cell behaviour. */
+  id: string;
+  /** True when CELL_ID was not set and the service runs as the single default cell. */
+  isDefault: boolean;
+  /** Upper-cased asset symbols owned by this cell (empty means all watched assets). */
+  assignedFeeds: string[];
+  /** Per-cell dependency overrides; undefined falls back to the global setting. */
+  dbUrl?: string;
+  cacheUrl?: string;
+  providerUrls: string[];
+}
+
+export const DEFAULT_CELL_ID = 'default';
+
+export function resolveCellConfig(config: RawEnvConfig): CellConfig {
+  const isDefault = config.CELL_ID === undefined;
+  return {
+    id: config.CELL_ID ?? DEFAULT_CELL_ID,
+    isDefault,
+    assignedFeeds: Array.from(
+      new Set((config.CELL_ASSIGNED_FEEDS ?? []).map((feed) => feed.toUpperCase())),
+    ),
+    dbUrl: config.CELL_DB_URL,
+    cacheUrl: config.CELL_CACHE_URL,
+    providerUrls: config.CELL_PROVIDER_URLS ?? [],
+  };
+}
+
+
 export interface EgressPolicy {
   environment: DeploymentEnvironment;
   allowedHosts: string[];

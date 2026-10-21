@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Cost Optimization Alert — Stellar Oracle
 
 Severity: warning / critical
