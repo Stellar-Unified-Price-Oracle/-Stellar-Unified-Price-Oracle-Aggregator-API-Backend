@@ -2,13 +2,14 @@
  * Generates a monthly SLO report by querying Prometheus for each SLO defined
  * in monitoring/slo.yml over the last 30 days, and writes a markdown summary.
  *
- * SLO definitions are mirrored from monitoring/slo.yml below (kept in sync
- * manually) rather than parsed at runtime, to avoid adding a YAML dependency.
+ * Definitions are loaded directly from monitoring/slo.yml, the canonical source.
  *
  * Usage: tsx scripts/generate-slo-report.ts [--prometheus-url=http://localhost:9090] [--out=./reports]
  */
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import YAML from 'yaml';
 
 interface SloDef {
   name: string;
@@ -18,48 +19,8 @@ interface SloDef {
   sli: { good_events: string; total_events: string };
 }
 
-const SLOS: SloDef[] = [
-  {
-    name: 'api-availability',
-    description: 'Percentage of API requests that do not return a 5xx error',
-    target: 99.9,
-    window: '30d',
-    sli: {
-      good_events: 'sum(rate(http_requests_total{job="stellar-api",status_code!~"5.."}[5m]))',
-      total_events: 'sum(rate(http_requests_total{job="stellar-api"}[5m]))',
-    },
-  },
-  {
-    name: 'api-latency',
-    description: 'Percentage of API requests served under 1s (p95 target)',
-    target: 99.0,
-    window: '30d',
-    sli: {
-      good_events: 'sum(rate(http_request_duration_seconds_bucket{job="stellar-api",le="1"}[5m]))',
-      total_events: 'sum(rate(http_request_duration_seconds_count{job="stellar-api"}[5m]))',
-    },
-  },
-  {
-    name: 'price-freshness',
-    description: 'Percentage of time published asset prices are younger than the staleness threshold',
-    target: 99.5,
-    window: '30d',
-    sli: {
-      good_events: 'sum(rate(stellar_oracle_price_checks_total{stale="false"}[5m]))',
-      total_events: 'sum(rate(stellar_oracle_price_checks_total[5m]))',
-    },
-  },
-  {
-    name: 'audit-log-completeness',
-    description: 'Percentage of audit events successfully recorded without loss',
-    target: 99.99,
-    window: '30d',
-    sli: {
-      good_events: 'sum(rate(audit_log_events_total{result="written"}[5m]))',
-      total_events: 'sum(rate(audit_log_events_total[5m]))',
-    },
-  },
-];
+const sloPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../monitoring/slo.yml');
+const SLOS: SloDef[] = (YAML.parse(fs.readFileSync(sloPath, 'utf8')) as { slos: SloDef[] }).slos;
 
 function parseArgs(): { prometheusUrl: string; outDir: string; schedule: boolean; review: boolean } {
   const args = process.argv.slice(2);

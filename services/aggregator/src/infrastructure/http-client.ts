@@ -1,3 +1,4 @@
+import { assertSandboxOrigin } from '../oracle-sources/sandbox-credentials';
 import axios, { AxiosHeaders, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import { logger } from '../observability/logger';
 import { config } from './config';
@@ -28,6 +29,9 @@ function buildClient(): AxiosInstance {
   });
 
   instance.interceptors.request.use((requestConfig) => {
+    if (process.env.PROVIDER_ENVIRONMENT === 'sandbox' || process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development') {
+      assertSandboxOrigin(buildFullUrl(requestConfig));
+    }
     const correlation = correlationHeaders();
     const existingHeaders = requestConfig.headers ?? {};
     requestConfig.headers = new AxiosHeaders({

@@ -1,0 +1,11 @@
+{
+  "methodology": "Synthetic labeled validation corpus; prices are same-unit USD values. Deviation rule flags a source when absolute percent error from the all-source median exceeds 10%. Truth labels are explicit and the report computes confusion rates from them. Synthetic results are not production performance estimates.",
+  "cases": [
+    {"name":"calm cluster","regime":"calm","asset":"XLM","reference":0.12,"sources":[{"source":"a","price":0.1201,"anomaly":false},{"source":"b","price":0.1199,"anomaly":false},{"source":"c","price":0.12,"anomaly":false}]},
+    {"name":"volatile but consistent","regime":"volatile","asset":"BTC","reference":67000,"sources":[{"source":"a","price":66900,"anomaly":false},{"source":"b","price":67100,"anomaly":false},{"source":"c","price":67050,"anomaly":false}]},
+    {"name":"illiquid wide spread","regime":"illiquid","asset":"ALT","reference":2,"sources":[{"source":"a","price":1.82,"anomaly":false},{"source":"b","price":2.0,"anomaly":false},{"source":"c","price":2.19,"anomaly":false}]},
+    {"name":"abrupt dislocation","regime":"abrupt-dislocation","asset":"ETH","reference":3500,"sources":[{"source":"a","price":3502,"anomaly":false},{"source":"b","price":3498,"anomaly":false},{"source":"c","price":4900,"anomaly":true}]},
+    {"name":"false positive in a thin market","regime":"illiquid","asset":"THIN","reference":10,"sources":[{"source":"a","price":9.7,"anomaly":false},{"source":"b","price":10,"anomaly":false},{"source":"c","price":11.3,"anomaly":false}]},
+    {"name":"missed moderate dislocation","regime":"abrupt-dislocation","asset":"SOL","reference":150,"sources":[{"source":"a","price":150,"anomaly":false},{"source":"b","price":150.5,"anomaly":false},{"source":"c","price":163,"anomaly":true}]}
+  ]
+}

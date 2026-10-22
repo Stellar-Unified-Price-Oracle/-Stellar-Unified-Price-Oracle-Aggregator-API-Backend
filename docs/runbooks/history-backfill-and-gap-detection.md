@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # History backfill & gap detection
 
 Issue #421. Keeps `price_history` continuous and complete so VWAP/EMA consumers

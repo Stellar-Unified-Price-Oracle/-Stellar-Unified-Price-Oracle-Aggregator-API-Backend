@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Runbook: Prometheus Cardinality Explosion
 
 **Linked alerts:** `MetricCardinalityExplosion`, `PrometheusHighSeriesChurn`, `PrometheusTSDBHeadSeriesHigh`, `PrometheusScrapeSampleLimitHit`, `PrometheusRemoteWriteCostBudget`

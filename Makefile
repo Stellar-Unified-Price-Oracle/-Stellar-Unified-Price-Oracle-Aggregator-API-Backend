@@ -1,4 +1,4 @@
-.PHONY: all build clean test deploy help deploy-soroban check-env check-routes check-ports check-contracts
+.PHONY: all build clean test deploy help deploy-soroban check-env check-routes check-ports check-contracts dev-up
 
 help:
 	@echo "Stellar Price Oracle Aggregator"
@@ -17,6 +17,7 @@ help:
 	@echo ""
 	@echo "  dev targets:"
 	@echo "  make install          Install all dependencies"
+	@echo "  make dev-up           Generate a per-run Vault token and start the compose stack"
 	@echo "  make dev-aggregator   Run aggregator in dev mode"
 	@echo "  make dev-api          Run API in dev mode"
 	@echo ""
@@ -70,6 +71,9 @@ test: test-soroban test-aggregator test-api
 
 dev-aggregator:
 	cd services/aggregator && npm run dev
+
+dev-up:
+	node scripts/dev-up.mjs
 
 dev-api:
 	cd api && npm run dev

@@ -20,7 +20,7 @@ Consumers must ignore unknown fields so additive feed metadata never breaks them
    `Deprecation` response headers in your client to find deprecated calls.
 2. **Pin.** Pin the version explicitly (`/api/v1/...` or `/api/v2/...`); never rely on defaults.
 3. **Verify offline.** Replay the shared fixtures and run the conformance kit
-   (`packages/api-conformance-kit`) against the target version.
+   (the API contract checks) against the target version.
 4. **Dual-read (shadow).** Call both versions, compare `asset`, `price`, `decimals`,
    `timestamp`; alert if relative price difference exceeds your tolerance.
 5. **Canary.** Route a small percentage (for example 5%) of traffic to the new version.

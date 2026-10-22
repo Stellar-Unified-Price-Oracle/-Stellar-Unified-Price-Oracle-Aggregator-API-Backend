@@ -27,6 +27,7 @@ export type AuditEvent =
   | 'admin.key_deleted'
   | 'admin.key_reactivated'
   | 'admin.key_retired'
+  | 'admin.entitlements_updated'
   | 'admin.key_algorithm_transition'
   | 'admin.rate_limit_updated'
   | 'admin.role_assigned'

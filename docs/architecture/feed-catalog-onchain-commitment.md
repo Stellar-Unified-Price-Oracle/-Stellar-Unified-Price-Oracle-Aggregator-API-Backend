@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # On-Chain Feed Catalog Version Commitment
 
 **Workstream:** Soroban protocol evolution  
