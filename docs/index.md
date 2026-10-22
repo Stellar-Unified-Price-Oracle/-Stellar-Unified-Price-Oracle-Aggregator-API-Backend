@@ -27,7 +27,6 @@ The system is composed of three main services:
 |---------|---------|
 | `api/` | Express REST + WebSocket gateway, authentication, rate limiting |
 | `services/aggregator/` | Price aggregation from multiple oracle sources |
-| `services/vault_manager/` | Stellar vault / treasury management |
 
 Key cross-cutting concerns: distributed tracing (OpenTelemetry), Prometheus
 metrics, event sourcing (#118), feature flags (#117), and performance regression

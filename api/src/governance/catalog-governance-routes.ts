@@ -44,6 +44,7 @@ import {
   canonicalJson,
   validateCatalogChange,
   type CatalogProposalStatus,
+  type CatalogPolicyChange,
   type FeedPolicy,
   type OnChainAction,
   type OnChainExecution,
@@ -88,6 +89,15 @@ const feedPolicySchema = z.object({
   minSources: z.number().int(),
   maxDeviationBps: z.number().int(),
   stalenessSeconds: z.number().int(),
+  freshnessProfile: z.enum(['realtime', 'standard', 'delayed']).optional(),
+  freshnessWarnSeconds: z.number().int().optional(),
+  quoteUnit: z.object({
+    currency: z.enum(['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD']),
+    denomination: z.string(),
+    scaleDecimals: z.number().int(),
+    displayDecimals: z.number().int(),
+    rounding: z.enum(['half-up', 'half-even', 'down']),
+  }).optional(),
   enabled: z.boolean(),
 });
 
@@ -405,7 +415,7 @@ export function createCatalogGovernanceRouter(
       const proposal = catalog.createProposal({
         proposer: actorOf(req),
         description: parsed.data.description,
-        change: parsed.data.change,
+        change: parsed.data.change as CatalogPolicyChange,
         sourceAddresses: parsed.data.sourceAddresses,
       });
       auditLog('governance.catalog_proposal_created', {
@@ -507,6 +517,7 @@ export function createCatalogGovernanceRouter(
         risk: report.risk,
         approvalBlocked: report.approvalBlocked,
         warnings: report.warnings,
+        details: report as unknown as Record<string, unknown>,
       });
       auditLog('governance.impact_simulated', {
         apiKeyPrefix: req.apiKey?.substring(0, 8),
@@ -534,7 +545,7 @@ export function createCatalogGovernanceRouter(
           method: 'GET',
         });
       }
-      res.json({ success: true, data: proposal.impact });
+      res.json({ success: true, data: proposal.impact.details ?? proposal.impact });
     } catch (err) {
       sendDomainError(res, err);
     }

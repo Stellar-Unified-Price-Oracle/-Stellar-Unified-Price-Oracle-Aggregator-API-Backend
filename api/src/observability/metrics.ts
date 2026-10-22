@@ -53,6 +53,41 @@ export const lastPriceTimestamp = new client.Gauge({
 });
 register.registerMetric(lastPriceTimestamp);
 
+export const feedPolicySavedTotal = new client.Counter({
+  name: 'feed_policy_saved_total', help: 'Feed policy save attempts by result', labelNames: ['result'],
+});
+register.registerMetric(feedPolicySavedTotal);
+
+export const feedPolicyValidationErrorsTotal = new client.Counter({
+  name: 'feed_policy_validation_errors_total', help: 'Rejected feed policies by feed id', labelNames: ['feed'],
+});
+register.registerMetric(feedPolicyValidationErrorsTotal);
+
+export const feedQuorumEvaluatedTotal = new client.Counter({
+  name: 'feed_quorum_evaluated_total', help: 'Per-feed quorum evaluations by result', labelNames: ['feed', 'result'],
+});
+register.registerMetric(feedQuorumEvaluatedTotal);
+
+export const feedQuorumReportingSources = new client.Gauge({
+  name: 'feed_quorum_reporting_sources', help: 'Number of sources reporting for the latest feed quorum evaluation', labelNames: ['feed'],
+});
+register.registerMetric(feedQuorumReportingSources);
+
+export const feedTransitionsTotal = new client.Counter({
+  name: 'feed_lifecycle_transitions_total', help: 'Accepted feed lifecycle transitions', labelNames: ['transition', 'to'],
+});
+register.registerMetric(feedTransitionsTotal);
+
+export const feedTransitionDeniedTotal = new client.Counter({
+  name: 'feed_lifecycle_transition_denied_total', help: 'Rejected feed lifecycle transitions by reason', labelNames: ['code'],
+});
+register.registerMetric(feedTransitionDeniedTotal);
+
+export const feedAliasHitsTotal = new client.Counter({
+  name: 'feed_alias_hits_total', help: 'Feed alias resolutions by kind and expiry', labelNames: ['kind', 'expired'],
+});
+register.registerMetric(feedAliasHitsTotal);
+
 export const circuitBreakerTriggered = new client.Counter({
   name: 'circuit_breaker_triggered_total',
   help: 'Total number of circuit breaker triggers by source and asset',

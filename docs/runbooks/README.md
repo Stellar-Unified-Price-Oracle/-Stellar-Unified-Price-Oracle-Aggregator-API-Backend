@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Incident Runbooks — Stellar Unified Price Oracle
 
 This directory contains operational runbooks for diagnosing and resolving incidents. Each runbook is linked from Prometheus alert annotations via `runbook_url`.

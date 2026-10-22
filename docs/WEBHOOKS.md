@@ -9,7 +9,7 @@ restart and are shared by every replica through the same store.
 | `REDIS_URL` | Store | Sharing |
 |---|---|---|
 | set | `RedisWebhookStore` (`ioredis`) | Native — every replica reads/writes the same keys |
-| unset | `FileWebhookStore` | Files under `WEBHOOK_DATA_DIR` (default `api/data/webhooks`); point every replica at the same volume |
+| unset | `FileWebhookStore` | Files under `WEBHOOK_DATA_DIR` (default data directory); point every replica at the same volume |
 
 Each replica keeps a **local mirror** of registrations for synchronous
 lookups, writes through to the store on `register`/`remove`, reloads the

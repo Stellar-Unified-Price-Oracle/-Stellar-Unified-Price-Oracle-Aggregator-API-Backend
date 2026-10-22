@@ -9,6 +9,7 @@
  */
 
 import { isCanonicalAssetId } from './asset-identity';
+import { DEFAULT_QUOTE_UNIT, FRESHNESS_PROFILES, validateQuoteUnit, type FreshnessProfileName, type QuoteUnit } from '@stellar-oracle/types';
 
 export type FeedSourceName = 'chainlink' | 'redstone' | 'band' | 'reflector';
 
@@ -43,6 +44,8 @@ export interface FeedPolicy {
   quorum: FeedQuorumPolicy;
   /** Feed version, bumped whenever the policy changes. */
   version: number;
+  freshness?: { profile: FreshnessProfileName; warnSeconds: number; maxAgeSeconds: number };
+  quoteUnit?: QuoteUnit;
 }
 
 export interface FeedPolicyValidation {
@@ -68,6 +71,12 @@ export function validateFeedPolicy(policy: FeedPolicy): FeedPolicyValidation {
   if (!Number.isInteger(policy.version) || policy.version < 1) {
     errors.push('version must be a positive integer');
   }
+  const freshness = policy.freshness ?? { profile: 'standard' as const, ...FRESHNESS_PROFILES.standard };
+  if (!(freshness.profile in FRESHNESS_PROFILES)) errors.push('freshness profile must be realtime, standard, or delayed');
+  if (!Number.isInteger(freshness.maxAgeSeconds) || freshness.maxAgeSeconds < 5 || freshness.maxAgeSeconds > 3600) errors.push('freshness maxAgeSeconds must be an integer between 5 and 3600');
+  if (!Number.isInteger(freshness.warnSeconds) || freshness.warnSeconds < 1 || freshness.warnSeconds >= freshness.maxAgeSeconds) errors.push('freshness warnSeconds must be an integer between 1 and maxAgeSeconds - 1');
+  const quoteErrors = validateQuoteUnit(policy.quoteUnit ?? DEFAULT_QUOTE_UNIT);
+  errors.push(...quoteErrors.map((message) => `quoteUnit ${message}`));
   if (policy.sources.length === 0) {
     errors.push('at least one source declaration is required');
   }

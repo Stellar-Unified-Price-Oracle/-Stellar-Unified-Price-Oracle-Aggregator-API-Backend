@@ -1,8 +1,7 @@
 # Stellar Unified Price Oracle — SLI / SLO definitions (#306)
 #
-# Canonical SLO definitions. These are mirrored in scripts/generate-slo-report.ts
-# (kept in sync manually) which renders a monthly compliance report from
-# Prometheus. The operations guide lives in docs/MONITORING_AND_ALERTING.md.
+# Canonical SLO definitions consumed by the report generator and Prometheus
+# rule generator. The operations guide lives in docs/MONITORING_AND_ALERTING.md.
 version: "1"
 window: 30d
 
@@ -12,8 +11,11 @@ slos:
     description: API availability
     target: 99.9
     window: 30d
+    burn_rate:
+      fast: { window: 1h, threshold: 14.4, budget_percent: 2 }
+      slow: { window: 6h, threshold: 6, budget_percent: 5 }
     sli:
-      good_events: 'sum(rate(http_requests_total{job="stellar-api",status_code!~"5.."}[5m]))'
+      good_events: 'sum(rate(http_requests_total{job="stellar-api",status!~"5.."}[5m]))'
       total_events: 'sum(rate(http_requests_total{job="stellar-api"}[5m]))'
 
   # Percentage of API requests served under 1s (p95 target).
@@ -21,6 +23,9 @@ slos:
     description: API latency p95 under 1s
     target: 99.0
     window: 30d
+    burn_rate:
+      fast: { window: 1h, threshold: 14.4, budget_percent: 2 }
+      slow: { window: 6h, threshold: 6, budget_percent: 5 }
     sli:
       good_events: 'sum(rate(http_request_duration_seconds_bucket{job="stellar-api",le="1"}[5m]))'
       total_events: 'sum(rate(http_request_duration_seconds_count{job="stellar-api"}[5m]))'
@@ -31,9 +36,12 @@ slos:
     description: Published price freshness
     target: 99.5
     window: 30d
+    burn_rate:
+      fast: { window: 1h, threshold: 14.4, budget_percent: 2 }
+      slow: { window: 6h, threshold: 6, budget_percent: 5 }
     sli:
-      good_events: 'sum(rate(stellar_oracle_price_checks_total{stale="false"}[5m]))'
-      total_events: 'sum(rate(stellar_oracle_price_checks_total[5m]))'
+      good_events: 'count(last_price_timestamp_seconds > time() - 120)'
+      total_events: 'count(last_price_timestamp_seconds)'
 
 # Error-budget burn-rate alert thresholds (see docs/MONITORING_AND_ALERTING.md).
 # > 14.4x burn over 1h drains the monthly budget at a reviewable pace.
@@ -70,4 +78,4 @@ release_gating:
   attribution:
     canary_label: release
     canary_value: canary
-    canary_burn_isolated: true
+    canary_burn_isolated: true

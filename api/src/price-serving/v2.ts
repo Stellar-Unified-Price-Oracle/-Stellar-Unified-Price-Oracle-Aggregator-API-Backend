@@ -9,6 +9,7 @@ import { cacheHitTotal, cacheMissTotal, lastPriceTimestamp, priceQueriesTotal } 
 import { v2Ok, v2Fail } from '../infrastructure/response';
 import { sendError } from '../infrastructure/error';
 import { apiKeyManager } from '../governance/api-key-manager';
+import { freshnessThresholdSeconds } from '@stellar-oracle/types';
 import { buildPriceProvenance } from './consumer/price-provenance';
 import { latencyFreshnessMiddleware } from './consumer/latency-freshness';
 
@@ -476,7 +477,7 @@ router.get('/health', async (req: Request, res: Response) => {
 
   const prices = await readAssetPrices();
   const maxStalenessMs = CONSISTENCY_OBJECTIVES.live_prices.maxStalenessMs;
-  const isStale = (p: ApiPrice) => Date.now() - p.timestamp * 1000 > maxStalenessMs;
+  const isStale = (p: ApiPrice) => Date.now() - p.timestamp * 1000 > Math.min(maxStalenessMs, freshnessThresholdSeconds(p.asset, maxStalenessMs / 1000) * 1000);
   const hasStale = prices.some(isStale);
   const status = prices.length === 0 ? 'unhealthy' : hasStale ? 'degraded' : 'healthy';
 

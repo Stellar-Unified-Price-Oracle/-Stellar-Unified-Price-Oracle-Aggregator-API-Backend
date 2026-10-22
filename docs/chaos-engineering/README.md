@@ -50,9 +50,9 @@ Every **Monday at 08:00 UTC**, the reporting CronJob collects experiment status 
 
 ## Alerting
 
-Prometheus rules in `monitoring/prometheus-rules-chaos.yml` fire when experiments fail, workflows fail, staging guard CronJobs fail, or SLOs degrade during active chaos. Apply alongside `monitoring/prometheus-rules.yml`.
+Chaos experiment alerts and SLO alerts are configured in the monitoring rules mounted by the deployment.
 
-Alertmanager routes for chaos notifications are in `monitoring/alertmanager-chaos.yml` and `k8s/chaos/reporting/alertmanager-config.yaml`.
+Alertmanager routes for chaos notifications are configured in `monitoring/alertmanager.yml`.
 
 ## Manual run
 

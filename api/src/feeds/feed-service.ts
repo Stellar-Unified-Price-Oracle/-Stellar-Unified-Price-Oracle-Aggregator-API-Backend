@@ -43,7 +43,7 @@ import {
   evaluateQuorum,
   validateFeedPolicy,
 } from './feed-policy';
-import { FeedCatalogSnapshotStore, CatalogReleaseManager, type FeedCatalogSnapshot } from './catalog-snapshots';
+import { DEFAULT_QUOTE_UNIT, FRESHNESS_PROFILES } from '@stellar-oracle/types';
 import {
   feedAliasHitsTotal,
   feedPolicySavedTotal,
@@ -128,16 +128,21 @@ export class FeedCatalogService {
    * visible in the catalog snapshot.
    */
   savePolicy(policy: FeedPolicy): { ok: true; policy: FeedPolicy } | { ok: false; errors: string[] } {
-    const validation = validateFeedPolicy(policy);
+    const normalized: FeedPolicy = {
+      ...policy,
+      freshness: policy.freshness ?? { profile: 'standard', ...FRESHNESS_PROFILES.standard },
+      quoteUnit: { ...(policy.quoteUnit ?? DEFAULT_QUOTE_UNIT) },
+    };
+    const validation = validateFeedPolicy(normalized);
     if (!validation.valid) {
       feedPolicySavedTotal.inc({ result: 'rejected' });
-      feedPolicyValidationErrorsTotal.inc({ feed: policy.feedId });
+      feedPolicyValidationErrorsTotal.inc({ feed: normalized.feedId });
       return { ok: false, errors: validation.errors };
     }
-    const existing = this.policies.get(policy.feedId);
+    const existing = this.policies.get(normalized.feedId);
     const stored: FeedPolicy = existing
-      ? { ...policy, version: Math.max(existing.version + 1, policy.version) }
-      : policy;
+      ? { ...normalized, version: Math.max(existing.version + 1, normalized.version) }
+      : normalized;
     this.policies.save(stored);
     feedPolicySavedTotal.inc({ result: 'accepted' });
 

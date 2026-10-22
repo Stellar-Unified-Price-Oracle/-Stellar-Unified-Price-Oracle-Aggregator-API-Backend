@@ -17,7 +17,7 @@ The repository tracks three **distinct** numbers. Do not conflate them:
 
 | Counter | Where | Meaning | Bumped when |
 |---|---|---|---|
-| `API_VERSION` | `contracts/price-oracle/src/contract.rs` (`API_VERSION`), exposed via `get_api_version()` | The exported **ABI/interface** version integrators compile against | Only on **breaking** interface changes |
+| `API_VERSION` | `contracts/price-oracle/src/lib.rs` (`API_VERSION`), exposed via `get_api_version()` | The exported **ABI/interface** version integrators compile against | Only on **breaking** interface changes |
 | Contract deployment version | `ProxyContract::get_version()` | Number of upgrades/deployments applied to a given proxy instance | Every `upgrade()` / `promote_canary()` |
 | `StorageLayoutVersion` | `ProxyContract::get_storage_layout_version()` | Internal on-chain storage layout revision, for migration code | Any change that adds/reinterprets a `DataKey` variant |
 

@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Post-Mortem Template
 
 > Copy this file to `docs/post-mortems/YYYY-MM-DD-<slug>.md` and fill it in within 48 hours of resolution.

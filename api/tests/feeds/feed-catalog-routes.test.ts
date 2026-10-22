@@ -126,6 +126,8 @@ describe('feed catalog routes', () => {
       .send(policyBody('btc-usd'));
     expect(ok.status).toBe(200);
     expect(ok.body.data.asset).toBe(`public:BTC:${ISSUER}`);
+    expect(ok.body.data.freshness).toEqual({ profile: 'standard', warnSeconds: 60, maxAgeSeconds: 120 });
+    expect(ok.body.data.quoteUnit).toEqual({ currency: 'USD', denomination: 'USD_PER_ASSET_UNIT', scaleDecimals: 8, displayDecimals: 4, rounding: 'half-even' });
 
     const bad = await request(app)
       .put('/catalog/feeds/bad-usd/policy')
