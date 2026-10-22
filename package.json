@@ -42,6 +42,8 @@
     "cost:analyze": "node scripts/analyze-infrastructure-costs.mjs",
     "cost:check": "node scripts/analyze-infrastructure-costs.mjs --check",
     "cost:reconcile": "node scripts/reconcile-cost-invoices.mjs",
+    "sustainability:model": "node scripts/sustainability-model.mjs",
+    "sustainability:check": "node scripts/sustainability-model.mjs --check",
     "validate:prices": "node scripts/validate-price-correctness.mjs",
     "validate:price-vectors": "node scripts/validate-price-arithmetic-vectors.mjs",
     "report:price-quality": "node scripts/generate-price-quality-report.mjs",
