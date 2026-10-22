@@ -15,7 +15,75 @@ import type { FeedTransition } from '../feeds/feed-lifecycle';
 const router = Router();
 const ADMIN_KEY_PREFIX = process.env.ADMIN_KEY_PREFIX || 'admin_';
 
+router.get('/snapshots', (req: Request, res: Response) => {
+  const limit = Math.min(100, Math.max(1, Number.parseInt(String(req.query.limit ?? '25'), 10) || 25));
+  const snapshots = feedCatalogService.snapshots.list();
+  const cursor = typeof req.query.cursor === 'string' ? snapshots.findIndex((item) => item.id === req.query.cursor) : -1;
+  if (req.query.cursor && cursor < 0) return res.status(400).json({ success: false, error: { code: 'INVALID_CURSOR', message: 'Unknown snapshot cursor' } });
+  const start = cursor < 0 ? 0 : cursor + 1;
+  const page = snapshots.slice(start, start + limit);
+  res.json({ success: true, data: { snapshots: page, nextCursor: start + limit < snapshots.length ? page[page.length - 1]?.id ?? null : null } });
+});
+
+router.get('/snapshots/:snapshotId', (req: Request, res: Response) => {
+  const snapshot = feedCatalogService.snapshots.get(req.params.snapshotId);
+  if (!snapshot) return res.status(404).json({ success: false, error: { code: 'SNAPSHOT_NOT_FOUND', message: 'Unknown catalog snapshot' } });
+  const etag = `\"${snapshot.id}\"`;
+  res.setHeader('ETag', etag);
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+  res.json({ success: true, data: snapshot });
+});
+
+router.get('/releases', (_req: Request, res: Response) => {
+  res.json({ success: true, data: feedCatalogService.releases.state() });
+});
+
+router.get('/releases/stable', (req: Request, res: Response) => {
+  const release = feedCatalogService.releases.state().stable;
+  const snapshot = release && feedCatalogService.snapshots.get(release.snapshotId);
+  if (!snapshot) return res.status(404).json({ success: false, error: { code: 'NO_STABLE_RELEASE', message: 'No stable catalog release is available' } });
+  const etag = `"${snapshot.id}"`;
+  res.setHeader('ETag', etag);
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+  return res.json({ success: true, data: snapshot, release });
+});
+
+router.get('/releases/compare/:snapshotId', (req: Request, res: Response) => {
+  if (!feedCatalogService.snapshots.get(req.params.snapshotId)) return res.status(404).json({ success: false, error: { code: 'SNAPSHOT_NOT_FOUND', message: 'Unknown catalog snapshot' } });
+  const candidate = feedCatalogService.snapshots.get(req.params.snapshotId)!;
+  const stableRelease = feedCatalogService.releases.state().stable;
+  const stable = stableRelease ? feedCatalogService.snapshots.get(stableRelease.snapshotId) : undefined;
+  res.json({ success: true, data: feedCatalogService.releases.compare(req.params.snapshotId, candidate, stable) });
+});
+
 router.use(adminAuthMiddleware(ADMIN_KEY_PREFIX));
+
+router.post('/releases/canary', requireRole('operator', 'feeds:write'), (req: Request, res: Response) => {
+  const snapshotId = req.body?.snapshotId;
+  if (typeof snapshotId !== 'string' || !feedCatalogService.snapshots.get(snapshotId)) return res.status(404).json({ success: false, error: { code: 'SNAPSHOT_NOT_FOUND', message: 'Unknown catalog snapshot' } });
+  try {
+    const release = feedCatalogService.releases.sign(snapshotId);
+    if (!feedCatalogService.releases.stageCanary(release)) return res.status(422).json({ success: false, error: { code: 'INVALID_SIGNATURE', message: 'Catalog release signature is invalid' } });
+    return res.status(201).json({ success: true, data: release });
+  } catch (error) {
+    return res.status(503).json({ success: false, error: { code: 'SIGNING_UNAVAILABLE', message: error instanceof Error ? error.message : 'Signing unavailable' } });
+  }
+});
+
+router.post('/releases/promote', requireRole('admin', 'feeds:write'), (_req: Request, res: Response) => {
+  if (!feedCatalogService.releases.promoteCanary()) return res.status(409).json({ success: false, error: { code: 'NO_VALID_CANARY', message: 'No verified canary release is staged' } });
+  res.json({ success: true, data: feedCatalogService.releases.state() });
+});
+
+router.post('/releases/rollback', requireRole('admin', 'feeds:write'), (req: Request, res: Response) => {
+  const { snapshotId, signature } = req.body ?? {};
+  if (typeof snapshotId !== 'string' || typeof signature !== 'string' || !feedCatalogService.releases.rollback(snapshotId, signature)) {
+    return res.status(422).json({ success: false, error: { code: 'ROLLBACK_NOT_VERIFIED', message: 'Rollback requires a previously promoted signed snapshot' } });
+  }
+  res.json({ success: true, data: feedCatalogService.releases.state() });
+});
 
 router.get('/feeds', requireRole('viewer', 'feeds:read'), (_req: Request, res: Response) => {
   const feeds = feedCatalogService.listFeeds().map((policy) => {

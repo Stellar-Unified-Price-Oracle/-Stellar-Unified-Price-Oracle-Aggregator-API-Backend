@@ -74,11 +74,26 @@ function createPolicyStore(): FeedPolicyStore {
 }
 
 export class FeedCatalogService {
+  readonly snapshots = new FeedCatalogSnapshotStore();
+  readonly releases = new CatalogReleaseManager(process.env.CATALOG_SIGNING_KEY ?? '');
   readonly policies: FeedPolicyStore = createPolicyStore();
   readonly lifecycle: FeedLifecycleStore = createFeedLifecycleStore();
   readonly aliases: FeedAliasRegistry = createFeedAliasRegistry();
   /** Asset-level aliases (e.g. `USDC` -> canonical asset id). */
   readonly assetAliases = new Map<string, AssetAliasRegistration>();
+
+  constructor() {
+    this.captureSnapshot();
+  }
+
+  captureSnapshot(): FeedCatalogSnapshot {
+    return this.snapshots.create({
+      policies: this.policies.list(),
+      lifecycle: (feedId) => this.lifecycle.get(feedId),
+      aliases: this.aliases.list(),
+      assetAliases: [...this.assetAliases.values()],
+    });
+  }
 
   private catalog() {
     return createFeedCatalog(
@@ -140,11 +155,14 @@ export class FeedCatalogService {
         metadata: { asset: stored.asset, version: stored.version },
       });
     }
+    this.captureSnapshot();
     return { ok: true, policy: stored };
   }
 
   removePolicy(feedId: string): boolean {
-    return this.policies.remove(feedId);
+    const removed = this.policies.remove(feedId);
+    if (removed) this.captureSnapshot();
+    return removed;
   }
 
   registerAssetAlias(alias: string, canonicalId: string): { ok: true } | { ok: false; message: string } {
@@ -156,6 +174,7 @@ export class FeedCatalogService {
       alias: alias.trim().toUpperCase(),
       canonicalId: resolution.canonicalId,
     });
+    this.captureSnapshot();
     return { ok: true };
   }
 
@@ -176,7 +195,9 @@ export class FeedCatalogService {
   }
 
   registerAlias(entry: FeedAliasEntry) {
-    return this.aliases.register(entry);
+    const result = this.aliases.register(entry);
+    if (result.ok) this.captureSnapshot();
+    return result;
   }
 
   expiredAliases(now: Date = new Date()): FeedAliasEntry[] {
@@ -193,6 +214,7 @@ export class FeedCatalogService {
   }): FeedLifecycleResult {
     const result = transitionFeed(this.lifecycle, input);
     if (result.ok) {
+      this.captureSnapshot();
       feedTransitionsTotal.inc({ transition: input.transition, to: result.record.to });
     } else {
       feedTransitionDeniedTotal.inc({ code: result.error.code });
