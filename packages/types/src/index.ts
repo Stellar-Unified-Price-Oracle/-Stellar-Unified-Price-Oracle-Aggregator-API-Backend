@@ -9,6 +9,8 @@
 
 export type OracleSourceName = 'chainlink' | 'redstone' | 'band' | 'reflector';
 
+export * from './feed-metadata';
+
 // ── Normalized per-source price ───────────────────────────────────────────────
 
 export interface NormalizedPrice {

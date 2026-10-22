@@ -27,6 +27,8 @@ router.get('/feeds', requireRole('viewer', 'feeds:read'), (_req: Request, res: R
       state: lifecycle?.state ?? 'proposed',
       sources: policy.sources,
       quorum: policy.quorum,
+      freshness: policy.freshness,
+      quoteUnit: policy.quoteUnit,
     };
   });
   res.json({ success: true, data: { feeds } });
@@ -62,6 +64,8 @@ router.put('/feeds/:feedId/policy', requireRole('operator', 'feeds:write'), (req
     version: typeof body.version === 'number' ? body.version : 1,
     sources: Array.isArray(body.sources) ? body.sources : [],
     quorum: body.quorum ?? { minSources: 1 },
+    freshness: body.freshness,
+    quoteUnit: body.quoteUnit,
   });
   if (!result.ok) {
     return res.status(422).json({
