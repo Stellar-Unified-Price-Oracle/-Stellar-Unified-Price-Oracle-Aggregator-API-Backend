@@ -123,6 +123,16 @@ describe('Issue #683 — Source conformance suite', () => {
       }
     });
 
+    it('certifies normalized scale and provider timestamp semantics for every valid vector', () => {
+      for (const vector of DEFAULT_VECTORS.filter((item) => item.expected === 'ok')) {
+        const result = conformanceSuite.runForProvider(vector.provider).results.find((item) => item.vectorId === vector.id);
+        expect(result?.passed, vector.id).toBe(true);
+        expect(result?.actualDecimals).toBeGreaterThanOrEqual(0);
+        expect(result?.actualScaledPrice).toMatch(/^\d+$/);
+        expect(result?.actualObservedAt).toBe(vector.expectedObservedAt ?? null);
+      }
+    });
+
     it('the shared suite reports every provider as conformant', () => {
       const report = conformanceSuite.run();
       for (const [provider, r] of report) {

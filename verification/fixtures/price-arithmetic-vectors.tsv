@@ -1,0 +1,8 @@
+# name amount amount_decimals rate rate_decimals output_decimals expected
+identity 12345 2 1 0 2 12345
+usd_to_eur 10000 2 92 2 2 9200
+half_up_positive 1 0 5 1 0 1
+half_up_negative -1 0 5 1 0 -1
+rescale_up 123 2 1 0 4 12300
+rescale_down_half_up 125 2 1 0 1 13
+zero 0 8 200 2 7 0

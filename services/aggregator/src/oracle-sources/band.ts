@@ -3,16 +3,9 @@ import { httpClient } from '../infrastructure/http-client';
 import { config } from '../infrastructure/config';
 import { NormalizedPrice, OracleSourceName } from '../infrastructure/types';
 import { BaseSource } from './base';
-import { resolveDecimals } from './decimals';
 import { DEFAULT_CAPABILITIES, type ProviderCapabilities } from './capabilities';
 import { providerEvidenceArchive } from '../persistence/provider-evidence-archive';
 import { parseProviderResponse, reportInvalidPayload, type ProviderSchemaName } from './response-validation';
-
-interface BandFeedData {
-  price: string;
-  decimals?: number;
-  updated_at?: number;
-}
 
 export class BandSource extends BaseSource {
   name: OracleSourceName = 'band';
@@ -53,16 +46,7 @@ export class BandSource extends BaseSource {
       return null;
     }
 
-    const decimals = resolveDecimals(this.name, response.data.data.decimals);
-
-    // Band reports the provider's own update time; keep it as `observedAt`
-    // rather than falling back to local fetch time when it is missing.
-    return this.normalize(
-      asset,
-      response.data.data.price,
-      decimals,
-      response.data.data.updated_at ?? null,
-    );
+    return this.normalizeValidated(asset, result);
   }
 
   private toSymbol(asset: string): string {

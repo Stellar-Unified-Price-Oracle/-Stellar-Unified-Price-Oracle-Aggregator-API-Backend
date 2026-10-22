@@ -100,6 +100,8 @@ export interface ReplayCompleteMessage {
   lastSequenceId: number;
   truncated: boolean;
   remaining: number;
+  gapDetected: boolean;
+  oldestReplayableSequence: number | null;
 }
 
 export interface PongMessage {

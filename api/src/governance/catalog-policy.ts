@@ -26,9 +26,10 @@
 
 import crypto from 'crypto';
 import type { RecusalRequest } from './coi-register';
+import { DEFAULT_QUOTE_UNIT, FEED_FRESHNESS_ASSIGNMENTS, FRESHNESS_PROFILES, validateQuoteUnit, type FreshnessProfileName, type QuoteUnit } from '@stellar-oracle/types';
+export { FRESHNESS_PROFILES, QUOTE_CURRENCIES } from '@stellar-oracle/types';
 
 export const CATALOG_SOURCES = ['chainlink', 'redstone', 'band', 'reflector'] as const;
-
 export interface FeedPolicy {
   /** Upper-case asset ticker, e.g. `XLM`. */
   asset: string;
@@ -40,6 +41,11 @@ export interface FeedPolicy {
   maxDeviationBps: number;
   /** Age after which a source value is considered stale. */
   stalenessSeconds: number;
+  /** Named warning/staleness profile, with bounded per-feed override values. */
+  freshnessProfile?: FreshnessProfileName;
+  freshnessWarnSeconds?: number;
+  /** Canonical quote unit and storage/display scale. */
+  quoteUnit?: QuoteUnit;
   enabled: boolean;
 }
 
@@ -113,12 +119,17 @@ function normalizeAsset(asset: string): string {
 }
 
 export function normalizeFeed(feed: FeedPolicy): FeedPolicy {
+  const freshnessProfile = feed.freshnessProfile ?? FEED_FRESHNESS_ASSIGNMENTS[normalizeAsset(feed.asset)] ?? 'standard';
+  const quoteUnit = feed.quoteUnit ?? DEFAULT_QUOTE_UNIT;
   return {
     asset: normalizeAsset(feed.asset),
     sources: [...new Set(feed.sources.map((source) => source.trim().toLowerCase()))].sort(),
     minSources: feed.minSources,
     maxDeviationBps: feed.maxDeviationBps,
     stalenessSeconds: feed.stalenessSeconds,
+    freshnessProfile,
+    freshnessWarnSeconds: feed.freshnessWarnSeconds ?? Math.min(FRESHNESS_PROFILES[freshnessProfile].warnSeconds, feed.stalenessSeconds - 1),
+    quoteUnit: { ...quoteUnit },
     enabled: feed.enabled,
   };
 }
@@ -292,6 +303,10 @@ export function validateCatalogChange(
         asset,
       );
     }
+    if (after.freshnessProfile !== before.freshnessProfile || (after.freshnessWarnSeconds ?? 0) > (before.freshnessWarnSeconds ?? 0)) {
+      highImpact = true;
+      warn('FRESHNESS_PROFILE_CHANGED', `Feed ${asset} freshness profile or warning boundary changes`, asset);
+    }
     if (after.minSources < before.minSources) {
       highImpact = true;
       warn(
@@ -308,6 +323,12 @@ export function validateCatalogChange(
         `Feed ${asset} no longer aggregates ${droppedSources.join(', ')}`,
         asset,
       );
+    }
+    const beforeQuote = before.quoteUnit ?? DEFAULT_QUOTE_UNIT;
+    const afterQuote = after.quoteUnit ?? DEFAULT_QUOTE_UNIT;
+    if (beforeQuote.currency !== afterQuote.currency || beforeQuote.denomination !== afterQuote.denomination || beforeQuote.scaleDecimals !== afterQuote.scaleDecimals) {
+      highImpact = true;
+      warn('QUOTE_SCALE_CHANGED', `Feed ${asset} quote currency, denomination, or storage scale changes; consumers must review historical interpretation`, asset);
     }
   }
 
@@ -376,6 +397,14 @@ function validateFeed(feed: FeedPolicy, findings: GuardrailFinding[]): void {
       `stalenessSeconds must be an integer between ${CATALOG_GUARDRAILS.minStalenessSeconds} and ${CATALOG_GUARDRAILS.maxStalenessSeconds}`,
     );
   }
+  if (!feed.freshnessProfile || !(feed.freshnessProfile in FRESHNESS_PROFILES)) {
+    push('UNKNOWN_FRESHNESS_PROFILE', 'error', 'freshnessProfile must be realtime, standard, or delayed');
+  }
+  if (!Number.isInteger(feed.freshnessWarnSeconds) || feed.freshnessWarnSeconds! < 1 || feed.freshnessWarnSeconds! >= feed.stalenessSeconds) {
+    push('FRESHNESS_WARNING_OUT_OF_BOUNDS', 'error', 'freshnessWarnSeconds must be at least 1 and less than stalenessSeconds');
+  }
+  const quoteErrors = validateQuoteUnit(feed.quoteUnit ?? DEFAULT_QUOTE_UNIT);
+  for (const error of quoteErrors) push(error.includes('scale') || error.includes('displayDecimals') ? 'INVALID_QUOTE_SCALE' : 'INVALID_QUOTE_UNIT', 'error', error);
 }
 
 /** Build the version that activates a validated change. */
@@ -524,6 +553,8 @@ export interface CatalogImpactSummary {
   risk: 'low' | 'medium' | 'high' | 'critical';
   approvalBlocked: boolean;
   warnings: string[];
+  /** Full deterministic pre-release report returned by the impact simulator. */
+  details?: Record<string, unknown>;
 }
 
 export interface OnChainExecution {
@@ -1028,7 +1059,7 @@ function clonePolicy(policy: CatalogPolicy): CatalogPolicy {
     version: policy.version,
     activatedAt: policy.activatedAt,
     proposalId: policy.proposalId,
-    feeds: policy.feeds.map((feed) => ({ ...feed, sources: [...feed.sources] })),
+    feeds: policy.feeds.map((feed) => ({ ...feed, sources: [...feed.sources], quoteUnit: { ...(feed.quoteUnit ?? DEFAULT_QUOTE_UNIT) } })),
   };
 }
 
@@ -1037,7 +1068,7 @@ function cloneProposal(proposal: CatalogProposal): CatalogProposal {
     ...proposal,
     change: {
       ...proposal.change,
-      upserts: proposal.change.upserts.map((feed) => ({ ...feed, sources: [...feed.sources] })),
+      upserts: proposal.change.upserts.map((feed) => ({ ...feed, sources: [...feed.sources], quoteUnit: { ...(feed.quoteUnit ?? DEFAULT_QUOTE_UNIT) } })),
       removals: [...proposal.change.removals],
     },
     reviews: proposal.reviews.map((review) => ({ ...review })),

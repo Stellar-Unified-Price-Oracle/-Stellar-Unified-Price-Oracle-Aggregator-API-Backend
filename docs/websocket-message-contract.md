@@ -66,13 +66,17 @@ by exactly one `replay_complete`:
 
 ```json
 { "type": "replay_complete", "replayed": 42, "sequenceId": 1287,
-  "lastSequenceId": 1241, "truncated": false, "remaining": 0 }
+  "lastSequenceId": 1241, "truncated": false, "remaining": 0,
+  "gapDetected": false, "oldestReplayableSequence": 1088 }
 ```
 
 - `lastSequenceId` — the cursor the client should use next (the highest
   delivered sequence, or the requested cursor when nothing was delivered).
 - `truncated` — `true` when the message or byte bound cut the window short.
   `remaining` is how many matching messages were withheld.
+- `gapDetected` — `true` when the cursor predates the oldest retained sequence;
+  refetch a REST snapshot before resuming. `oldestReplayableSequence` is null
+  when the ring has no messages.
 - Caught up = `truncated: false`. Window exhausted = `truncated: true`; resync.
 
 Exceeding the per-connection rate limit returns an error instead of replaying:
@@ -99,3 +103,10 @@ Measured by:
 - `ws_api_replay_requests_total{result="complete|truncated|rate_limited"}` —
   replay outcomes (a `truncated` rate that is not zero is a signal that
   clients are losing history).
+
+The global counter is atomically checkpointed after each update to
+`WS_SEQUENCE_FILE` (default `./data/ws-sequence.json`). A restart advances from
+the stored counter, preventing sequence reuse. The checkpoint does not persist
+payloads: replay uses the bounded in-memory ring and reports a gap when older
+payloads have fallen out. The default checkpoint is local to one API instance;
+replicas require a shared checkpoint location to expose a common sequence.

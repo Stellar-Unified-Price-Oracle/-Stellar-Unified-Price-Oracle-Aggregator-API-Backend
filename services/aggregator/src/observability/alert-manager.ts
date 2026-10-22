@@ -22,7 +22,8 @@ export interface AlertEvent {
     | 'sla_breach'
     | 'invalid_payload'
     | 'region_quarantine'
-    | 'surge_limit';
+    | 'surge_limit'
+    | 'source_bias';
   message: string;
   previousPrice?: string;
   currentPrice?: string;
@@ -319,6 +320,14 @@ class AlertManager {
         affectedSources: sourcePrices.map((s) => s.source),
       });
     }
+  }
+
+  async reportSourceBias(asset: string, source: string, estimate: { meanPercent: number; lower95: number; upper95: number; observations: number }): Promise<void> {
+    await this.emitAlert({
+      timestamp: Math.floor(Date.now() / 1000), asset: asset.toUpperCase(), source, type: 'source_bias',
+      deviationPercent: Math.abs(estimate.meanPercent), affectedSources: [source],
+      message: `Persistent source bias for ${source}/${asset.toUpperCase()}: mean ${estimate.meanPercent.toFixed(3)}% (95% CI ${estimate.lower95.toFixed(3)}%..${estimate.upper95.toFixed(3)}%, n=${estimate.observations}); investigate provider calibration or quarantine policy.`,
+    });
   }
 
   /**

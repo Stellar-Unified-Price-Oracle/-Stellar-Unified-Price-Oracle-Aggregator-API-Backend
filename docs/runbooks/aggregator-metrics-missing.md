@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Aggregator Metrics Missing
 
 Firing alerts: `AggregatorMetricsTargetDown`, `AggregatorMetricsAbsent`

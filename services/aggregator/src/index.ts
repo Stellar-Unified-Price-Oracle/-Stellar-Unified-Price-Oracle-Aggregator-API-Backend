@@ -5,6 +5,7 @@ import { logger } from './observability/logger';
 import { ChainlinkSource, RedstoneSource, BandSource, ReflectorSource } from './oracle-sources';
 import { PriceAggregator } from './price-aggregation/aggregator';
 import { anomalyDetector } from './price-aggregation/anomaly-detector';
+import { driftDetector } from './price-aggregation/drift-detector';
 import { AggregatedPrice, type OracleSourceName } from './infrastructure/types';
 import { ContractPublisher } from './contract-publishing/publisher';
 import { appendHistoricalPrice } from './persistence/history';
@@ -24,6 +25,10 @@ import {
   pollCycleDurationMs,
   pollCycleOverrunsTotal,
   regionDriftKnown,
+  providerDriftDetected,
+  providerDriftMeanPriceChangePercent,
+  providerDriftObservedAtCoverageChange,
+  providerDriftReportingLagChangeSeconds,
   regionDriftPercent,
   regionPeersConfigured,
   regionPeersReporting,
@@ -91,7 +96,8 @@ try {
   }
 }
 
-const aggregator = new PriceAggregator();
+const aggregator = new PriceAggregator(undefined, process.env.VOLATILITY_FRESHNESS_POLICY
+  ? JSON.parse(process.env.VOLATILITY_FRESHNESS_POLICY) : undefined);
 const fileArchival = new FileArchivalService();
 const regionReplicator = new RegionPriceReplicator();
 const regionQuarantine = new RegionQuarantineManager();
@@ -121,6 +127,7 @@ const alertManager = new AlertManager({
   slaBreachMaxPerWindow: parseInt(process.env.ALERT_SLA_BREACH_MAX_PER_WINDOW || '10', 10),
   slaBreachWindowSeconds: parseInt(process.env.ALERT_SLA_BREACH_WINDOW_SECONDS || '300', 10),
 });
+const sourceBiasTracker = new SourceBiasTracker();
 
 let lastAggregated: AggregatedPrice[] = [];
 const startupStartedAt = Date.now();
@@ -281,11 +288,50 @@ async function poll(): Promise<AggregatedPrice[]> {
     // Check price against alert thresholds (critical: always runs)
     await alertManager.checkPrice(ap);
 
+    // Issue #707 — detect provider semantic drift against versioned baselines
+    const driftResult = driftDetector.detectDrift(ap.asset, [
+      ...aggregator.getSourcePrices(ap.asset),
+    ]);
+    for (const comparison of driftResult.comparisons) {
+      providerDriftDetected.set(
+        { asset: comparison.asset, source: comparison.source, baseline_version: comparison.baselineVersion },
+        comparison.driftDetected ? 1 : 0,
+      );
+      providerDriftMeanPriceChangePercent.set(
+        { asset: comparison.asset, source: comparison.source, baseline_version: comparison.baselineVersion },
+        comparison.meanPriceChangePercent,
+      );
+      providerDriftObservedAtCoverageChange.set(
+        { asset: comparison.asset, source: comparison.source, baseline_version: comparison.baselineVersion },
+        comparison.observedAtCoverageChange,
+      );
+      providerDriftReportingLagChangeSeconds.set(
+        { asset: comparison.asset, source: comparison.source, baseline_version: comparison.baselineVersion },
+        comparison.reportingLagChangeSeconds ?? 0,
+      );
+      if (comparison.driftDetected) {
+        eventBus.publish({
+          type: 'provider_drift_detected',
+          payload: comparison,
+          timestamp: Date.now(),
+        });
+        logger.warn(
+          `[Drift] ${comparison.asset}/${comparison.source} drift detected vs baseline ${comparison.baselineVersion}: ${comparison.driftReasons.join('; ')}`,
+        );
+      }
+    }
+
     // Check for disagreement between live oracle sources — non-essential
     // webhook fan-out is shed under brownout, but the check itself is kept.
     const sourcePrices = sourcePricesByAsset.get(ap.asset);
     if (sourcePrices && brownoutPolicy.isFeatureEnabled('source_disagreement_alerts')) {
       await alertManager.checkSourceDisagreement(ap.asset, sourcePrices);
+      const parsed = sourcePrices.map((entry) => ({ source: entry.source, price: Number(entry.price) }));
+      for (const entry of parsed) {
+        const estimate = sourceBiasTracker.observe(ap.asset, entry.source, entry.price,
+          parsed.filter((peer) => peer.source !== entry.source).map((peer) => peer.price));
+        if (estimate?.significant) await alertManager.reportSourceBias(ap.asset, entry.source, estimate);
+      }
     } else if (sourcePrices) {
       brownoutShedTotal.inc({ feature: 'source_disagreement_alerts' });
     }
@@ -472,11 +518,18 @@ async function main(): Promise<void> {
     }
     logger.info('Vault secrets engine initialized');
   } catch (err) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(`Vault is required in production and is unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    }
     logger.warn('Vault not available — using environment-based secrets fallback', err);
   }
 
   if (!config.soroban.contractId) {
     logger.warn('No contract ID configured — running in dry-run mode');
+  } else if (!config.soroban.adminSecret) {
+    logger.error('ADMIN_SECRET_KEY is required when CONTRACT_ID is configured');
+    process.exitCode = 1;
+    return;
   }
 
   if (config.database.url) {
@@ -531,6 +584,7 @@ async function main(): Promise<void> {
   });
 
   const healthServer = new HealthServer(config.port + 2, () => ({
+    evidence: (asset: string) => aggregator.getEvidence(asset),
     sourceHealth: {
       chainlink: persistentSources.chainlink.health,
       redstone: persistentSources.redstone.health,

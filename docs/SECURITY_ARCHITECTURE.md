@@ -293,3 +293,9 @@ This document must be reviewed:
 - [`docs/security/audit-findings.md`](./security/audit-findings.md) & [`docs/security/pentest-scope.md`](./security/pentest-scope.md)
 - [`SANDBOX_SECURITY_REVIEW.md`](./SANDBOX_SECURITY_REVIEW.md) — programmable feed / plugin sandbox
 - [`GOVERNANCE.md`](./GOVERNANCE.md) — branch protection, signed commits, CODEOWNERS
+
+## Managed runtime secrets
+
+Kubernetes runtime secrets are sourced from AWS Secrets Manager through External Secrets Operator and an identity-bound `aws-secrets-manager` ClusterSecretStore. The repository contains only synchronization declarations and expected key names. Release workflows wait for ExternalSecret readiness and reject absent or placeholder values before deployment. Secret values are never printed by validation scripts or workflows.
+
+AWS IAM and CloudTrail provide the secret access and change trail. Security Engineering owns secret policies and break-glass review; Platform Operations owns cluster synchronization and workload rollout. Rotation updates the managed secret, waits for refresh, restarts consumers, and confirms readiness. See [Key Management](KEY_MANAGEMENT.md) for bootstrap, rotation, recovery and emergency access procedures.

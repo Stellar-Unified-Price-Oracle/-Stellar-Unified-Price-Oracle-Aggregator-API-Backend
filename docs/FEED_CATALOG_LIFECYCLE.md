@@ -1,5 +1,9 @@
 # Feed Catalog and Lifecycle
 
+Related: [Versioned feed metadata schema](./FEED_METADATA_SCHEMA.md),
+[signed catalog releases](./FEED_CATALOG_RELEASES.md),
+[catalog governance](./CATALOG_GOVERNANCE.md).
+
 Owner: Feed catalog workstream (API team).
 Scope: `api/src/feeds/**`, `api/src/governance/admin.ts` (feed routes),
 `api/tests/feeds/**`.

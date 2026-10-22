@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Runbook: Redis HA Failover
 
 **Linked alerts:** `RedisDown`, `RedisSentinelNoQuorum`, `RedisReplicationLag`, `RedisMasterMissing`, `RedisRateStateLost`

@@ -6,6 +6,7 @@ resources:
   - secrets.yaml
   - networkpolicy.yaml
   - prometheus-cardinality-rules.yaml
+  - generated-slo-rules.yaml
   - synthetic-probes.yaml
   - onchain-events-prometheus-rules.yaml
   - prometheus-rule.yaml

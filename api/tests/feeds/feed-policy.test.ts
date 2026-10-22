@@ -104,6 +104,26 @@ describe('feed policy validation (#674)', () => {
     expect(result.valid).toBe(true);
     expect(result.warnings.join(' ')).toContain('redstone');
   });
+
+  it('accepts bounded per-feed freshness and canonical quote metadata', () => {
+    const result = validateFeedPolicy(policy({
+      freshness: { profile: 'realtime', warnSeconds: 8, maxAgeSeconds: 30 },
+      quoteUnit: { currency: 'EUR', denomination: 'EUR_PER_ASSET_UNIT', scaleDecimals: 8, displayDecimals: 2, rounding: 'half-even' },
+    }));
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('rejects invalid freshness boundaries and quote denomination', () => {
+    const result = validateFeedPolicy(policy({
+      freshness: { profile: 'delayed', warnSeconds: 600, maxAgeSeconds: 600 },
+      quoteUnit: { currency: 'EUR', denomination: 'USD_PER_ASSET_UNIT', scaleDecimals: 19, displayDecimals: 20, rounding: 'half-even' },
+    }));
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(' ')).toContain('warnSeconds');
+    expect(result.errors.join(' ')).toContain('denomination');
+    expect(result.errors.join(' ')).toContain('scaleDecimals');
+  });
 });
 
 describe('quorum evaluation (#674)', () => {

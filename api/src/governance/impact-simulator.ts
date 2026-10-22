@@ -76,6 +76,9 @@ export interface ImpactReport extends CatalogImpactSummary {
     reduced: string[];
   };
   highImpact: boolean;
+  sourceQuorum: Array<{ asset: string; before: { sources: string[]; quorum: number }; after: { sources: string[]; quorum: number } }>;
+  apiSchemas: Array<{ asset: string; field: string; impact: 'additive' | 'behavioral' | 'breaking'; detail: string }>;
+  rollback: { reversible: boolean; targetVersion: number; implications: string[]; steps: string[] };
 }
 
 export interface ImpactSimulationInputs {
@@ -140,6 +143,35 @@ export function simulateCatalogImpact(inputs: ImpactSimulationInputs): ImpactRep
     .map((finding) => (finding.asset ? `${finding.code} (${finding.asset})` : finding.code))
     .sort();
 
+  const beforeByAsset = new Map(inputs.current.feeds.map((feed) => [feed.asset, feed]));
+  const afterByAsset = new Map(inputs.nextFeeds.map((feed) => [feed.asset, feed]));
+  const sourceQuorum = [...affectedAssets].sort().map((asset) => {
+    const before = beforeByAsset.get(asset);
+    const after = afterByAsset.get(asset);
+    return {
+      asset,
+      before: { sources: before?.sources ?? [], quorum: before?.minSources ?? 0 },
+      after: { sources: after?.sources ?? [], quorum: after?.minSources ?? 0 },
+    };
+  });
+  const apiSchemas: ImpactReport['apiSchemas'] = [];
+  for (const asset of [...affectedAssets].sort()) {
+    const before = beforeByAsset.get(asset);
+    const after = afterByAsset.get(asset);
+    if (!before || !after) {
+      apiSchemas.push({ asset, field: 'feed', impact: before ? 'breaking' : 'additive', detail: before ? 'Removing this feed removes its price and history endpoints.' : 'Adding this feed adds a price object and asset catalog entry.' });
+      continue;
+    }
+    if (before.quoteUnit?.currency !== after.quoteUnit?.currency || before.quoteUnit?.denomination !== after.quoteUnit?.denomination || before.quoteUnit?.scaleDecimals !== after.quoteUnit?.scaleDecimals) {
+      apiSchemas.push({ asset, field: 'quoteUnit', impact: 'breaking', detail: 'Quote currency, denomination, or storage scale changes price interpretation and historical comparisons.' });
+    } else if (before.quoteUnit?.displayDecimals !== after.quoteUnit?.displayDecimals || before.quoteUnit?.rounding !== after.quoteUnit?.rounding) {
+      apiSchemas.push({ asset, field: 'quoteUnit', impact: 'behavioral', detail: 'Display precision or rounding changes formatted price output.' });
+    }
+    if (before.freshnessProfile !== after.freshnessProfile || before.stalenessSeconds !== after.stalenessSeconds || before.freshnessWarnSeconds !== after.freshnessWarnSeconds) {
+      apiSchemas.push({ asset, field: 'freshnessProfile', impact: 'behavioral', detail: `Freshness warning/stale boundaries change (${before.freshnessWarnSeconds ?? 'default'}/${before.stalenessSeconds}s to ${after.freshnessWarnSeconds ?? 'default'}/${after.stalenessSeconds}s).` });
+    }
+  }
+
   if (consumers.length === 0) warnings.push('NO_CONSUMER_DATA');
   if (deltaPercent > 5) warnings.push('COST_INCREASE_ABOVE_5_PERCENT');
   if (proposedCost > 0 && deltaPercent > 25) warnings.push('COST_INCREASE_ABOVE_25_PERCENT');
@@ -198,6 +230,14 @@ export function simulateCatalogImpact(inputs: ImpactSimulationInputs): ImpactRep
       reduced,
     },
     highImpact: inputs.highImpact,
+    sourceQuorum,
+    apiSchemas,
+    rollback: {
+      reversible: true,
+      targetVersion: inputs.current.version,
+      implications: ['Rollback restores prior catalog metadata; prices already published and historical records retain their original quote scale.'],
+      steps: ['Create a governed rollback proposal targeting the recorded prior version.', 'Re-run impact analysis and obtain required approvals.', 'Execute the rollback on-chain and activate the restored API and aggregator policy.', 'Clear price caches and verify freshness and quorum coverage.'],
+    },
   };
 
   return report;

@@ -1,4 +1,5 @@
 import { NormalizedPrice, AggregatedPrice } from '../infrastructure/types';
+import type { DriftComparison } from '../price-aggregation/drift-baseline';
 import {
   decodeContractEvent,
   ContractEventDecodeError,
@@ -15,7 +16,8 @@ export type DomainEvent =
   | SourceDegradedEvent
   | SlaBreachEvent
   | ContractEventDecodedEvent
-  | ContractEventDecodeFailedEvent;
+  | ContractEventDecodeFailedEvent
+  | ProviderDriftDetectedEvent;
 
 export interface PriceFetchedEvent {
   type: 'price_fetched';
@@ -50,6 +52,12 @@ export interface SourceDegradedEvent {
     source: string;
     reason: string;
   };
+  timestamp: number;
+}
+
+export interface ProviderDriftDetectedEvent {
+  type: 'provider_drift_detected';
+  payload: DriftComparison;
   timestamp: number;
 }
 

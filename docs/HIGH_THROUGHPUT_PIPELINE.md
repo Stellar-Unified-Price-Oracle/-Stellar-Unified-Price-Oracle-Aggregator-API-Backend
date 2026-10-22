@@ -3,7 +3,7 @@
 **Issue:** #588 — `high-throughput-pipeline.ts` was dead code that asserted
 performance targets nothing runs.
 
-The module `services/aggregator/src/performance/high-throughput-pipeline.ts`
+The module the removed high-throughput pipeline module
 has been **deleted in full**. This document is the record the issue asked for:
 one keep/adopt/delete decision per export, with the evidence for each, so the
 module cannot be reintroduced silently and so nobody has to re-derive why the
@@ -83,10 +83,10 @@ reproducing the exact problem this issue reports.
 ## Why the whole file went
 
 Each export independently resolved to "delete". A module whose every export is
-deleted is a deleted module, so `services/aggregator/src/performance/` is gone
+deleted is a deleted module, so its former performance directory is gone
 rather than left as an empty directory. Nothing in `src/`, `tests/`, `docs/` or
 `.github/` referenced it; the only other mentions were the API feature flag
-`high-throughput-pipeline` (`api/src/services/featureFlags.ts`, `enabled:
+`high-throughput-pipeline` (`api/src/routes/featureFlags.ts`, `enabled:
 false`, a separate rollout control that never pointed at this module) and this
 document.
 
@@ -118,7 +118,7 @@ exclusion.
 - the `include` list must still be `['src/**/*.ts']`, so a module cannot be
   pushed out of measurement with a narrower pattern;
 - the thresholds must still be present;
-- `high-throughput-pipeline.ts` must not exist.
+- the high-throughput module must remain absent.
 
 Adding a new coverage exclusion therefore breaks CI unless the guard is updated
 in the same change, which is the review signal the issue wanted.

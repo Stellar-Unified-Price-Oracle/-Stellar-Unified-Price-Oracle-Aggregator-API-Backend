@@ -43,6 +43,7 @@ import {
   evaluateQuorum,
   validateFeedPolicy,
 } from './feed-policy';
+import { DEFAULT_QUOTE_UNIT, FRESHNESS_PROFILES } from '@stellar-oracle/types';
 import {
   feedAliasHitsTotal,
   feedPolicySavedTotal,
@@ -73,11 +74,26 @@ function createPolicyStore(): FeedPolicyStore {
 }
 
 export class FeedCatalogService {
+  readonly snapshots = new FeedCatalogSnapshotStore();
+  readonly releases = new CatalogReleaseManager(process.env.CATALOG_SIGNING_KEY ?? '');
   readonly policies: FeedPolicyStore = createPolicyStore();
   readonly lifecycle: FeedLifecycleStore = createFeedLifecycleStore();
   readonly aliases: FeedAliasRegistry = createFeedAliasRegistry();
   /** Asset-level aliases (e.g. `USDC` -> canonical asset id). */
   readonly assetAliases = new Map<string, AssetAliasRegistration>();
+
+  constructor() {
+    this.captureSnapshot();
+  }
+
+  captureSnapshot(): FeedCatalogSnapshot {
+    return this.snapshots.create({
+      policies: this.policies.list(),
+      lifecycle: (feedId) => this.lifecycle.get(feedId),
+      aliases: this.aliases.list(),
+      assetAliases: [...this.assetAliases.values()],
+    });
+  }
 
   private catalog() {
     return createFeedCatalog(
@@ -112,16 +128,21 @@ export class FeedCatalogService {
    * visible in the catalog snapshot.
    */
   savePolicy(policy: FeedPolicy): { ok: true; policy: FeedPolicy } | { ok: false; errors: string[] } {
-    const validation = validateFeedPolicy(policy);
+    const normalized: FeedPolicy = {
+      ...policy,
+      freshness: policy.freshness ?? { profile: 'standard', ...FRESHNESS_PROFILES.standard },
+      quoteUnit: { ...(policy.quoteUnit ?? DEFAULT_QUOTE_UNIT) },
+    };
+    const validation = validateFeedPolicy(normalized);
     if (!validation.valid) {
       feedPolicySavedTotal.inc({ result: 'rejected' });
-      feedPolicyValidationErrorsTotal.inc({ feed: policy.feedId });
+      feedPolicyValidationErrorsTotal.inc({ feed: normalized.feedId });
       return { ok: false, errors: validation.errors };
     }
-    const existing = this.policies.get(policy.feedId);
+    const existing = this.policies.get(normalized.feedId);
     const stored: FeedPolicy = existing
-      ? { ...policy, version: Math.max(existing.version + 1, policy.version) }
-      : policy;
+      ? { ...normalized, version: Math.max(existing.version + 1, normalized.version) }
+      : normalized;
     this.policies.save(stored);
     feedPolicySavedTotal.inc({ result: 'accepted' });
 
@@ -134,11 +155,14 @@ export class FeedCatalogService {
         metadata: { asset: stored.asset, version: stored.version },
       });
     }
+    this.captureSnapshot();
     return { ok: true, policy: stored };
   }
 
   removePolicy(feedId: string): boolean {
-    return this.policies.remove(feedId);
+    const removed = this.policies.remove(feedId);
+    if (removed) this.captureSnapshot();
+    return removed;
   }
 
   registerAssetAlias(alias: string, canonicalId: string): { ok: true } | { ok: false; message: string } {
@@ -150,6 +174,7 @@ export class FeedCatalogService {
       alias: alias.trim().toUpperCase(),
       canonicalId: resolution.canonicalId,
     });
+    this.captureSnapshot();
     return { ok: true };
   }
 
@@ -170,7 +195,9 @@ export class FeedCatalogService {
   }
 
   registerAlias(entry: FeedAliasEntry) {
-    return this.aliases.register(entry);
+    const result = this.aliases.register(entry);
+    if (result.ok) this.captureSnapshot();
+    return result;
   }
 
   expiredAliases(now: Date = new Date()): FeedAliasEntry[] {
@@ -187,6 +214,7 @@ export class FeedCatalogService {
   }): FeedLifecycleResult {
     const result = transitionFeed(this.lifecycle, input);
     if (result.ok) {
+      this.captureSnapshot();
       feedTransitionsTotal.inc({ transition: input.transition, to: result.record.to });
     } else {
       feedTransitionDeniedTotal.inc({ code: result.error.code });

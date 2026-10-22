@@ -1,4 +1,7 @@
 name: Create action issues from postmortem checklist
+concurrency:
+  group: create-actions-from-postmortem-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 on:
   issue_comment:
     types: [created]

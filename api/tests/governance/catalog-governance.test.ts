@@ -638,3 +638,48 @@ describe('deterministic impact simulation (#775)', () => {
     ).toThrow(/appears more than once/);
   });
 });
+
+describe('feed freshness profiles and quote metadata (#675, #676)', () => {
+  it('normalizes legacy policy entries and validates bounded named freshness settings', () => {
+    const current = { version: 1, activatedAt: new Date(0).toISOString(), proposalId: null, feeds: [feed(), feed({ asset: 'USDC' })] };
+    const normalized = validateCatalogChange(current, { baseVersion: 1, kind: 'standard', upserts: [feed({ stalenessSeconds: 30 })], removals: [] });
+    expect(normalized.nextFeeds.find((entry) => entry.asset === 'XLM')?.freshnessProfile).toBe('standard');
+    expect(normalized.nextFeeds.find((entry) => entry.asset === 'XLM')?.freshnessWarnSeconds).toBe(29);
+
+    const invalid = validateCatalogChange(current, { baseVersion: 1, kind: 'standard', upserts: [feed({ freshnessWarnSeconds: 120 })], removals: [] });
+    expect(invalid.errors.map((finding) => finding.code)).toContain('FRESHNESS_WARNING_OUT_OF_BOUNDS');
+  });
+
+  it('rejects mismatched quote denomination and out-of-range scales', () => {
+    const current = { version: 1, activatedAt: new Date(0).toISOString(), proposalId: null, feeds: [feed(), feed({ asset: 'USDC' })] };
+    const result = validateCatalogChange(current, {
+      baseVersion: 1,
+      kind: 'standard',
+      upserts: [feed({ quoteUnit: { currency: 'EUR', denomination: 'USD_PER_ASSET_UNIT', scaleDecimals: 19, displayDecimals: 20, rounding: 'half-even' } })],
+      removals: [],
+    });
+    expect(result.errors.map((finding) => finding.code)).toContain('INVALID_QUOTE_UNIT');
+    expect(result.errors.map((finding) => finding.code)).toContain('INVALID_QUOTE_SCALE');
+  });
+});
+
+describe('feed change impact coverage (#678)', () => {
+  it('reports source quorum, API compatibility, consumers, and rollback target', () => {
+    const current = { version: 3, activatedAt: new Date(0).toISOString(), proposalId: null, feeds: [feed(), feed({ asset: 'USDC' })] };
+    const next = feed({ quoteUnit: { currency: 'EUR', denomination: 'EUR_PER_ASSET_UNIT', scaleDecimals: 8, displayDecimals: 2, rounding: 'half-even' } });
+    const report = simulateCatalogImpact({
+      current,
+      nextFeeds: [next, feed({ asset: 'USDC' })],
+      diff: { added: [], removed: [], modified: ['XLM'], unchanged: ['USDC'] },
+      findings: [],
+      highImpact: true,
+      consumers: [{ id: 'vault-a', assets: ['XLM'], tier: 'production' }],
+      costModel: { pollIntervalSeconds: 30, perSourceFetchCost: 0.001, perOnChainPublishCost: 0, currency: 'USD' },
+    });
+    expect(report.sourceQuorum[0]).toMatchObject({ asset: 'XLM', before: { quorum: 2 }, after: { quorum: 2 } });
+    expect(report.apiSchemas).toContainEqual(expect.objectContaining({ asset: 'XLM', field: 'quoteUnit', impact: 'breaking' }));
+    expect(report.affectedConsumers.ids).toContain('vault-a');
+    expect(report.rollback.targetVersion).toBe(3);
+    expect(report.rollback.steps.length).toBeGreaterThan(0);
+  });
+});

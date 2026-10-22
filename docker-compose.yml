@@ -40,6 +40,9 @@ services:
       - "4002:4002"
     env_file:
       - .env
+    environment:
+      VAULT_ADDR: "http://vault:8200"
+      VAULT_TOKEN: "${VAULT_DEV_ROOT_TOKEN_ID:?run `make dev-up` to generate a per-run Vault dev token}"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -68,7 +71,7 @@ services:
       TRACING_ENABLED: "true"
       JAEGER_ENDPOINT: http://jaeger:14268/api/traces
       VAULT_ADDR: "http://vault:8200"
-      VAULT_TOKEN: "dev-root-super-secret-token"
+      VAULT_TOKEN: "${VAULT_DEV_ROOT_TOKEN_ID:?run `make dev-up` to generate a per-run Vault dev token}"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -91,14 +94,13 @@ services:
   vault:
     image: hashicorp/vault:1.15.2
     container_name: oracle_vault
+    # Loopback only: the dev server is unsealed, in-memory, and must never be
+    # reachable from the host network or a shared machine.
     ports:
-      - "8200:8200"
+      - "127.0.0.1:8200:8200"
     environment:
-      VAULT_DEV_ROOT_TOKEN_ID: "dev-root-super-secret-token"
+      VAULT_DEV_ROOT_TOKEN_ID: "${VAULT_DEV_ROOT_TOKEN_ID:?run `make dev-up` to generate a per-run Vault dev token}"
       VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
-    volumes:
-      - vault_data:/vault/file
-      - vault_logs:/vault/logs
     cap_add:
       - IPC_LOCK
     networks:
@@ -115,7 +117,7 @@ services:
     container_name: oracle_vault_init
     environment:
       VAULT_ADDR: "http://vault:8200"
-      VAULT_TOKEN: "dev-root-super-secret-token"
+      VAULT_TOKEN: "${VAULT_DEV_ROOT_TOKEN_ID:?run `make dev-up` to generate a per-run Vault dev token}"
     networks:
       - default
     depends_on:
@@ -133,8 +135,6 @@ services:
 
 volumes:
   timescale-data:
-  vault_data:
-  vault_logs:
 
 networks:
   default:

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 2,
+  "network": "stellar:pubnet",
+  "feeds": [
+    {
+      "schemaVersion": 2,
+      "schemaRevision": 0,
+      "feedId": "xlm-usd",
+      "network": "stellar:pubnet",
+      "base": { "asset": "XLM", "issuer": null, "decimals": 7 },
+      "quote": { "asset": "USD", "issuer": null, "decimals": 2 },
+      "precision": 7,
+      "eligibleSources": [
+        { "source": "chainlink", "weightBps": 2500, "required": true },
+        { "source": "redstone", "weightBps": 2500, "required": false },
+        { "source": "band", "weightBps": 2500, "required": false },
+        { "source": "reflector", "weightBps": 2500, "required": false }
+      ],
+      "freshness": { "heartbeatSeconds": 30, "maxStalenessSeconds": 120, "deviationThresholdBps": 50 },
+      "ownership": { "team": "market-data", "owner": "feeds@stellar-oracle.invalid", "oncall": "pagerduty:market-data" },
+      "lifecycle": { "state": "active", "since": "2026-01-01T00:00:00Z" }
+    },
+    {
+      "schemaVersion": 2,
+      "schemaRevision": 0,
+      "feedId": "usdc-usd",
+      "network": "stellar:pubnet",
+      "base": { "asset": "USDC", "issuer": null, "decimals": 7 },
+      "quote": { "asset": "USD", "issuer": null, "decimals": 2 },
+      "precision": 7,
+      "eligibleSources": [
+        { "source": "chainlink", "weightBps": 2500, "required": true },
+        { "source": "redstone", "weightBps": 2500, "required": false },
+        { "source": "band", "weightBps": 2500, "required": false },
+        { "source": "reflector", "weightBps": 2500, "required": false }
+      ],
+      "freshness": { "heartbeatSeconds": 30, "maxStalenessSeconds": 120, "deviationThresholdBps": 25 },
+      "ownership": { "team": "market-data", "owner": "feeds@stellar-oracle.invalid", "oncall": "pagerduty:market-data" },
+      "lifecycle": { "state": "active", "since": "2026-01-01T00:00:00Z" }
+    },
+    {
+      "schemaVersion": 2,
+      "schemaRevision": 0,
+      "feedId": "btc-usd",
+      "network": "stellar:pubnet",
+      "base": { "asset": "BTC", "issuer": null, "decimals": 8 },
+      "quote": { "asset": "USD", "issuer": null, "decimals": 2 },
+      "precision": 7,
+      "eligibleSources": [
+        { "source": "chainlink", "weightBps": 3000, "required": true },
+        { "source": "redstone", "weightBps": 2500, "required": false },
+        { "source": "band", "weightBps": 2500, "required": false },
+        { "source": "reflector", "weightBps": 2000, "required": false }
+      ],
+      "freshness": { "heartbeatSeconds": 30, "maxStalenessSeconds": 120, "deviationThresholdBps": 50 },
+      "ownership": { "team": "market-data", "owner": "feeds@stellar-oracle.invalid", "oncall": "pagerduty:market-data" },
+      "lifecycle": { "state": "active", "since": "2026-01-01T00:00:00Z" }
+    }
+  ]
+}

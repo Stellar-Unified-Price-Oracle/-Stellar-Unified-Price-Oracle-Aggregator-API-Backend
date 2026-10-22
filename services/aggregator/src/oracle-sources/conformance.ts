@@ -1,4 +1,4 @@
-import { parseProviderResponse, type ProviderFetchResult } from './response-validation';
+import { parseProviderResponse, scaleValidatedPrice, type ProviderFetchResult } from './response-validation';
 import { OracleSourceName } from '../infrastructure/types';
 import { logger } from '../observability/logger';
 
@@ -29,6 +29,10 @@ export interface ConformanceVector {
   expected: 'ok' | 'no-price' | 'invalid-payload';
   /** When `ok`, the expected normalized decimals. */
   expectedDecimals?: number;
+  /** When `ok`, the expected provider observation timestamp (null means unavailable). */
+  expectedObservedAt?: number | null;
+  /** When `ok`, the expected integer price after decimal scaling. */
+  expectedScaledPrice?: string;
   /** Whether this vector blocks production contribution when failed. */
   blocking: boolean;
 }
@@ -43,6 +47,10 @@ export interface ConformanceResult {
   expected: ConformanceVector['expected'];
   expectedDecimals?: number;
   actualDecimals?: number;
+  expectedObservedAt?: number | null;
+  actualObservedAt?: number | null;
+  expectedScaledPrice?: string;
+  actualScaledPrice?: string;
   error?: string;
 }
 
@@ -63,12 +71,19 @@ export interface ConformanceReport {
 function runVector(vector: ConformanceVector): ConformanceResult {
   let actual: ProviderFetchResult['kind'] | 'error';
   let actualDecimals: number | undefined;
+  let actualObservedAt: number | null | undefined;
+  let actualScaledPrice: string | undefined;
   let error: string | undefined;
 
   try {
     const result = parseProviderResponse(vector.provider, vector.payload, vector.asset);
     actual = result.kind;
-    if (result.kind === 'ok') actualDecimals = result.decimals;
+    if (result.kind === 'ok') {
+      actualDecimals = result.decimals;
+      actualObservedAt = result.observedAt;
+      const normalized = scaleValidatedPrice(result.price, result.decimals);
+      if (normalized.ok) actualScaledPrice = normalized.scaled.toString();
+    }
   } catch (err) {
     actual = 'error';
     error = err instanceof Error ? err.message : String(err);
@@ -76,7 +91,9 @@ function runVector(vector: ConformanceVector): ConformanceResult {
 
   const passed =
     actual === vector.expected &&
-    (vector.expectedDecimals === undefined || actualDecimals === vector.expectedDecimals);
+    (vector.expectedDecimals === undefined || actualDecimals === vector.expectedDecimals) &&
+    (vector.expectedObservedAt === undefined || actualObservedAt === vector.expectedObservedAt) &&
+    (vector.expectedScaledPrice === undefined || actualScaledPrice === vector.expectedScaledPrice);
 
   return {
     provider: vector.provider,
@@ -88,6 +105,10 @@ function runVector(vector: ConformanceVector): ConformanceResult {
     expected: vector.expected,
     expectedDecimals: vector.expectedDecimals,
     actualDecimals,
+    expectedObservedAt: vector.expectedObservedAt,
+    actualObservedAt,
+    expectedScaledPrice: vector.expectedScaledPrice,
+    actualScaledPrice,
     error,
   };
 }
@@ -159,6 +180,8 @@ export const DEFAULT_VECTORS: ConformanceVector[] = [
     asset: 'XLM',
     expected: 'ok',
     expectedDecimals: 8,
+    expectedObservedAt: null,
+    expectedScaledPrice: '398750000000',
     blocking: true,
   },
   {
@@ -188,6 +211,8 @@ export const DEFAULT_VECTORS: ConformanceVector[] = [
     asset: 'XLM',
     expected: 'ok',
     expectedDecimals: 8,
+    expectedObservedAt: null,
+    expectedScaledPrice: '398750000000',
     blocking: true,
   },
   {
@@ -227,6 +252,8 @@ export const DEFAULT_VECTORS: ConformanceVector[] = [
     asset: 'XLM',
     expected: 'ok',
     expectedDecimals: 8,
+    expectedObservedAt: 1700000000,
+    expectedScaledPrice: '398750000000',
     blocking: true,
   },
   {
@@ -256,6 +283,7 @@ export const DEFAULT_VECTORS: ConformanceVector[] = [
     asset: 'XLM',
     expected: 'ok',
     expectedDecimals: 8,
+    expectedObservedAt: 1700000000,
     blocking: true,
   },
   {

@@ -1,3 +1,6 @@
+**Owner:** Platform Operations
+**Review date:** 2026-10-21
+
 # Runbook Verification — Shadowed On-call Checklist
 
 Purpose: provide a concise, repeatable checklist for a shadowed on-call to validate that a runbook is executable end-to-end.

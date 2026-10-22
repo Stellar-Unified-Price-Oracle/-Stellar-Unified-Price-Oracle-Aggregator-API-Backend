@@ -23,6 +23,7 @@ import { issueWsCsrfToken, isCsrfEnabled } from '../infrastructure/csrf';
 import { config } from '../infrastructure/config';
 import { ok, okCached, fail } from '../infrastructure/response';
 import { sendError } from '../infrastructure/error';
+import { isFeedStale } from '@stellar-oracle/types';
 import { getConsistencyObjective, evaluateConsistency } from './consistency-objectives';
 
 const router = Router();
@@ -377,7 +378,8 @@ router.get('/health', async (req: Request, res: Response) => {
   cacheMissTotal.inc();
 
   const prices = await readAssetPrices();
-  const hasStale = prices.some((p) => Date.now() / 1000 - p.timestamp > 120);
+  const stale = (p: ApiPrice) => isFeedStale(p.asset, Date.now() / 1000 - p.timestamp, 120);
+  const hasStale = prices.some(stale);
   const status = prices.length === 0 ? 'unhealthy' : hasStale ? 'degraded' : 'healthy';
 
   const data: Record<string, unknown> = {
@@ -386,7 +388,7 @@ router.get('/health', async (req: Request, res: Response) => {
     uptime: process.uptime(),
     timestamp: Math.floor(Date.now() / 1000),
     assetsTracked: prices.length,
-    degradedAssets: prices.filter((p) => Date.now() / 1000 - p.timestamp > 120).map((p) => p.asset),
+    degradedAssets: prices.filter(stale).map((p) => p.asset),
     consistency: evaluateConsistency('live-prices', Math.floor(Date.now() / 1000)),
     objectives: {
       livePrices: getConsistencyObjective('live-prices'),
@@ -405,7 +407,7 @@ router.get('/health', async (req: Request, res: Response) => {
       asset: p.asset,
       timestamp: p.timestamp,
       sources: p.sources,
-      stale: Date.now() / 1000 - p.timestamp > 120,
+      stale: stale(p),
     }));
     data.processMemoryMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     data.nodeVersion = process.version;
