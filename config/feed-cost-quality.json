@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "Economics and ecosystem sustainability workstream (Market Data & Platform teams)",
+  "updatedAt": "2026-10-22",
+  "reviewIntervalDays": 30,
+  "nextReviewDate": "2026-11-20",
+  "evaluationWeights": {
+    "freshnessWeight": 0.35,
+    "coverageWeight": 0.35,
+    "accuracyWeight": 0.30
+  },
+  "feeds": [
+    {
+      "feedId": "xlm-usd",
+      "asset": "XLM",
+      "pair": "XLM/USD",
+      "cadenceSeconds": 30,
+      "monthlySubmissions": 86400,
+      "costMetrics": {
+        "providerIngestionMonthlyUsd": 24.50,
+        "aggregationComputeMonthlyUsd": 4.80,
+        "timescaleStorageMonthlyUsd": 1.75,
+        "onChainGasMonthlyUsd": 13.56,
+        "totalMonthlyCostUsd": 44.61
+      },
+      "qualityMetrics": {
+        "freshnessP50Ms": 1420,
+        "freshnessP95Ms": 2850,
+        "maxStalenessSeconds": 120,
+        "stalenessViolationRatePct": 0.02,
+        "activeSourcesCount": 4,
+        "configuredSourcesCount": 4,
+        "sourceQuorum": 3,
+        "medianPriceSpreadBps": 3.4,
+        "measuredAccuracyPct": 99.4,
+        "uptimeAvailabilityPct": 99.98
+      },
+      "recommendations": {
+        "pricingCategory": "Standard Protocol Asset",
+        "capacityStatus": "Healthy Headroom",
+        "actionGuidance": "Maintain current 30s cadence; provider spread and latency remain optimal within current budget."
+      }
+    },
+    {
+      "feedId": "usdc-usd",
+      "asset": "USDC",
+      "pair": "USDC/USD",
+      "cadenceSeconds": 30,
+      "monthlySubmissions": 86400,
+      "costMetrics": {
+        "providerIngestionMonthlyUsd": 24.50,
+        "aggregationComputeMonthlyUsd": 4.80,
+        "timescaleStorageMonthlyUsd": 1.75,
+        "onChainGasMonthlyUsd": 13.56,
+        "totalMonthlyCostUsd": 44.61
+      },
+      "qualityMetrics": {
+        "freshnessP50Ms": 1180,
+        "freshnessP95Ms": 2100,
+        "maxStalenessSeconds": 120,
+        "stalenessViolationRatePct": 0.01,
+        "activeSourcesCount": 4,
+        "configuredSourcesCount": 4,
+        "sourceQuorum": 3,
+        "medianPriceSpreadBps": 1.1,
+        "measuredAccuracyPct": 99.9,
+        "uptimeAvailabilityPct": 99.99
+      },
+      "recommendations": {
+        "pricingCategory": "Core Settlement Asset",
+        "capacityStatus": "Cost-Optimal Reference",
+        "actionGuidance": "Benchmark stablecoin reference feed; tightest spread and lowest volatility risk across providers."
+      }
+    },
+    {
+      "feedId": "btc-usd",
+      "asset": "BTC",
+      "pair": "BTC/USD",
+      "cadenceSeconds": 15,
+      "monthlySubmissions": 172800,
+      "costMetrics": {
+        "providerIngestionMonthlyUsd": 48.00,
+        "aggregationComputeMonthlyUsd": 8.50,
+        "timescaleStorageMonthlyUsd": 3.50,
+        "onChainGasMonthlyUsd": 27.13,
+        "totalMonthlyCostUsd": 87.13
+      },
+      "qualityMetrics": {
+        "freshnessP50Ms": 850,
+        "freshnessP95Ms": 1750,
+        "maxStalenessSeconds": 60,
+        "stalenessViolationRatePct": 0.04,
+        "activeSourcesCount": 4,
+        "configuredSourcesCount": 4,
+        "sourceQuorum": 3,
+        "medianPriceSpreadBps": 2.1,
+        "measuredAccuracyPct": 99.7,
+        "uptimeAvailabilityPct": 99.96
+      },
+      "recommendations": {
+        "pricingCategory": "High-Frequency Flagship",
+        "capacityStatus": "High Throughput Priority",
+        "actionGuidance": "15s cadence justifies premium pricing tier; delivers sub-second p50 freshness with full 4-source consensus."
+      }
+    },
+    {
+      "feedId": "eth-usd",
+      "asset": "ETH",
+      "pair": "ETH/USD",
+      "cadenceSeconds": 20,
+      "monthlySubmissions": 129600,
+      "costMetrics": {
+        "providerIngestionMonthlyUsd": 36.50,
+        "aggregationComputeMonthlyUsd": 6.80,
+        "timescaleStorageMonthlyUsd": 2.65,
+        "onChainGasMonthlyUsd": 20.35,
+        "totalMonthlyCostUsd": 66.30
+      },
+      "qualityMetrics": {
+        "freshnessP50Ms": 1050,
+        "freshnessP95Ms": 2200,
+        "maxStalenessSeconds": 90,
+        "stalenessViolationRatePct": 0.03,
+        "activeSourcesCount": 4,
+        "configuredSourcesCount": 4,
+        "sourceQuorum": 3,
+        "medianPriceSpreadBps": 2.6,
+        "measuredAccuracyPct": 99.6,
+        "uptimeAvailabilityPct": 99.97
+      },
+      "recommendations": {
+        "pricingCategory": "Tier 1 Liquid Asset",
+        "capacityStatus": "Balanced Cost/Quality",
+        "actionGuidance": "20s cadence balances gas burn with low deviation; optimal candidate for high-volume DeFi lending collateral."
+      }
+    },
+    {
+      "feedId": "usdt-usd",
+      "asset": "USDT",
+      "pair": "USDT/USD",
+      "cadenceSeconds": 30,
+      "monthlySubmissions": 86400,
+      "costMetrics": {
+        "providerIngestionMonthlyUsd": 24.50,
+        "aggregationComputeMonthlyUsd": 4.80,
+        "timescaleStorageMonthlyUsd": 1.75,
+        "onChainGasMonthlyUsd": 13.56,
+        "totalMonthlyCostUsd": 44.61
+      },
+      "qualityMetrics": {
+        "freshnessP50Ms": 1250,
+        "freshnessP95Ms": 2400,
+        "maxStalenessSeconds": 120,
+        "stalenessViolationRatePct": 0.02,
+        "activeSourcesCount": 4,
+        "configuredSourcesCount": 4,
+        "sourceQuorum": 3,
+        "medianPriceSpreadBps": 1.4,
+        "measuredAccuracyPct": 99.8,
+        "uptimeAvailabilityPct": 99.98
+      },
+      "recommendations": {
+        "pricingCategory": "Core Settlement Asset",
+        "capacityStatus": "Cost-Optimal Reference",
+        "actionGuidance": "Standard stablecoin profile; low resource footprint with stable multi-source consensus."
+      }
+    }
+  ]
+}
