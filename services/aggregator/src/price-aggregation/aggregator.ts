@@ -135,6 +135,18 @@ export class PriceAggregator {
     return bundle ? structuredClone(bundle) : null;
   }
 
+  getSourcePricesForAsset(asset: string): NormalizedPrice[] {
+    const normalized = asset.toUpperCase();
+    return Array.from(this.sources.values()).filter((price) => price.asset === normalized);
+  }
+
+  getFreshSourcePricesForAsset(asset: string): NormalizedPrice[] {
+    const now = Date.now();
+    return this.getSourcePricesForAsset(asset).filter(
+      (price) => now - price.timestamp * 1000 < config.stalenessThresholdMs,
+    );
+  }
+
   private computeDegradationLevel(activeCount: number, totalCount: number, stale: boolean): DegradationLevel {
     if (stale || activeCount === 0) return 'critical';
     const ratio = activeCount / Math.max(totalCount, 1);

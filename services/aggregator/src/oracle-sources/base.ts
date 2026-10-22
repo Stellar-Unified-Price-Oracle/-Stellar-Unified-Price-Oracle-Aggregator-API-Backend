@@ -12,6 +12,7 @@ import {
   oracleSourceSlaBreaches,
   oracleSourceBudgetBlockedTotal,
   oracleSourceInvalidPayloadsTotal,
+  oracleProviderFetchesTotal,
   oracleApiCallsTotal,
   oracleApiCostTotal,
   oracleApiBudgetUtilization,
@@ -100,6 +101,7 @@ export abstract class BaseSource {
 
   /** Issue #584 — most recent payload-validation failure, for /health surfacing. */
   lastInvalidPayloadAt: number | null = null;
+  invalidPayloadCount = 0;
 
   private startedAt = Date.now();
   private readonly payloadValidation = new AsyncLocalStorage<{ invalid: boolean }>();
@@ -250,7 +252,7 @@ export abstract class BaseSource {
         return this.failedOutcome(invalid ? 'invalid-payload' : 'no-price', failure);
       }
 
-      const elapsed = timer({ status: 'success' });
+      const elapsed = timer({ status: price ? 'success' : 'no_price' });
       oracleSourceRequestsTotal.inc({ source: safeSource, status: 'success' });
       if (elapsed > SLA_THRESHOLD_SECONDS) {
         oracleSourceSlaBreaches.inc({ source: safeSource });
@@ -276,6 +278,7 @@ export abstract class BaseSource {
       oracleSourceRequestsTotal.inc({ source: safeSource, status: 'error' });
 
       this.health.totalFailures++;
+      oracleProviderFetchesTotal.inc({ source: safeSource, asset: safeAsset, outcome: 'error' });
       this.health.lastFailure = Math.floor(Date.now() / 1000);
       this.health.consecutiveFailures++;
 

@@ -79,6 +79,69 @@ export const oracleSourceSlaBreaches = new client.Counter({
   registers: [register],
 });
 
+export const oracleSourceFreshnessSeconds = new client.Gauge({
+  name: 'oracle_source_freshness_seconds',
+  help: 'Age in seconds of the latest provider observation per source and feed',
+  labelNames: ['source', 'asset'],
+  registers: [register],
+});
+
+export const oracleProviderCadenceSeconds = new client.Gauge({
+  name: 'oracle_provider_cadence_seconds',
+  help: 'Declared update cadence for each provider and supported feed',
+  labelNames: ['source', 'asset'],
+  registers: [register],
+});
+
+export const oracleProviderFetchesTotal = new client.Counter({
+  name: 'oracle_provider_fetches_total',
+  help: 'Provider fetch outcomes by source and feed; available means a validated price was returned',
+  labelNames: ['source', 'asset', 'outcome'],
+  registers: [register],
+});
+
+export const oracleFeedProviderCount = new client.Gauge({
+  name: 'oracle_feed_provider_count',
+  help: 'Number of independent provider dependency groups contributing to a feed',
+  labelNames: ['asset'],
+  registers: [register],
+});
+
+export const oracleFeedProviderHhi = new client.Gauge({
+  name: 'oracle_feed_provider_hhi',
+  help: 'Provider concentration Herfindahl-Hirschman Index per feed, from 0 to 1',
+  labelNames: ['asset'],
+  registers: [register],
+});
+
+export const oracleFeedMaxDependencyShare = new client.Gauge({
+  name: 'oracle_feed_max_dependency_share',
+  help: 'Largest independent dependency group share for a feed, from 0 to 1',
+  labelNames: ['asset'],
+  registers: [register],
+});
+
+export const oracleFeedConcentrationAlertsTotal = new client.Counter({
+  name: 'oracle_feed_concentration_alerts_total',
+  help: 'Feed observations where provider diversity is below policy',
+  labelNames: ['asset', 'reason'],
+  registers: [register],
+});
+
+export const oracleShadowObservationsTotal = new client.Counter({
+  name: 'oracle_shadow_observations_total',
+  help: 'Provider observations fetched in shadow mode and excluded from aggregation',
+  labelNames: ['source', 'asset', 'result'],
+  registers: [register],
+});
+
+export const oracleShadowDeviationPercent = new client.Gauge({
+  name: 'oracle_shadow_deviation_percent',
+  help: 'Absolute deviation between the latest shadow observation and active feed median',
+  labelNames: ['source', 'asset'],
+  registers: [register],
+});
+
 // #583 — budget-blocked fetches: a source whose daily budget is exhausted
 // stops being polled, which degrades aggregation quality and must stay visible.
 export const oracleSourceBudgetBlockedTotal = new client.Counter({

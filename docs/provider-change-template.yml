@@ -1,0 +1,13 @@
+# Copy this record into docs/provider-changes.yml for each upstream notice.
+provider: chainlink
+notice_url: https://
+date_discovered: YYYY-MM-DD
+effective_date: YYYY-MM-DD
+deprecation_date: null
+affected_feeds: []
+adapter_or_configuration: null
+owner: Provider Integrations on-call rotation
+compatibility_decision: pending
+mitigation: null
+evidence: null
+status: monitoring

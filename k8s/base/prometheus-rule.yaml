@@ -55,6 +55,86 @@ spec:
               Check source health and circuit breaker status.
             runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/oracle-source-down.md
 
+    - name: stellar-oracle.provider-objectives
+      interval: 5m
+      rules:
+        - alert: OracleProviderAvailabilityObjectiveMiss
+          expr: |
+            (
+              sum by (source, asset) (increase(oracle_provider_fetches_total{outcome="available"}[30d]))
+              / clamp_min(sum by (source, asset) (increase(oracle_provider_fetches_total[30d])), 1)
+            ) < 0.995
+            and on (source, asset)
+            sum by (source, asset) (increase(oracle_provider_fetches_total[30d])) >= 100
+          for: 15m
+          labels:
+            severity: warning
+            component: aggregator
+          annotations:
+            summary: Provider availability objective missed for {{ $labels.source }} / {{ $labels.asset }}
+            description: 'Validated fetch availability is below 99.5% over 30 days.'
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/provider-ecosystem.md
+
+        - alert: OracleProviderLatencyObjectiveMiss
+          expr: |
+            (
+              sum by (source, asset) (increase(oracle_source_request_duration_seconds_bucket{status="success",le="1"}[30d]))
+              / clamp_min(sum by (source, asset) (increase(oracle_source_request_duration_seconds_count{status="success"}[30d])), 1)
+            ) < 0.99
+            and on (source, asset)
+            sum by (source, asset) (increase(oracle_source_request_duration_seconds_count{status="success"}[30d])) >= 100
+          for: 15m
+          labels:
+            severity: warning
+            component: aggregator
+          annotations:
+            summary: Provider latency objective missed for {{ $labels.source }} / {{ $labels.asset }}
+            description: 'Fewer than 99% of validated fetches completed within one second over 30 days.'
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/provider-ecosystem.md
+
+        - alert: OracleProviderFreshnessObjectiveMiss
+          expr: |
+            avg_over_time((oracle_source_freshness_seconds <= bool (oracle_provider_cadence_seconds + 5))[30d:1m]) < 0.99
+          for: 15m
+          labels:
+            severity: warning
+            component: aggregator
+          annotations:
+            summary: Provider freshness objective missed for {{ $labels.source }} / {{ $labels.asset }}
+            description: 'Fewer than 99% of sampled observations were within the provider cadence plus five seconds over 30 days.'
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/provider-ecosystem.md
+
+        - alert: OracleProviderErrorObjectiveMiss
+          expr: |
+            (
+              sum by (source, asset) (increase(oracle_provider_fetches_total{outcome=~"error|invalid_payload"}[30d]))
+              / clamp_min(sum by (source, asset) (increase(oracle_provider_fetches_total[30d])), 1)
+            ) > 0.005
+            and on (source, asset)
+            sum by (source, asset) (increase(oracle_provider_fetches_total[30d])) >= 100
+          for: 15m
+          labels:
+            severity: warning
+            component: aggregator
+          annotations:
+            summary: Provider error objective missed for {{ $labels.source }} / {{ $labels.asset }}
+            description: 'Transport and invalid payload errors exceed 0.5% over 30 days.'
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/provider-ecosystem.md
+
+        - alert: OracleFeedProviderConcentrationHigh
+          expr: |
+            oracle_feed_provider_count < 2
+            or oracle_feed_provider_hhi > 0.6
+            or oracle_feed_max_dependency_share > 0.75
+          for: 5m
+          labels:
+            severity: warning
+            component: aggregator
+          annotations:
+            summary: Provider concentration policy breached for {{ $labels.asset }}
+            description: 'Feed diversity is below policy; restore an independent provider or record an approved risk acceptance.'
+            runbook_url: https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/blob/main/docs/runbooks/provider-ecosystem.md
+
     - name: stellar-oracle.alerts
       interval: 1m
       rules:
