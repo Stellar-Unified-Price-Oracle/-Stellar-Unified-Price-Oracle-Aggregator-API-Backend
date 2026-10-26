@@ -1,0 +1,99 @@
+{
+  "version": "1.0.0",
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "economics-sustainability-team",
+  "reviewCadence": {
+    "cadenceSchedule": "Monthly cost reconciliation, Quarterly sustainability review, Annual pricing refresh",
+    "reviewIntervalDays": 30,
+    "nextReviewDate": "2026-11-15",
+    "responsibleRole": "Economics and Ecosystem Lead",
+    "metricsTracked": [
+      "runway_months",
+      "gross_margin_percent",
+      "operating_reserve_usd",
+      "soroban_gas_burn_usd",
+      "breakeven_requests_monthly"
+    ]
+  },
+  "assumptions": {
+    "xlmUsdRate": 0.12,
+    "hoursPerMonth": 730,
+    "cacheHitRatio": 0.85,
+    "activeKeys": {
+      "free": 120,
+      "pro": 35,
+      "enterprise": 6
+    },
+    "averageMonthlyRequestsPerKey": {
+      "free": 15000,
+      "pro": 250000,
+      "enterprise": 2000000
+    }
+  },
+  "revenueTiers": {
+    "free": {
+      "name": "Free",
+      "baseFeeMonthlyUsd": 0.0,
+      "includedMonthlyRequests": 25000,
+      "overagePer1kRequestsUsd": 0.0
+    },
+    "pro": {
+      "name": "Pro",
+      "baseFeeMonthlyUsd": 120.0,
+      "includedMonthlyRequests": 100000,
+      "overagePer1kRequestsUsd": 0.2
+    },
+    "enterprise": {
+      "name": "Enterprise",
+      "baseFeeMonthlyUsd": 1250.0,
+      "includedMonthlyRequests": 1000000,
+      "overagePer1kRequestsUsd": 0.15
+    }
+  },
+  "operatingCosts": {
+    "infrastructureMonthlyUsd": 25.2,
+    "databaseStorageMonthlyUsd": 8.91,
+    "onChainSoroban": {
+      "assetsReported": 5,
+      "submissionCadenceSeconds": 30,
+      "submissionsPerMonth": 432000,
+      "estimatedGasCostPerSubmissionXlm": 0.00015,
+      "rentExtensionMonthlyXlm": 500,
+      "baseOnChainMonthlyCostUsd": 67.82
+    },
+    "externalDataProvidersMonthlyUsd": 150.0,
+    "observabilityAndToolingMonthlyUsd": 45.0
+  },
+  "reserveRequirements": {
+    "targetRunwayMonths": 6,
+    "minimumOpexReserveBufferPercent": 50,
+    "onChainGasBufferXlm": 10000,
+    "contingencyBufferPercent": 15
+  },
+  "sensitivityScenarios": {
+    "trough": {
+      "demandMultiplier": 0.5,
+      "description": "Low market activity / slow integrator adoption"
+    },
+    "conservative": {
+      "demandMultiplier": 0.75,
+      "description": "Conservative adoption with reduced request volume"
+    },
+    "baseline": {
+      "demandMultiplier": 1.0,
+      "description": "Target expected post-GA demand baseline"
+    },
+    "growth": {
+      "demandMultiplier": 1.5,
+      "description": "Accelerated DeFi protocol integration growth"
+    },
+    "surge": {
+      "demandMultiplier": 3.0,
+      "description": "High market volatility with elevated query volume"
+    },
+    "stress": {
+      "demandMultiplier": 5.0,
+      "description": "Peak network demand stress scenario"
+    }
+  }
+}
