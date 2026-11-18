@@ -59,6 +59,11 @@ interface Gap {
   missingSnapshots: number;
 }
 
+/** Ready-to-run backfill command for a gap, so alerts are actionable. */
+function backfillCommand(g: Gap): string {
+  return `npm run history:backfill -- --asset ${g.asset} --from ${g.startTs} --to ${g.endTs}`;
+}
+
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) {
     console.error('DATABASE_URL is not set');
@@ -109,16 +114,29 @@ async function main(): Promise<void> {
     }
   }
 
-  const alerting = gaps.filter((g) => g.gapSeconds > alertThreshold);
+  const sortedGaps = gaps.sort((a, b) => b.gapSeconds - a.gapSeconds);
+  const alerting = sortedGaps.filter((g) => g.gapSeconds > alertThreshold);
   const summary = {
     scannedAssets: byAsset.size,
     scannedRows: rows.length,
     windowStart: new Date(sinceMs).toISOString(),
     expectedInterval,
     alertThreshold,
-    totalGaps: gaps.length,
+    totalGaps: sortedGaps.length,
     alertingGaps: alerting.length,
-    gaps: gaps.sort((a, b) => b.gapSeconds - a.gapSeconds),
+    // Asset/window of each alerting gap, so the scheduled workflow can paste it
+    // straight into the issue body.
+    alerts: alerting.map((g) => ({
+      asset: g.asset,
+      startTs: g.startTs,
+      endTs: g.endTs,
+      from: new Date(g.startTs * 1000).toISOString(),
+      to: new Date(g.endTs * 1000).toISOString(),
+      gapSeconds: g.gapSeconds,
+      missingSnapshots: g.missingSnapshots,
+      backfillCommand: backfillCommand(g),
+    })),
+    gaps: sortedGaps,
   };
 
   if (asJson) {
@@ -134,11 +152,14 @@ async function main(): Promise<void> {
       const mark = g.gapSeconds > alertThreshold ? 'ALERT' : 'warn ';
       console.log(`  [${mark}] ${g.asset.padEnd(8)} ${from} -> ${to}  ${g.gapSeconds}s  (~${g.missingSnapshots} missing)`);
     }
-    console.log(
-      alerting.length > 0
-        ? `\nBackfill with: npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>`
-        : '\nNo gaps beyond threshold.',
-    );
+    if (alerting.length > 0) {
+      console.log('\nBackfill commands for alerting gaps:');
+      for (const g of alerting) {
+        console.log(`  ${g.asset} ${g.startTs} -> ${g.endTs}: ${backfillCommand(g)}`);
+      }
+    } else {
+      console.log('\nNo gaps beyond threshold.');
+    }
   }
 
   process.exit(alerting.length > 0 ? 1 : 0);

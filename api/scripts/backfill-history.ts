@@ -36,8 +36,32 @@ function flag(name: string): string | undefined {
 const dryRun = args.includes('--dry-run');
 const all = args.includes('--all');
 const asset = flag('asset')?.toUpperCase();
-const from = flag('from') ? Number(flag('from')) : undefined;
-const to = flag('to') ? Number(flag('to')) : undefined;
+
+/**
+ * Parse a --from/--to value as either epoch seconds or an ISO-8601 timestamp.
+ * Returns epoch seconds, or undefined when the value is absent/invalid.
+ */
+function parseTimestamp(name: string, value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed);
+  }
+  const ms = Date.parse(trimmed);
+  if (Number.isNaN(ms)) {
+    console.error(`Invalid --${name} value "${value}": expected epoch seconds or an ISO timestamp`);
+    process.exit(2);
+  }
+  return Math.floor(ms / 1000);
+}
+
+const from = parseTimestamp('from', flag('from'));
+const to = parseTimestamp('to', flag('to'));
+
+if (from !== undefined && to !== undefined && from >= to) {
+  console.error(`Invalid range: --from (${from}) must be less than --to (${to})`);
+  process.exit(2);
+}
 
 const positional = args.filter((a, i) => !a.startsWith('--') && !args[i - 1]?.match(/^--(asset|from|to)$/));
 const candidateDirs = [
@@ -92,6 +116,9 @@ async function main(): Promise<void> {
   let considered = 0;
   let inserted = 0;
 
+  // Per-asset tallies so the summary is actionable for each reported gap.
+  const perAsset = new Map<string, { considered: number; inserted: number }>();
+
   for (const file of files) {
     const rows = loadFile(path.join(dataDir, file)).filter((r) => {
       if (from !== undefined && r.timestamp < from) return false;
@@ -103,25 +130,43 @@ async function main(): Promise<void> {
       console.log(`[dry-run] ${file}: ${rows.length} row(s) in range`);
       continue;
     }
+    let fileInserted = 0;
     for (const r of rows) {
+      const rowAsset = String(r.asset).toUpperCase();
       const res = await pool.query(
         `INSERT INTO price_history (asset, price, decimals, source, timestamp)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (asset, source, timestamp) DO NOTHING`,
-        [String(r.asset).toUpperCase(), String(r.price), r.decimals, r.source, r.timestamp],
+        [rowAsset, String(r.price), r.decimals, r.source, r.timestamp],
       );
-      inserted += res.rowCount ?? 0;
+      const n = res.rowCount ?? 0;
+      inserted += n;
+      fileInserted += n;
+      const tally = perAsset.get(rowAsset) ?? { considered: 0, inserted: 0 };
+      tally.considered += 1;
+      tally.inserted += n;
+      perAsset.set(rowAsset, tally);
     }
-    console.log(`${file}: considered ${rows.length}, inserted ${inserted}`);
+    console.log(`${file}: considered ${rows.length}, inserted ${fileInserted}`);
   }
 
   await pool.end();
-  console.log(
-    dryRun
-      ? `\n[dry-run] ${considered} row(s) would be replayed from ${files.length} file(s)`
-      : `\nBackfill complete: ${inserted}/${considered} new row(s) from ${files.length} file(s)`,
-  );
-  console.log('Re-run `npm run history:gaps` to confirm the gap is closed.');
+
+  if (dryRun) {
+    console.log(`\n[dry-run] ${considered} row(s) would be replayed from ${files.length} file(s)`);
+  } else {
+    console.log(`\nBackfill complete: ${inserted}/${considered} new row(s) from ${files.length} file(s)`);
+    if (perAsset.size > 0) {
+      console.log('Per-asset summary (inserted / considered, skipped):');
+      for (const [name, tally] of [...perAsset.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+        const skipped = tally.considered - tally.inserted;
+        console.log(`  ${name}: ${tally.inserted} inserted, ${skipped} skipped (${tally.considered} considered)`);
+      }
+    }
+  }
+
+  const gapCmd = asset ? `npm run history:gaps -- --asset ${asset}` : 'npm run history:gaps';
+  console.log(`\nRe-run \`${gapCmd}\` to confirm the gap is closed.`);
 }
 
 main().catch((err) => {

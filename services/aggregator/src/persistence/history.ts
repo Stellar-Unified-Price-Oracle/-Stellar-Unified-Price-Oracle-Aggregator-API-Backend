@@ -326,3 +326,124 @@ export function getHistoricalPrices(
   if (to) history = history.filter((h) => h.timestamp <= to);
   return history.slice(-limit);
 }
+
+/** A single missing cadence slot inside a [from, to] window. */
+export interface HistoryGap {
+  /** Inclusive start of the missing slot (Unix seconds). */
+  start: number;
+  /** Exclusive end of the missing slot (Unix seconds). */
+  end: number;
+  /** Number of expected cadence slots that are missing in this gap. */
+  missingSlots: number;
+}
+
+export interface HistoryGapReport {
+  asset: string;
+  from: number;
+  to: number;
+  /** Cadence (seconds) used to compute expected slots. */
+  cadenceSeconds: number;
+  /** Expected slot timestamps that had no history entry. */
+  missing: number[];
+  /** Contiguous runs of missing slots, ordered by start. */
+  gaps: HistoryGap[];
+  /** Largest gap length in seconds (0 when nothing is missing). */
+  largestGapSeconds: number;
+  /** True when no gap exceeds `thresholdSeconds`. */
+  ok: boolean;
+  /** Threshold (seconds) used to decide `ok`. */
+  thresholdSeconds: number;
+}
+
+export interface HistoryGapOptions {
+  /** Cadence of expected history entries in seconds. Defaults to `config.history.intervalSeconds`. */
+  cadenceSeconds?: number;
+  /** Gap size (seconds) that counts as an alert. Defaults to `config.history.gapAlertSeconds`. */
+  thresholdSeconds?: number;
+  /**
+   * Pre-loaded entries. When omitted the history file for `asset` is read via
+   * `getHistoricalPrices`. Callers backed by another store (e.g. the DB) can
+   * pass their own entries so the detector and backfill share one definition.
+   */
+  entries?: HistoricalPriceEntry[];
+}
+
+function resolveCadenceSeconds(override?: number): number {
+  const candidate = override ?? (config.history as { intervalSeconds?: number }).intervalSeconds;
+  if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) {
+    return Math.floor(candidate);
+  }
+  return 60;
+}
+
+function resolveGapThresholdSeconds(override?: number): number {
+  const candidate = override ?? (config.history as { gapAlertSeconds?: number }).gapAlertSeconds;
+  if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) {
+    return Math.floor(candidate);
+  }
+  return 900;
+}
+
+/**
+ * Issue #889/#890/#893 — the single definition of a history gap. Given an
+ * asset and an inclusive [from, to] window, enumerate the expected cadence
+ * slots and report which ones have no history entry. The backfill script and
+ * the scheduled gap detector both call this so they cannot drift apart.
+ */
+export function findHistoryGaps(
+  asset: string,
+  from: number,
+  to: number,
+  options: HistoryGapOptions = {},
+): HistoryGapReport {
+  const cadenceSeconds = resolveCadenceSeconds(options.cadenceSeconds);
+  const thresholdSeconds = resolveGapThresholdSeconds(options.thresholdSeconds);
+
+  const start = Math.floor(from);
+  const end = Math.floor(to);
+  const report: HistoryGapReport = {
+    asset,
+    from: start,
+    to: end,
+    cadenceSeconds,
+    missing: [],
+    gaps: [],
+    largestGapSeconds: 0,
+    ok: true,
+    thresholdSeconds,
+  };
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return report;
+
+  const entries = options.entries ?? getHistoricalPrices(asset, start, end, Number.MAX_SAFE_INTEGER);
+  const present = new Set<number>();
+  for (const entry of entries) {
+    if (entry.timestamp >= start && entry.timestamp <= end) present.add(entry.timestamp);
+  }
+
+  // Align expected slots to the cadence grid so detector and backfill agree on
+  // exactly which timestamps should exist.
+  const firstSlot = Math.ceil(start / cadenceSeconds) * cadenceSeconds;
+  for (let slot = firstSlot; slot <= end; slot += cadenceSeconds) {
+    if (!present.has(slot)) report.missing.push(slot);
+  }
+
+  let current: HistoryGap | undefined;
+  for (const slot of report.missing) {
+    if (current && current.end === slot) {
+      current.end = slot + cadenceSeconds;
+      current.missingSlots += 1;
+    } else {
+      current = { start: slot, end: slot + cadenceSeconds, missingSlots: 1 };
+      report.gaps.push(current);
+    }
+  }
+
+  for (const gap of report.gaps) {
+    const length = gap.end - gap.start;
+    if (length > report.largestGapSeconds) report.largestGapSeconds = length;
+  }
+
+  report.ok = report.largestGapSeconds <= thresholdSeconds;
+  return report;
+}
