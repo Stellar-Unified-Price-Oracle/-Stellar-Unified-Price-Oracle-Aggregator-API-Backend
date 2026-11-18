@@ -247,6 +247,54 @@ function pruneHistory(history: HistoricalPriceEntry[]): HistoricalPriceEntry[] {
   return maxEntries > 0 && pruned.length > maxEntries ? pruned.slice(-maxEntries) : pruned;
 }
 
+const WRITE_MAX_ATTEMPTS = 3;
+const WRITE_RETRY_BASE_DELAY_MS = 50;
+
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Issue #881-#884 — a transient filesystem error (EBUSY, EAGAIN, EPERM,
+ * ENOSPC that clears, etc.) must not silently drop an append and open a
+ * >900s gap. Retry the write+verify cycle a bounded number of times with
+ * exponential backoff before surfacing a HistoryWriteError.
+ */
+function writeAndVerifyWithRetry(
+  filePath: string,
+  asset: string,
+  entry: HistoricalPriceEntry,
+  history: HistoricalPriceEntry[],
+): void {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= WRITE_MAX_ATTEMPTS; attempt++) {
+    try {
+      writeHistoryFile(filePath, history);
+      verifyHistoryFile(filePath, history);
+      return;
+    } catch (err) {
+      lastError = err;
+      const willRetry = attempt < WRITE_MAX_ATTEMPTS;
+      logger.warn('History append attempt failed', {
+        asset,
+        timestamp: entry.timestamp,
+        attempt,
+        maxAttempts: WRITE_MAX_ATTEMPTS,
+        willRetry,
+        filePath,
+        errorMessage: describeCause(err),
+        severity: willRetry ? 'warn' : 'error',
+        alert: willRetry ? undefined : 'history-file-integrity',
+      });
+      if (willRetry) {
+        sleepSync(WRITE_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
+      }
+    }
+  }
+  throw lastError;
+}
+
 export function appendHistoricalPrice(
   asset: string,
   price: string,
@@ -257,6 +305,7 @@ export function appendHistoricalPrice(
   ensureDataDir();
   const filePath = HISTORY_FILE(asset);
   const entry: HistoricalPriceEntry = { price, decimals, source, timestamp };
+=======
 
   const status = readHistoryFileStatus(filePath);
   let history: HistoricalPriceEntry[];
@@ -296,10 +345,17 @@ export function appendHistoricalPrice(
   const pruned = pruneHistory(history);
 
   try {
-    writeHistoryFile(filePath, pruned);
-    verifyHistoryFile(filePath, pruned);
+    writeAndVerifyWithRetry(filePath, asset, entry, pruned);
   } catch (err) {
     recordIntegrityFailure('write', asset, 'unreadable', filePath);
+    logger.error('History append failed after retries; entry was not persisted', {
+      asset,
+      timestamp: entry.timestamp,
+      filePath,
+      errorMessage: describeCause(err),
+      severity: 'error',
+      alert: 'history-file-integrity',
+    });
     throw err instanceof HistoryWriteError || err instanceof HistoryReadError
       ? err
       : new HistoryWriteError(

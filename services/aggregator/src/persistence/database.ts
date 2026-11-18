@@ -128,16 +128,40 @@ export class DatabaseClient {
   ): Promise<void> {
     if (!this.initialized) throw new Error('Database not initialized');
 
-    try {
-      await this.pool.query(
-        `INSERT INTO price_history (asset, price, decimals, source, timestamp)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [asset, price, decimals, source, timestamp],
-      );
-    } catch (err) {
-      this.logger.error('Failed to insert price history', err);
-      throw err;
+    const maxAttempts = Math.max(1, config.database.insertMaxRetries ?? 3);
+    const baseDelayMs = Math.max(0, config.database.insertRetryBaseDelayMs ?? 100);
+
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.pool.query(
+          `INSERT INTO price_history (asset, price, decimals, source, timestamp)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [asset, price, decimals, source, timestamp],
+        );
+        return;
+      } catch (err) {
+        lastError = err;
+        this.logger.error(
+          `Failed to insert price history (attempt ${attempt}/${maxAttempts}) ` +
+            `asset=${asset} timestamp=${timestamp} source=${source}`,
+          err,
+        );
+        if (attempt < maxAttempts) {
+          const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
+          if (delayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+        }
+      }
     }
+
+    this.logger.error(
+      `Exhausted ${maxAttempts} insert attempts for price history ` +
+        `asset=${asset} timestamp=${timestamp} source=${source}`,
+      lastError,
+    );
+    throw lastError;
   }
 
   async getHistoricalPrices(

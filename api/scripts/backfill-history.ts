@@ -39,6 +39,10 @@ const asset = flag('asset')?.toUpperCase();
 const from = flag('from') ? Number(flag('from')) : undefined;
 const to = flag('to') ? Number(flag('to')) : undefined;
 
+// Gap thresholds, mirroring detect-history-gaps.ts so a backfill can verify itself.
+const EXPECTED_INTERVAL_SEC = Number(process.env.HISTORY_EXPECTED_INTERVAL_SEC ?? 60);
+const GAP_ALERT_SEC = Number(process.env.HISTORY_GAP_ALERT_SEC ?? 900);
+
 const positional = args.filter((a, i) => !a.startsWith('--') && !args[i - 1]?.match(/^--(asset|from|to)$/));
 const candidateDirs = [
   positional[0],
@@ -66,6 +70,55 @@ function loadFile(file: string): Snapshot[] {
   if (!raw.trim()) return [];
   const parsed = JSON.parse(raw);
   return Array.isArray(parsed) ? parsed : [];
+}
+
+interface RemainingGap {
+  asset: string;
+  source: string;
+  previous: number;
+  next: number;
+  gapSec: number;
+}
+
+/**
+ * Re-query price_history for the replayed range and report gaps that still
+ * exceed HISTORY_GAP_ALERT_SEC. Mirrors the detector's interval logic.
+ */
+async function findRemainingGaps(
+  pool: Pool,
+  assets: string[],
+  rangeFrom: number | undefined,
+  rangeTo: number | undefined,
+): Promise<RemainingGap[]> {
+  const gaps: RemainingGap[] = [];
+  for (const a of assets) {
+    const params: unknown[] = [a];
+    let where = 'asset = $1';
+    if (rangeFrom !== undefined) {
+      params.push(rangeFrom);
+      where += ` AND timestamp >= $${params.length}`;
+    }
+    if (rangeTo !== undefined) {
+      params.push(rangeTo);
+      where += ` AND timestamp <= $${params.length}`;
+    }
+    const res = await pool.query(
+      `SELECT source, timestamp FROM price_history WHERE ${where} ORDER BY source, timestamp`,
+      params,
+    );
+    let prev: { source: string; timestamp: number } | undefined;
+    for (const row of res.rows as { source: string; timestamp: number | string }[]) {
+      const ts = Number(row.timestamp);
+      if (prev && prev.source === row.source) {
+        const gapSec = ts - prev.timestamp;
+        if (gapSec > GAP_ALERT_SEC) {
+          gaps.push({ asset: a, source: row.source, previous: prev.timestamp, next: ts, gapSec });
+        }
+      }
+      prev = { source: row.source, timestamp: ts };
+    }
+  }
+  return gaps;
 }
 
 async function main(): Promise<void> {
@@ -115,13 +168,44 @@ async function main(): Promise<void> {
     console.log(`${file}: considered ${rows.length}, inserted ${inserted}`);
   }
 
-  await pool.end();
   console.log(
     dryRun
       ? `\n[dry-run] ${considered} row(s) would be replayed from ${files.length} file(s)`
       : `\nBackfill complete: ${inserted}/${considered} new row(s) from ${files.length} file(s)`,
   );
-  console.log('Re-run `npm run history:gaps` to confirm the gap is closed.');
+
+  if (dryRun) {
+    await pool.end();
+    console.log('Re-run `npm run history:gaps` to confirm the gap is closed.');
+    return;
+  }
+
+  // Verify the replay actually closed the gaps for the targeted range.
+  const assets = all
+    ? files.map((f) => f.replace(/^history-/i, '').replace(/\.json$/i, '').toUpperCase())
+    : [asset!];
+  const remaining = await findRemainingGaps(pool, assets, from, to);
+  await pool.end();
+
+  if (remaining.length === 0) {
+    console.log(
+      `\nVerified: no gaps > ${GAP_ALERT_SEC}s remain for ${assets.join(', ')}` +
+        (from !== undefined || to !== undefined ? ` in range [${from ?? '-'}, ${to ?? '-'}]` : ''),
+    );
+    return;
+  }
+
+  console.error(
+    `\n${remaining.length} gap(s) still exceed HISTORY_GAP_ALERT_SEC=${GAP_ALERT_SEC}s ` +
+      `(expected interval ${EXPECTED_INTERVAL_SEC}s):`,
+  );
+  for (const g of remaining) {
+    console.error(
+      `  ${g.asset} ${g.source}: ${g.previous} -> ${g.next} (${g.gapSec}s)`,
+    );
+  }
+  console.error('Backfill did not close all gaps; extend the range or source data and retry.');
+  process.exit(1);
 }
 
 main().catch((err) => {
