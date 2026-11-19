@@ -149,3 +149,28 @@ jobs:
                 body,
               });
             }
+
+      # A clean scan (exit 0) means any open gap alert has been resolved.
+      - name: Close resolved gap alerts
+        if: success() && steps.detect.outputs.exit_code == '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'data,alert',
+              per_page: 100,
+            });
+            const resolved = open.filter((i) => !i.pull_request && i.title.startsWith('price_history gap detected'));
+            for (const issue of resolved) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+              core.info(`Closed resolved gap alert #${issue.number}`);
+            }
