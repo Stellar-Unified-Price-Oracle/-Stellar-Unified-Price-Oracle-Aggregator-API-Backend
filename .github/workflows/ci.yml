@@ -83,6 +83,10 @@ jobs:
         # Issue #670. Fails on an invalid catalog or a broken signature chain.
         run: node scripts/feed-catalog-release.mjs --check
 
+      - name: Historical archive tiers — retention, retrieval, integrity, cost
+        # Issue #792. See docs/HISTORICAL_ARCHIVE_TIERS.md.
+        run: npm run archive:tiers:check
+
   aggregator:
     name: Aggregator service build
     runs-on: ubuntu-latest
