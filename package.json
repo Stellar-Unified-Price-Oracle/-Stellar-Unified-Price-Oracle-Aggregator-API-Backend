@@ -48,6 +48,8 @@
     "archive:tiers:check": "node scripts/historical-archive-tiers.mjs --check",
     "budget:forecast": "node scripts/budget-forecast.mjs",
     "budget:forecast:check": "node scripts/budget-forecast.mjs --check",
+    "credits:reconcile": "node scripts/service-credits.mjs",
+    "credits:reconcile:check": "node scripts/service-credits.mjs --check",
     "validate:prices": "node scripts/validate-price-correctness.mjs",
     "validate:price-vectors": "node scripts/validate-price-arithmetic-vectors.mjs",
     "report:price-quality": "node scripts/generate-price-quality-report.mjs",

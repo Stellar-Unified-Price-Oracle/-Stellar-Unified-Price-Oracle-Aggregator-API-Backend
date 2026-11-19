@@ -91,6 +91,10 @@ jobs:
         # Issue #793. See docs/BUDGET_FORECAST_UNCERTAINTY.md.
         run: npm run budget:forecast:check
 
+      - name: Service credits — incidents reconciled with measured SLOs
+        # Issue #794. See docs/SERVICE_CREDIT_RECONCILIATION.md.
+        run: npm run credits:reconcile:check
+
   aggregator:
     name: Aggregator service build
     runs-on: ubuntu-latest
