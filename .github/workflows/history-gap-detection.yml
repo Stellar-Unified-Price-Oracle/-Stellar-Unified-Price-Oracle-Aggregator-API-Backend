@@ -55,14 +55,25 @@ jobs:
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Exit codes: 0 = clean, 1 = gap over threshold, 2 = usage/connection error.
+      # Only exit 1 is a data gap; anything else must not file a gap alert.
       - name: Detect gaps
+        id: detect
         if: steps.guard.outputs.configured == 'true'
         env:
           DATABASE_URL: ${{ secrets.HISTORY_DATABASE_URL }}
-        run: npm run history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }}
+        run: |
+          set +e
+          npm run --silent history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }}
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
+            echo "::error::Gap detector errored (exit $code) — no gap alert filed."
+            exit "$code"
+          fi
 
       - name: Alert on threshold breach
-        if: failure()
+        if: steps.detect.outputs.exit_code == '1'
         uses: actions/github-script@v7
         with:
           script: |
@@ -81,3 +92,9 @@ jobs:
                 'then re-run this workflow to confirm the gap is closed.',
               ].join('\n'),
             });
+
+      - name: Fail job on threshold breach
+        if: steps.detect.outputs.exit_code == '1'
+        run: |
+          echo "::error::price_history gap exceeds HISTORY_GAP_ALERT_SEC=${HISTORY_GAP_ALERT_SEC}s"
+          exit 1
