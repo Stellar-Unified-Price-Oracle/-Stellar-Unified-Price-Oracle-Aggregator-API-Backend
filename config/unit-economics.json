@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "Economics and ecosystem sustainability workstream (Platform FinOps + Market Data)",
+  "updatedAt": "2026-11-19",
+  "reviewIntervalDays": 30,
+  "nextReviewDate": "2026-12-19",
+  "period": "2026-10",
+  "currency": "USD",
+  "revenue": {
+    "source": "config/sustainability-model.json (calculateRevenue, baseline demand)",
+    "attribution": "Regions by the consumer's billing home region; feeds by share of requests served."
+  },
+  "regions": [
+    {
+      "id": "us-east-1",
+      "revenueShare": 0.52,
+      "requestsShare": 0.5,
+      "vcpu": 0.625,
+      "directCosts": [
+        { "id": "compute", "usd": 25.2, "errorBandPct": 5 },
+        { "id": "storage", "usd": 1.7, "errorBandPct": 5 },
+        { "id": "egress", "usd": 1.1, "errorBandPct": 18 }
+      ]
+    },
+    {
+      "id": "eu-west-1",
+      "revenueShare": 0.3,
+      "requestsShare": 0.32,
+      "vcpu": 0.55,
+      "directCosts": [
+        { "id": "compute", "usd": 23.32, "errorBandPct": 5 },
+        { "id": "storage", "usd": 1.79, "errorBandPct": 5 },
+        { "id": "egress", "usd": 0.85, "errorBandPct": 18 }
+      ]
+    },
+    {
+      "id": "ap-southeast-1",
+      "revenueShare": 0.18,
+      "requestsShare": 0.18,
+      "vcpu": 0.5,
+      "directCosts": [
+        { "id": "compute", "usd": 23.19, "errorBandPct": 5 },
+        { "id": "storage", "usd": 1.96, "errorBandPct": 5 },
+        { "id": "egress", "usd": 1.4, "errorBandPct": 18 }
+      ]
+    }
+  ],
+  "feeds": {
+    "source": "config/feed-cost-quality.json",
+    "directComponents": [
+      { "field": "providerIngestionMonthlyUsd", "label": "provider ingestion", "errorBandPct": 5 },
+      { "field": "onChainGasMonthlyUsd", "label": "on-chain gas and rent", "errorBandPct": 25 }
+    ],
+    "requestsShare": {
+      "xlm-usd": 0.3,
+      "usdc-usd": 0.22,
+      "btc-usd": 0.2,
+      "eth-usd": 0.18,
+      "usdt-usd": 0.1
+    }
+  },
+  "sharedCosts": [
+    {
+      "id": "control-plane",
+      "label": "Kubernetes control plane",
+      "usd": 73,
+      "errorBandPct": 12,
+      "regionKey": "vcpu",
+      "regionAlternativeKeys": ["requests", "even"],
+      "feedKey": "submissions",
+      "feedAlternativeKeys": ["requests", "even"]
+    },
+    {
+      "id": "observability",
+      "label": "Observability and tooling",
+      "usd": 45,
+      "errorBandPct": 10,
+      "regionKey": "requests",
+      "regionAlternativeKeys": ["vcpu", "even"],
+      "feedKey": "requests",
+      "feedAlternativeKeys": ["submissions", "even"]
+    }
+  ],
+  "crossAllocation": {
+    "feedDirectToRegions": { "key": "requests", "alternativeKeys": ["even"] },
+    "regionDirectToFeeds": { "key": "requests", "alternativeKeys": ["submissions"] }
+  },
+  "marginFloorPct": 80
+}

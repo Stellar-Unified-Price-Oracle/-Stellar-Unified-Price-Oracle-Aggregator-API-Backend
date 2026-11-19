@@ -95,6 +95,10 @@ jobs:
         # Issue #794. See docs/SERVICE_CREDIT_RECONCILIATION.md.
         run: npm run credits:reconcile:check
 
+      - name: Unit economics — regional and feed cost and margin
+        # Issue #795. See docs/REGIONAL_AND_FEED_UNIT_ECONOMICS.md.
+        run: npm run unit-economics:check
+
   aggregator:
     name: Aggregator service build
     runs-on: ubuntu-latest
