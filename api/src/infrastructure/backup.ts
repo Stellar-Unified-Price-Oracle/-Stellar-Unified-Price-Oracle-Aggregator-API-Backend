@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -10,6 +10,27 @@ import client from 'prom-client';
 import { register } from '../observability/metrics';
 
 const execFileAsync = promisify(execFile);
+
+function psqlFromStdin(databaseUrl: string, sql: Buffer): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'psql',
+      ['--no-password', '--quiet', '-v', 'ON_ERROR_STOP=1', databaseUrl],
+      { stdio: ['pipe', 'ignore', 'pipe'] },
+    );
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`psql exited with code ${code}: ${stderr.trim()}`));
+    });
+    child.stdin.on('error', reject);
+    child.stdin.end(sql);
+  });
+}
 
 export const backupTotal = new client.Counter({
   name: 'backup_total',
@@ -164,7 +185,7 @@ export class BackupService {
     }
   }
 
-  async restore(backupFile: string): Promise<RestoreResult> {
+  async restore(backupFile: string, targetUrl: string = this.databaseUrl): Promise<RestoreResult> {
     const t0 = Date.now();
     const resolved = path.isAbsolute(backupFile)
       ? backupFile
@@ -176,11 +197,7 @@ export class BackupService {
 
     try {
       const sql = await this.readAndDecrypt(resolved);
-      await execFileAsync('psql', ['--no-password', this.databaseUrl], {
-        // @ts-expect-error -- execFile accepts Buffer as input but types differ
-        input: sql,
-        maxBuffer: 512 * 1024 * 1024,
-      });
+      await psqlFromStdin(targetUrl, sql);
       const durationMs = Date.now() - t0;
       this.logger.info(`Restore complete from ${path.basename(resolved)} (${durationMs}ms)`);
       return { file: resolved, durationMs, success: true };
