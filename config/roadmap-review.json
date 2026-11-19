@@ -1,0 +1,93 @@
+{
+  "version": "1.0.0",
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "economics-sustainability-team",
+  "facilitator": "Economics and Ecosystem Lead",
+  "participants": ["Platform Operations", "Security on-call", "Developer Relations Lead", "Contract maintainers"],
+  "cadence": {
+    "fullReviewMonths": 12,
+    "checkpointMonths": 3,
+    "period": "2026",
+    "reviewDate": "2026-11-19"
+  },
+  "dimensions": {
+    "adoption": {
+      "name": "Adoption",
+      "weight": 20,
+      "kpis": [
+        { "id": "paying-keys", "direction": "higher", "floor": 20, "target": 60, "unit": "keys", "source": "API key registry (pro + enterprise)" },
+        { "id": "certified-partners", "direction": "higher", "floor": 1, "target": 5, "unit": "partners", "source": "derived: npm run partner-scorecard" },
+        { "id": "monthly-requests-millions", "direction": "higher", "floor": 5, "target": 30, "unit": "M req", "source": "usage analytics" }
+      ]
+    },
+    "reliability": {
+      "name": "Reliability",
+      "weight": 25,
+      "kpis": [
+        { "id": "availability-percent", "direction": "higher", "floor": 99.5, "target": 99.95, "unit": "%", "source": "docs/SLO report (npm run slo:report)" },
+        { "id": "p95-latency-ms", "direction": "lower", "floor": 500, "target": 150, "unit": "ms", "source": "Prometheus api latency histogram" },
+        { "id": "history-gap-hours", "direction": "lower", "floor": 24, "target": 0, "unit": "h", "source": "history-gap-detection workflow" }
+      ]
+    },
+    "security": {
+      "name": "Security",
+      "weight": 25,
+      "kpis": [
+        { "id": "open-high-findings", "direction": "lower", "floor": 5, "target": 0, "unit": "findings", "source": "scripts/check-audit-findings.js" },
+        { "id": "months-since-contract-audit", "direction": "lower", "floor": 18, "target": 6, "unit": "months", "source": "docs/SECURITY_AUDIT.md" },
+        { "id": "secret-rotation-compliance-percent", "direction": "higher", "floor": 80, "target": 100, "unit": "%", "source": "rotate-secrets job evidence" }
+      ]
+    },
+    "economics": {
+      "name": "Economics",
+      "weight": 15,
+      "kpis": [
+        { "id": "gross-margin-percent", "direction": "higher", "floor": 20, "target": 60, "unit": "%", "source": "derived: npm run sustainability:model" },
+        { "id": "runway-months", "direction": "higher", "floor": 6, "target": 12, "unit": "months", "source": "derived: npm run sustainability:model" }
+      ]
+    },
+    "decentralization": {
+      "name": "Decentralization",
+      "weight": 15,
+      "kpis": [
+        { "id": "active-providers", "direction": "higher", "floor": 3, "target": 6, "unit": "providers", "source": "aggregator source config" },
+        { "id": "max-provider-share-percent", "direction": "lower", "floor": 50, "target": 25, "unit": "%", "source": "aggregation weight report" },
+        { "id": "independent-publishers", "direction": "higher", "floor": 1, "target": 3, "unit": "operators", "source": "contract submitter allow-list" },
+        { "id": "active-regions", "direction": "higher", "floor": 1, "target": 3, "unit": "regions", "source": "k8s/overlays prod-<region>" }
+      ]
+    }
+  },
+  "observations": {
+    "label": "Illustrative 2026 inputs. Replace with measured values at the review. Derived KPIs are computed from the committed models.",
+    "values": {
+      "paying-keys": 41,
+      "monthly-requests-millions": 22.8,
+      "availability-percent": 99.9,
+      "p95-latency-ms": 210,
+      "history-gap-hours": 0,
+      "open-high-findings": 1,
+      "months-since-contract-audit": 11,
+      "secret-rotation-compliance-percent": 92,
+      "active-providers": 4,
+      "max-provider-share-percent": 25,
+      "independent-publishers": 1,
+      "active-regions": 2
+    },
+    "previous": {
+      "adoption": null,
+      "reliability": null,
+      "security": null,
+      "economics": null,
+      "decentralization": null
+    }
+  },
+  "candidates": [
+    { "id": "third-party-publishers", "title": "Onboard independent price publishers to the contract allow-list", "dimensions": ["decentralization", "security"], "impact": 5, "confidence": 0.6, "effort": 8 },
+    { "id": "partner-certification-drive", "title": "Run the partner scorecard with current integrators and close Conditional findings", "dimensions": ["adoption"], "impact": 4, "confidence": 0.8, "effort": 3 },
+    { "id": "latency-budget", "title": "Bring p95 latency under 150ms (cache warmers, query plans)", "dimensions": ["reliability"], "impact": 3, "confidence": 0.7, "effort": 5 },
+    { "id": "fifth-provider", "title": "Add a fifth upstream provider to the median", "dimensions": ["decentralization", "reliability"], "impact": 4, "confidence": 0.7, "effort": 5 },
+    { "id": "third-region", "title": "Promote a third production region", "dimensions": ["decentralization", "reliability"], "impact": 3, "confidence": 0.6, "effort": 8 },
+    { "id": "annual-audit", "title": "Schedule the next external contract audit", "dimensions": ["security"], "impact": 4, "confidence": 0.9, "effort": 4 },
+    { "id": "pricing-experiment", "title": "Run the registered Pro overage pricing experiment", "dimensions": ["economics", "adoption"], "impact": 2, "confidence": 0.5, "effort": 2 }
+  ]
+}
