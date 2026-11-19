@@ -31,8 +31,9 @@ Exit `0` = clean, `1` = a gap exceeded `HISTORY_GAP_ALERT_SEC`, `2` = usage erro
 
 `.github/workflows/history-gap-detection.yml` runs the detector hourly against
 `secrets.HISTORY_DATABASE_URL`. A gap over threshold (detector exit `1`) fails
-the job and opens a `data` / `alert` issue with the offending window and the
-backfill command. Any other failure — `npm ci`, a database outage, a usage error
+the job and opens a `data` / `alert` issue listing each offending window (asset,
+from/to, duration) with a ready-to-run backfill command, rendered by
+`scripts/history-gap-alert.mjs` from the detector's `--output` JSON summary. Any other failure — `npm ci`, a database outage, a usage error
 (exit `2`) — fails the job without filing a gap issue: no gap was evaluated, so
 investigate the run log instead of backfilling. Wire
 the same script into Prometheus (via a `textfile` collector emitting

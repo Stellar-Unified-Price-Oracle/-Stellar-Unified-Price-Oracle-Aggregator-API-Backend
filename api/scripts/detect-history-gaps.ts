@@ -6,7 +6,9 @@
  * is longer than the expected cadence. Gaps break VWAP/EMA consumers and audits.
  *
  * Usage:
- *   tsx api/scripts/detect-history-gaps.ts [--asset BTC] [--since 2026-01-01] [--json]
+ *   tsx api/scripts/detect-history-gaps.ts [--asset BTC] [--since 2026-01-01] [--json] [--output gaps.json]
+ *
+ * --output writes the JSON summary to a file (used by the CI alert step).
  *
  * Environment:
  *   DATABASE_URL                     required
@@ -38,6 +40,7 @@ function flag(name: string): string | undefined {
 }
 const asJson = args.includes('--json');
 const assetFilter = flag('asset')?.toUpperCase();
+const outputPath = flag('output');
 const expectedInterval = Number(process.env.HISTORY_EXPECTED_INTERVAL_SEC ?? 60);
 const alertThreshold = Number(process.env.HISTORY_GAP_ALERT_SEC ?? 900);
 const lookbackDays = Number(process.env.HISTORY_LOOKBACK_DAYS ?? 7);
@@ -120,6 +123,10 @@ async function main(): Promise<void> {
     alertingGaps: alerting.length,
     gaps: gaps.sort((a, b) => b.gapSeconds - a.gapSeconds),
   };
+
+  if (outputPath) {
+    fs.writeFileSync(outputPath, JSON.stringify(summary, null, 2));
+  }
 
   if (asJson) {
     console.log(JSON.stringify(summary, null, 2));
