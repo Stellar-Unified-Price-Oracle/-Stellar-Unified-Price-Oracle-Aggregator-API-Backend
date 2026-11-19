@@ -12,6 +12,7 @@ matter to recovery objectives.
 | _add on each drill_ | Backup/restore (`backup-restore-test.yml`) | | | | |
 | _add on each drill_ | Secret rotation (`secret-rotation-drill.yml`) | | n/a | n/a | |
 | 2026-10-25 | Backup/restore (`backup-restore-test.yml`) | failure | not measured | not measured | [run 40165774400](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40165774400) / #861 |
+| 2026-11-01 | Backup/restore (`backup-restore-test.yml`) | failure | not measured | not measured | [run 41282975752](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41282975752) / #896, same root cause as #861, fixed by #983 |
 | 2026-11-19 | Backup/restore, remediation re-run (local, not scheduled) | pass | 0.9 s | 0 rows lost | PR closing #861 |
 | _add on each drill_ | Chaos engineering (`chaos-engineering.yml`) | | | n/a | |
 | 2026-10-25 | Chaos engineering (`chaos-engineering.yml`) | failure | not measured | n/a | [run 40178881197](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40178881197) / #862 |
@@ -22,7 +23,8 @@ matter to recovery objectives.
   because `package-lock.json` was missing the `@stellar-oracle/sdk-bindings`
   workspace. RTO and RPO were therefore never measured.
 - **Repeated root cause:** the same failure hit the 2026-11-01, 2026-11-08 and
-  2026-11-15 runs (rule 3). The PR closing #861 is the tracked action.
+  2026-11-15 runs (rule 3); the 2026-11-01 run is #896. The PR closing #861
+  (#983) is the tracked action.
 - **Latent defects found once install passed:**
   1. `observability/metrics.ts` registered the feed-catalog metrics twice, so
      loading the restore tester threw `A metric with the name
