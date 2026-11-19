@@ -44,6 +44,8 @@
     "cost:reconcile": "node scripts/reconcile-cost-invoices.mjs",
     "sustainability:model": "node scripts/sustainability-model.mjs",
     "sustainability:check": "node scripts/sustainability-model.mjs --check",
+    "economics:stress": "node scripts/incentive-stress-test.mjs",
+    "economics:stress:check": "node scripts/incentive-stress-test.mjs --check",
     "validate:prices": "node scripts/validate-price-correctness.mjs",
     "validate:price-vectors": "node scripts/validate-price-arithmetic-vectors.mjs",
     "report:price-quality": "node scripts/generate-price-quality-report.mjs",
