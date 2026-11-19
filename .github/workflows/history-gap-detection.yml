@@ -56,13 +56,22 @@ jobs:
           fi
 
       - name: Detect gaps
+        id: detect
         if: steps.guard.outputs.configured == 'true'
         env:
           DATABASE_URL: ${{ secrets.HISTORY_DATABASE_URL }}
-        run: npm run history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }}
+        run: |
+          set +e
+          npm run --silent history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }} > gaps.json
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          cat gaps.json
+          exit $code
 
+      # Only exit code 1 means a gap exceeded the threshold. Install failures and
+      # connection errors (exit 2) fail the job without filing a data alert.
       - name: Alert on threshold breach
-        if: failure()
+        if: failure() && steps.detect.outputs.exit_code == '1'
         uses: actions/github-script@v7
         with:
           script: |
