@@ -50,7 +50,9 @@ npm run history:gaps -- --asset BTC --since 2026-11-12
 ```
 
 Inserts are idempotent (`ON CONFLICT (asset, source, timestamp) DO NOTHING`), so it's safe
-to re-run them. Then re-run the workflow (`workflow_dispatch`). Close the issue once the run passes.
+to re-run them. Then re-run the workflow (`workflow_dispatch`) without `since`. A clean
+scan comments on the open gap issue with the run link and closes it. A run with a custom
+`since` window never closes it.
 
 ## Tuning
 
