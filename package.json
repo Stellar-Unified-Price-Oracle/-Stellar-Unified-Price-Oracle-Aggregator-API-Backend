@@ -48,6 +48,8 @@
     "pricing-experiments:check": "node scripts/pricing-experiments.mjs --check",
     "partner-scorecard": "node scripts/partner-scorecard.mjs",
     "partner-scorecard:check": "node scripts/partner-scorecard.mjs --check",
+    "roadmap-review": "node scripts/roadmap-review.mjs",
+    "roadmap-review:check": "node scripts/roadmap-review.mjs --check",
     "validate:prices": "node scripts/validate-price-correctness.mjs",
     "validate:price-vectors": "node scripts/validate-price-arithmetic-vectors.mjs",
     "report:price-quality": "node scripts/generate-price-quality-report.mjs",
