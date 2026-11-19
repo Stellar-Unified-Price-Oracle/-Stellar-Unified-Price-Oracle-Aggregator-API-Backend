@@ -63,6 +63,23 @@ if (from !== undefined && to !== undefined && from >= to) {
   process.exit(2);
 }
 
+const GAP_ALERT_SEC = Number(process.env.HISTORY_GAP_ALERT_SEC ?? 900);
+
+function validateRange(): void {
+  if (from !== undefined && !Number.isFinite(from)) {
+    console.error(`--from must be a finite epoch-seconds value, got "${flag('from')}"`);
+    process.exit(2);
+  }
+  if (to !== undefined && !Number.isFinite(to)) {
+    console.error(`--to must be a finite epoch-seconds value, got "${flag('to')}"`);
+    process.exit(2);
+  }
+  if (from !== undefined && to !== undefined && from > to) {
+    console.error(`--from (${from}) must be <= --to (${to})`);
+    process.exit(2);
+  }
+}
+
 const positional = args.filter((a, i) => !a.startsWith('--') && !args[i - 1]?.match(/^--(asset|from|to)$/));
 const candidateDirs = [
   positional[0],
@@ -92,6 +109,55 @@ function loadFile(file: string): Snapshot[] {
   return Array.isArray(parsed) ? parsed : [];
 }
 
+interface RemainingGap {
+  asset: string;
+  source: string;
+  previous: number;
+  next: number;
+  gapSec: number;
+}
+
+/**
+ * Re-query price_history for the replayed range and report gaps that still
+ * exceed HISTORY_GAP_ALERT_SEC. Mirrors the detector's interval logic.
+ */
+async function findRemainingGaps(
+  pool: Pool,
+  assets: string[],
+  rangeFrom: number | undefined,
+  rangeTo: number | undefined,
+): Promise<RemainingGap[]> {
+  const gaps: RemainingGap[] = [];
+  for (const a of assets) {
+    const params: unknown[] = [a];
+    let where = 'asset = $1';
+    if (rangeFrom !== undefined) {
+      params.push(rangeFrom);
+      where += ` AND timestamp >= $${params.length}`;
+    }
+    if (rangeTo !== undefined) {
+      params.push(rangeTo);
+      where += ` AND timestamp <= $${params.length}`;
+    }
+    const res = await pool.query(
+      `SELECT source, timestamp FROM price_history WHERE ${where} ORDER BY source, timestamp`,
+      params,
+    );
+    let prev: { source: string; timestamp: number } | undefined;
+    for (const row of res.rows as { source: string; timestamp: number | string }[]) {
+      const ts = Number(row.timestamp);
+      if (prev && prev.source === row.source) {
+        const gapSec = ts - prev.timestamp;
+        if (gapSec > GAP_ALERT_SEC) {
+          gaps.push({ asset: a, source: row.source, previous: prev.timestamp, next: ts, gapSec });
+        }
+      }
+      prev = { source: row.source, timestamp: ts };
+    }
+  }
+  return gaps;
+}
+
 async function main(): Promise<void> {
   if (!all && !asset) {
     console.error('Pass --asset <ASSET> (optionally --from/--to epoch seconds) or --all');
@@ -101,6 +167,7 @@ async function main(): Promise<void> {
     console.error('DATABASE_URL is not set');
     process.exit(2);
   }
+  validateRange();
 
   const files = fs
     .readdirSync(dataDir)
@@ -139,34 +206,114 @@ async function main(): Promise<void> {
          ON CONFLICT (asset, source, timestamp) DO NOTHING`,
         [rowAsset, String(r.price), r.decimals, r.source, r.timestamp],
       );
-      const n = res.rowCount ?? 0;
-      inserted += n;
-      fileInserted += n;
-      const tally = perAsset.get(rowAsset) ?? { considered: 0, inserted: 0 };
-      tally.considered += 1;
-      tally.inserted += n;
-      perAsset.set(rowAsset, tally);
+      fileInserted += res.rowCount ?? 0;
     }
+    inserted += fileInserted;
     console.log(`${file}: considered ${rows.length}, inserted ${fileInserted}`);
   }
 
-  await pool.end();
-
-  if (dryRun) {
-    console.log(`\n[dry-run] ${considered} row(s) would be replayed from ${files.length} file(s)`);
-  } else {
-    console.log(`\nBackfill complete: ${inserted}/${considered} new row(s) from ${files.length} file(s)`);
-    if (perAsset.size > 0) {
-      console.log('Per-asset summary (inserted / considered, skipped):');
-      for (const [name, tally] of [...perAsset.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-        const skipped = tally.considered - tally.inserted;
-        console.log(`  ${name}: ${tally.inserted} inserted, ${skipped} skipped (${tally.considered} considered)`);
-      }
-    }
+  if (!dryRun) {
+    await verifyBackfill(pool);
   }
 
-  const gapCmd = asset ? `npm run history:gaps -- --asset ${asset}` : 'npm run history:gaps';
-  console.log(`\nRe-run \`${gapCmd}\` to confirm the gap is closed.`);
+  console.log(
+    dryRun
+      ? `\n[dry-run] ${considered} row(s) would be replayed from ${files.length} file(s)`
+      : `\nBackfill complete: ${inserted}/${considered} new row(s) from ${files.length} file(s)`,
+  );
+
+  if (dryRun) {
+    await pool.end();
+    console.log('Re-run `npm run history:gaps` to confirm the gap is closed.');
+    return;
+  }
+
+  // Verify the replay actually closed the gaps for the targeted range.
+  const assets = all
+    ? files.map((f) => f.replace(/^history-/i, '').replace(/\.json$/i, '').toUpperCase())
+    : [asset!];
+  const remaining = await findRemainingGaps(pool, assets, from, to);
+  await pool.end();
+
+  if (remaining.length === 0) {
+    console.log(
+      `\nVerified: no gaps > ${GAP_ALERT_SEC}s remain for ${assets.join(', ')}` +
+        (from !== undefined || to !== undefined ? ` in range [${from ?? '-'}, ${to ?? '-'}]` : ''),
+    );
+    return;
+  }
+
+  console.error(
+    `\n${remaining.length} gap(s) still exceed HISTORY_GAP_ALERT_SEC=${GAP_ALERT_SEC}s ` +
+      `(expected interval ${EXPECTED_INTERVAL_SEC}s):`,
+  );
+  for (const g of remaining) {
+    console.error(
+      `  ${g.asset} ${g.source}: ${g.previous} -> ${g.next} (${g.gapSec}s)`,
+    );
+  }
+  console.error('Backfill did not close all gaps; extend the range or source data and retry.');
+  process.exit(1);
+}
+
+/**
+ * Re-query price_history for the asset/range and report the rows present plus
+ * any remaining gaps larger than HISTORY_GAP_ALERT_SEC, so the operator can
+ * confirm closure before re-running the detector workflow (#885–#888).
+ */
+async function verifyBackfill(pool: Pool): Promise<void> {
+  const verifyAsset = asset ?? (files.length === 1 ? files[0].replace(/^history-/i, '').replace(/\.json$/i, '').toUpperCase() : undefined);
+  if (!verifyAsset) {
+    console.log('\nVerification skipped: pass --asset to verify a single asset range.');
+    return;
+  }
+
+  const params: unknown[] = [verifyAsset];
+  let where = 'asset = $1';
+  if (from !== undefined) {
+    params.push(from);
+    where += ` AND timestamp >= $${params.length}`;
+  }
+  if (to !== undefined) {
+    params.push(to);
+    where += ` AND timestamp <= $${params.length}`;
+  }
+
+  const countRes = await pool.query(`SELECT COUNT(*)::int AS n FROM price_history WHERE ${where}`, params);
+  const present = (countRes.rows[0]?.n as number) ?? 0;
+  console.log(`\nVerification for ${verifyAsset}${from !== undefined ? ` from ${from}` : ''}${to !== undefined ? ` to ${to}` : ''}: ${present} row(s) present`);
+
+  if (from === undefined || to === undefined) {
+    console.log('Pass both --from and --to to check for remaining gaps.');
+    return;
+  }
+
+  const tsRes = await pool.query(
+    `SELECT DISTINCT timestamp FROM price_history WHERE ${where} ORDER BY timestamp ASC`,
+    params,
+  );
+  const timestamps = tsRes.rows.map((r) => Number(r.timestamp));
+
+  const gaps: Array<{ start: number; end: number; size: number }> = [];
+  let prev = from;
+  for (const ts of timestamps) {
+    if (ts - prev > GAP_ALERT_SEC) {
+      gaps.push({ start: prev, end: ts, size: ts - prev });
+    }
+    prev = ts;
+  }
+  if (to - prev > GAP_ALERT_SEC) {
+    gaps.push({ start: prev, end: to, size: to - prev });
+  }
+
+  if (gaps.length === 0) {
+    console.log(`No gaps larger than ${GAP_ALERT_SEC}s remain in range.`);
+  } else {
+    console.log(`${gaps.length} gap(s) larger than ${GAP_ALERT_SEC}s remain:`);
+    for (const g of gaps) {
+      console.log(`  ${g.start} -> ${g.end} (${g.size}s)`);
+    }
+  }
 }
 
 main().catch((err) => {

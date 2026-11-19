@@ -128,16 +128,34 @@ export class DatabaseClient {
   ): Promise<void> {
     if (!this.initialized) throw new Error('Database not initialized');
 
-    try {
-      await this.pool.query(
-        `INSERT INTO price_history (asset, price, decimals, source, timestamp)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [asset, price, decimals, source, timestamp],
-      );
-    } catch (err) {
-      this.logger.error('Failed to insert price history', err);
-      throw err;
+    const maxAttempts = 3;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        // ON CONFLICT keeps retries and catch-up replays idempotent, matching
+        // the API writer and the history backfill script.
+        await this.pool.query(
+          `INSERT INTO price_history (asset, price, decimals, source, timestamp)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (asset, source, timestamp) DO NOTHING`,
+          [asset, price, decimals, source, timestamp],
+        );
+        return;
+      } catch (err) {
+        lastError = err;
+        this.logger.error(
+          `Failed to insert price history (attempt ${attempt}/${maxAttempts}) ` +
+            `for asset=${asset} source=${source} timestamp=${timestamp}`,
+          err,
+        );
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+        }
+      }
     }
+
+    throw lastError;
   }
 
   async getHistoricalPrices(

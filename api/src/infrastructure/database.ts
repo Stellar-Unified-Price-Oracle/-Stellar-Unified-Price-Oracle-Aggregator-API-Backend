@@ -237,6 +237,52 @@ export class DatabaseClient {
 
   // ── Read helpers (routed to replicas) ──────────────────────────────────────
 
+  /**
+   * Persist a single price_history row. Transient failures are retried with
+   * logging so the API writer does not silently drop rows and contribute to
+   * price_history gaps (issues #881-#884).
+   */
+  async appendHistoricalPrice(entry: PriceHistory): Promise<void> {
+    if (!this.initialized) throw new Error('Database not initialized');
+
+    const sql = `
+      INSERT INTO price_history (asset, price, decimals, source, timestamp)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (asset, source, timestamp) DO NOTHING
+    `;
+    const params = [entry.asset, entry.price, entry.decimals, entry.source, entry.timestamp];
+
+    const maxAttempts = Math.max(1, config.db.retry.maxAttempts);
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.query(sql, params);
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < maxAttempts) {
+          const delayMs = Math.min(
+            config.db.retry.baseDelayMs * Math.pow(2, attempt - 1),
+            config.db.retry.maxDelayMs,
+          );
+          this.logger.warn(
+            `appendHistoricalPrice failed for ${entry.asset}@${entry.timestamp} ` +
+              `(attempt ${attempt}/${maxAttempts}), retrying in ${delayMs}ms`,
+            err,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+
+    this.logger.error(
+      `appendHistoricalPrice permanently failed for ${entry.asset}@${entry.timestamp} ` +
+        `after ${maxAttempts} attempt(s) — history row dropped`,
+      lastErr,
+    );
+    throw lastErr;
+  }
+
   async getHistoricalPrices(
     asset: string,
     from?: number,

@@ -59,9 +59,8 @@ interface Gap {
   missingSnapshots: number;
 }
 
-/** Ready-to-run backfill command for a gap, so alerts are actionable. */
-function backfillCommand(g: Gap): string {
-  return `npm run history:backfill -- --asset ${g.asset} --from ${g.startTs} --to ${g.endTs}`;
+function backfillCommand(gap: Gap): string {
+  return `npm run history:backfill -- --asset ${gap.asset} --from ${gap.startTs} --to ${gap.endTs}`;
 }
 
 async function main(): Promise<void> {
@@ -114,8 +113,8 @@ async function main(): Promise<void> {
     }
   }
 
+  const alerting = gaps.filter((g) => g.gapSeconds > alertThreshold);
   const sortedGaps = gaps.sort((a, b) => b.gapSeconds - a.gapSeconds);
-  const alerting = sortedGaps.filter((g) => g.gapSeconds > alertThreshold);
   const summary = {
     scannedAssets: byAsset.size,
     scannedRows: rows.length,
@@ -124,19 +123,12 @@ async function main(): Promise<void> {
     alertThreshold,
     totalGaps: sortedGaps.length,
     alertingGaps: alerting.length,
-    // Asset/window of each alerting gap, so the scheduled workflow can paste it
-    // straight into the issue body.
-    alerts: alerting.map((g) => ({
-      asset: g.asset,
-      startTs: g.startTs,
-      endTs: g.endTs,
-      from: new Date(g.startTs * 1000).toISOString(),
-      to: new Date(g.endTs * 1000).toISOString(),
-      gapSeconds: g.gapSeconds,
-      missingSnapshots: g.missingSnapshots,
+    gaps: sortedGaps.map((g) => ({
+      ...g,
+      startIso: new Date(g.startTs * 1000).toISOString(),
+      endIso: new Date(g.endTs * 1000).toISOString(),
       backfillCommand: backfillCommand(g),
     })),
-    gaps: sortedGaps,
   };
 
   if (asJson) {
@@ -147,15 +139,16 @@ async function main(): Promise<void> {
     );
     console.log(`Found ${gaps.length} gap(s); ${alerting.length} exceed ${alertThreshold}s`);
     for (const g of summary.gaps.slice(0, 50)) {
-      const from = new Date(g.startTs * 1000).toISOString();
-      const to = new Date(g.endTs * 1000).toISOString();
       const mark = g.gapSeconds > alertThreshold ? 'ALERT' : 'warn ';
-      console.log(`  [${mark}] ${g.asset.padEnd(8)} ${from} -> ${to}  ${g.gapSeconds}s  (~${g.missingSnapshots} missing)`);
+      console.log(`  [${mark}] ${g.asset.padEnd(8)} ${g.startIso} -> ${g.endIso}  ${g.gapSeconds}s  (~${g.missingSnapshots} missing)`);
     }
     if (alerting.length > 0) {
-      console.log('\nBackfill commands for alerting gaps:');
+      console.log(`\n${alerting.length} alerting gap(s) require backfill:`);
       for (const g of alerting) {
-        console.log(`  ${g.asset} ${g.startTs} -> ${g.endTs}: ${backfillCommand(g)}`);
+        console.log(
+          `  ${g.asset} ${new Date(g.startTs * 1000).toISOString()} -> ${new Date(g.endTs * 1000).toISOString()} (${g.gapSeconds}s)`,
+        );
+        console.log(`    ${backfillCommand(g)}`);
       }
     } else {
       console.log('\nNo gaps beyond threshold.');
