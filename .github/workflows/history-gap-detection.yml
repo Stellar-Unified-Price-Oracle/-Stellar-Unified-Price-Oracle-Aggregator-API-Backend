@@ -63,9 +63,11 @@ jobs:
         if: steps.guard.outputs.configured == 'true'
         env:
           DATABASE_URL: ${{ secrets.HISTORY_DATABASE_URL }}
+          # Passed through env, not interpolated, so the input cannot inject shell.
+          SINCE: ${{ github.event.inputs.since }}
         run: |
           set +e
-          npm run --silent history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }} > "$RUNNER_TEMP/gaps.json"
+          npm run --silent history:gaps -- --json ${SINCE:+--since "$SINCE"} > "$RUNNER_TEMP/gaps.json"
           code=$?
           cat "$RUNNER_TEMP/gaps.json"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
