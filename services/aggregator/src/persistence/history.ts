@@ -292,6 +292,25 @@ export function appendHistoricalPrice(
     history = [];
   }
 
+  // Surface missed ticks at the source: if the newest pre-existing entry is
+  // older than the expected cadence, the gap detector would only notice much
+  // later. Log it here so it is visible in aggregator logs immediately.
+  const previous = history.length > 0 ? history[history.length - 1] : undefined;
+  if (previous && entry.timestamp > previous.timestamp) {
+    const elapsedSeconds = entry.timestamp - previous.timestamp;
+    const expectedInterval = config.history.expectedIntervalSeconds;
+    if (expectedInterval > 0 && elapsedSeconds > expectedInterval) {
+      logger.warn('History gap detected while appending price', {
+        asset,
+        lastTimestamp: previous.timestamp,
+        elapsedSeconds,
+        expectedIntervalSeconds: expectedInterval,
+        severity: 'warn',
+        alert: 'history-gap',
+      });
+    }
+  }
+
   history.push(entry);
   const pruned = pruneHistory(history);
 
