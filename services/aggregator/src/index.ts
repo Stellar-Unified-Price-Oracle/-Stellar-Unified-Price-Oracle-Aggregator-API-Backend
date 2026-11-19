@@ -81,6 +81,30 @@ function incAnomaly(asset: string, method: string): void {
   internalCounters.anomalies.set(key, (internalCounters.anomalies.get(key) ?? 0) + 1);
 }
 
+// #889/#890/#893 — last successfully persisted history timestamp per asset, so
+// skipped samples can be reported with the size of the gap they open.
+const lastPersistedHistoryAt = new Map<string, number>();
+
+function logHistoryGapRisk(
+  price: { asset: string; source: string; timestamp: number },
+  reason: 'brownout_shed' | 'db_append_failed' | 'file_append_failed',
+  err?: unknown,
+): void {
+  const lastTs = lastPersistedHistoryAt.get(price.asset);
+  const gapSeconds = lastTs === undefined
+    ? null
+    : Math.max(0, Math.floor((price.timestamp - lastTs) / 1000));
+  logger.warn('[HistoryGap] price_history sample not persisted', {
+    asset: price.asset,
+    source: price.source,
+    reason,
+    sampleTimestamp: price.timestamp,
+    lastPersistedTimestamp: lastTs ?? null,
+    gapSeconds,
+    error: err instanceof Error ? err.message : err === undefined ? undefined : String(err),
+  });
+}
+
 // Issue #736 — cell topology resolved once at module load so that feed
 // partitioning, dependency routing and per-cell health/metrics all agree on
 // the same cell assignment. A duplicate-feed claim is fatal (see main()).
@@ -191,17 +215,26 @@ async function poll(): Promise<AggregatedPrice[]> {
       // Issue #741 — history persistence is non-critical; shed under reduced/minimal.
       if (brownoutPolicy.isFeatureEnabled('history_persistence')) {
         if (db && db.isInitialized()) {
-          await db.appendHistoricalPrice(
-            price.asset,
-            price.price.toString(),
-            price.decimals,
-            price.source,
-            price.timestamp,
-          );
+          try {
+            await db.appendHistoricalPrice(
+              price.asset,
+              price.price.toString(),
+              price.decimals,
+              price.source,
+              price.timestamp,
+            );
+            lastPersistedHistoryAt.set(price.asset, price.timestamp);
+          } catch (err) {
+            // #889/#890/#893 — a failed append is a silent history gap in the
+            // making; surface it before the scheduled gap detector fires.
+            logHistoryGapRisk(price, 'db_append_failed', err);
+          }
         } else {
           try {
             appendHistoricalPrice(price.asset, price.price.toString(), price.decimals, price.source, price.timestamp);
+            lastPersistedHistoryAt.set(price.asset, price.timestamp);
           } catch (err) {
+            logHistoryGapRisk(price, 'file_append_failed', err);
             logger.error('Failed to append historical price for asset', {
               asset: price.asset,
               error: err instanceof Error ? err.message : String(err),
@@ -210,6 +243,7 @@ async function poll(): Promise<AggregatedPrice[]> {
         }
       } else {
         brownoutShedTotal.inc({ feature: 'history_persistence' });
+        logHistoryGapRisk(price, 'brownout_shed');
       }
     }
 

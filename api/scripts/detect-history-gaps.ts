@@ -62,6 +62,10 @@ interface Gap {
   missingSnapshots: number;
 }
 
+function backfillCommand(gap: Gap): string {
+  return `npm run history:backfill -- --asset ${gap.asset} --from ${gap.startTs} --to ${gap.endTs}`;
+}
+
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) {
     console.error('DATABASE_URL is not set');
@@ -113,15 +117,21 @@ async function main(): Promise<void> {
   }
 
   const alerting = gaps.filter((g) => g.gapSeconds > alertThreshold);
+  const sortedGaps = gaps.sort((a, b) => b.gapSeconds - a.gapSeconds);
   const summary = {
     scannedAssets: byAsset.size,
     scannedRows: rows.length,
     windowStart: new Date(sinceMs).toISOString(),
     expectedInterval,
     alertThreshold,
-    totalGaps: gaps.length,
+    totalGaps: sortedGaps.length,
     alertingGaps: alerting.length,
-    gaps: gaps.sort((a, b) => b.gapSeconds - a.gapSeconds),
+    gaps: sortedGaps.map((g) => ({
+      ...g,
+      startIso: new Date(g.startTs * 1000).toISOString(),
+      endIso: new Date(g.endTs * 1000).toISOString(),
+      backfillCommand: backfillCommand(g),
+    })),
   };
 
   if (outputPath) {
@@ -136,16 +146,20 @@ async function main(): Promise<void> {
     );
     console.log(`Found ${gaps.length} gap(s); ${alerting.length} exceed ${alertThreshold}s`);
     for (const g of summary.gaps.slice(0, 50)) {
-      const from = new Date(g.startTs * 1000).toISOString();
-      const to = new Date(g.endTs * 1000).toISOString();
       const mark = g.gapSeconds > alertThreshold ? 'ALERT' : 'warn ';
-      console.log(`  [${mark}] ${g.asset.padEnd(8)} ${from} -> ${to}  ${g.gapSeconds}s  (~${g.missingSnapshots} missing)`);
+      console.log(`  [${mark}] ${g.asset.padEnd(8)} ${g.startIso} -> ${g.endIso}  ${g.gapSeconds}s  (~${g.missingSnapshots} missing)`);
     }
-    console.log(
-      alerting.length > 0
-        ? `\nBackfill with: npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>`
-        : '\nNo gaps beyond threshold.',
-    );
+    if (alerting.length > 0) {
+      console.log(`\n${alerting.length} alerting gap(s) require backfill:`);
+      for (const g of alerting) {
+        console.log(
+          `  ${g.asset} ${new Date(g.startTs * 1000).toISOString()} -> ${new Date(g.endTs * 1000).toISOString()} (${g.gapSeconds}s)`,
+        );
+        console.log(`    ${backfillCommand(g)}`);
+      }
+    } else {
+      console.log('\nNo gaps beyond threshold.');
+    }
   }
 
   process.exit(alerting.length > 0 ? 1 : 0);

@@ -25,21 +25,62 @@ export interface AggregatorStateRecord {
   activeSources: string[];
 }
 
+const SAVE_PRICE_HISTORY_MAX_ATTEMPTS = 3;
+const SAVE_PRICE_HISTORY_BASE_DELAY_MS = 50;
+
+function isTransientDbError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as { code?: string }).code;
+  if (!code) return true;
+  return (
+    code.startsWith('08') || // connection exceptions
+    code === '40001' || // serialization failure
+    code === '40P01' || // deadlock detected
+    code === '53300' || // too many connections
+    code === '57P01' || // admin shutdown
+    code === '57P02' || // crash shutdown
+    code === '57P03' // cannot connect now
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 class PriceRepository {
   async savePriceHistory(asset: string, price: string, decimals: number, source: string, timestamp: number): Promise<void> {
     if (!isDbAvailable()) return;
 
-    try {
-      const db = await getDb();
-      await db.query(
-        `INSERT INTO price_history (asset, price, decimals, source, timestamp)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (asset, source, timestamp) DO UPDATE SET price = $2`,
-        [asset.toUpperCase(), price, decimals, source, timestamp]
-      );
-    } catch (error) {
-      logger.error('Failed to save price history:', error);
+    const normalizedAsset = asset.toUpperCase();
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= SAVE_PRICE_HISTORY_MAX_ATTEMPTS; attempt++) {
+      try {
+        const db = await getDb();
+        await db.query(
+          `INSERT INTO price_history (asset, price, decimals, source, timestamp)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (asset, source, timestamp) DO UPDATE SET price = $2`,
+          [normalizedAsset, price, decimals, source, timestamp]
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < SAVE_PRICE_HISTORY_MAX_ATTEMPTS && isTransientDbError(error)) {
+          await delay(SAVE_PRICE_HISTORY_BASE_DELAY_MS * attempt);
+          continue;
+        }
+        break;
+      }
     }
+
+    logger.error('Failed to save price history after retries', {
+      asset: normalizedAsset,
+      source,
+      timestamp,
+      attempts: SAVE_PRICE_HISTORY_MAX_ATTEMPTS,
+      error: lastError instanceof Error ? lastError.message : String(lastError),
+    });
   }
 
   async getPriceHistory(

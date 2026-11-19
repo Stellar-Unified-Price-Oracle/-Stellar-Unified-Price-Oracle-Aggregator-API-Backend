@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "Economics and ecosystem sustainability workstream (Data Platform team)",
+  "updatedAt": "2026-11-19",
+  "reviewIntervalDays": 90,
+  "nextReviewDate": "2027-02-17",
+  "currency": "USD",
+  "volumeModel": {
+    "assets": 5,
+    "cadenceSeconds": 30,
+    "bytesPerPoint": 220,
+    "description": "One aggregated PriceDataPoint per asset per poll cycle, serialized as NDJSON (median, sources, decimals, observedAt)."
+  },
+  "integrityPolicy": {
+    "allowedChecksumAlgorithms": ["sha256", "sha512"],
+    "maxScrubIntervalDays": 30,
+    "maxRestoreDrillIntervalDays": 90
+  },
+  "tiers": [
+    {
+      "id": "hot",
+      "name": "Hot",
+      "medium": "TimescaleDB hypertable (uncompressed chunks)",
+      "ageFromDays": 0,
+      "ageToDays": 30,
+      "granularity": "raw (every poll cycle)",
+      "compressionRatio": 1,
+      "retrieval": {
+        "mode": "online",
+        "objectiveP95Ms": 500,
+        "measuredP95Ms": 180,
+        "measuredOn": "2026-11-12",
+        "evidence": "k6 load-tests/k6 history scenario against /api/v1/history"
+      },
+      "integrity": {
+        "checksumAlgorithm": "sha256",
+        "verifyOnWrite": true,
+        "scrubIntervalDays": 7,
+        "restoreDrillIntervalDays": 90,
+        "immutable": false,
+        "mechanism": "PostgreSQL data checksums + pgBackRest full/diff backups (repo1-retention-full=7)"
+      },
+      "cost": {
+        "storageUsdPerGibMonth": 0.17,
+        "retrievalUsdPerGib": 0,
+        "maxMonthlyUsd": 5
+      },
+      "envBindings": [
+        { "name": "USE_TIMESCALEDB", "value": "true", "enforcement": "must-match-default" }
+      ],
+      "plans": ["free", "pro", "enterprise"]
+    },
+    {
+      "id": "warm",
+      "name": "Warm",
+      "medium": "TimescaleDB hypertable (native compressed chunks)",
+      "ageFromDays": 30,
+      "ageToDays": 90,
+      "granularity": "raw (every poll cycle)",
+      "compressionRatio": 8,
+      "retrieval": {
+        "mode": "online",
+        "objectiveP95Ms": 3000,
+        "measuredP95Ms": 1150,
+        "measuredOn": "2026-11-12",
+        "evidence": "k6 history scenario with from/to outside the hot window"
+      },
+      "integrity": {
+        "checksumAlgorithm": "sha256",
+        "verifyOnWrite": true,
+        "scrubIntervalDays": 14,
+        "restoreDrillIntervalDays": 90,
+        "immutable": false,
+        "mechanism": "PostgreSQL data checksums + pgBackRest backups; compressed chunks verified on decompression"
+      },
+      "cost": {
+        "storageUsdPerGibMonth": 0.17,
+        "retrievalUsdPerGib": 0,
+        "maxMonthlyUsd": 2
+      },
+      "envBindings": [
+        { "name": "HISTORY_RETENTION_DAYS", "value": "90", "enforcement": "rollout-setting" }
+      ],
+      "plans": ["pro", "enterprise"]
+    },
+    {
+      "id": "cold",
+      "name": "Cold archive",
+      "medium": "gzip NDJSON archives written by persistence/file-archival.ts to object storage",
+      "ageFromDays": 90,
+      "ageToDays": 2555,
+      "granularity": "raw (every poll cycle)",
+      "compressionRatio": 10,
+      "retrieval": {
+        "mode": "restore-request",
+        "objectiveP95Ms": 14400000,
+        "measuredP95Ms": 2700000,
+        "measuredOn": "2026-11-05",
+        "evidence": "Quarterly restore drill: restore 30 days of archives and replay through scripts/dr"
+      },
+      "integrity": {
+        "checksumAlgorithm": "sha256",
+        "verifyOnWrite": true,
+        "scrubIntervalDays": 30,
+        "restoreDrillIntervalDays": 90,
+        "immutable": true,
+        "mechanism": "Per-file SHA-256 manifest written alongside each archive; object lock (WORM) on the bucket"
+      },
+      "cost": {
+        "storageUsdPerGibMonth": 0.023,
+        "retrievalUsdPerGib": 0.09,
+        "maxMonthlyUsd": 1
+      },
+      "envBindings": [
+        { "name": "FILE_ARCHIVE_AFTER_DAYS", "value": "90", "enforcement": "must-match-default" },
+        { "name": "FILE_ARCHIVAL_ENABLED", "value": "true", "enforcement": "rollout-setting" },
+        { "name": "FILE_RETENTION_DAYS", "value": "2555", "enforcement": "rollout-setting" }
+      ],
+      "plans": ["enterprise"]
+    }
+  ],
+  "costBoundary": {
+    "maxTotalMonthlyStorageUsd": 8,
+    "maxRetrievalGibPerMonthPerConsumer": 50
+  }
+}
