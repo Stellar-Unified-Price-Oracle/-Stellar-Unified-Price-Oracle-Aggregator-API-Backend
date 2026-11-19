@@ -50,6 +50,8 @@
     "economics:concentration:check": "node scripts/provider-concentration.mjs --check",
     "economics:collusion": "node scripts/collusion-simulation.mjs",
     "economics:collusion:check": "node scripts/collusion-simulation.mjs --check",
+    "economics:adoption": "node scripts/adoption-metrics.mjs",
+    "economics:adoption:check": "node scripts/adoption-metrics.mjs --check",
     "validate:prices": "node scripts/validate-price-correctness.mjs",
     "validate:price-vectors": "node scripts/validate-price-arithmetic-vectors.mjs",
     "report:price-quality": "node scripts/generate-price-quality-report.mjs",
