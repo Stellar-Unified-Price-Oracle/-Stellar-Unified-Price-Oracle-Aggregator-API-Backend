@@ -87,6 +87,10 @@ jobs:
         # Issue #792. See docs/HISTORICAL_ARCHIVE_TIERS.md.
         run: npm run archive:tiers:check
 
+      - name: Budget forecast — confidence ranges and variance vs actuals
+        # Issue #793. See docs/BUDGET_FORECAST_UNCERTAINTY.md.
+        run: npm run budget:forecast:check
+
   aggregator:
     name: Aggregator service build
     runs-on: ubuntu-latest

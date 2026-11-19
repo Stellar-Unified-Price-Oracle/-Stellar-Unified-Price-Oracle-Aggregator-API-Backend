@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "Economics and ecosystem sustainability workstream (Platform FinOps)",
+  "updatedAt": "2026-11-19",
+  "reviewIntervalDays": 30,
+  "nextReviewDate": "2026-12-19",
+  "currency": "USD",
+  "simulation": {
+    "iterations": 20000,
+    "seed": 793,
+    "confidenceLevels": [0.1, 0.5, 0.9]
+  },
+  "varianceTolerancePct": {
+    "cloud": 15,
+    "network": 20,
+    "total": 15
+  },
+  "drivers": [
+    {
+      "id": "vcpu",
+      "category": "cloud",
+      "label": "Requested vCPU (all services)",
+      "unit": "vCPU",
+      "low": 0.6,
+      "mode": 0.625,
+      "high": 0.8,
+      "unitCost": { "from": "cost-model", "rate": "cpuPerVcpuHour", "perHour": true },
+      "rationale": "Optimized requests in config/cost-model.json; high case is HPA scale-out under surge demand."
+    },
+    {
+      "id": "memory",
+      "category": "cloud",
+      "label": "Requested memory (all services)",
+      "unit": "GiB",
+      "low": 1.4,
+      "mode": 1.4375,
+      "high": 1.8,
+      "unitCost": { "from": "cost-model", "rate": "memoryPerGibHour", "perHour": true },
+      "rationale": "Optimized requests in config/cost-model.json; high case mirrors vCPU scale-out."
+    },
+    {
+      "id": "storage",
+      "category": "cloud",
+      "label": "Persistent volume",
+      "unit": "GiB",
+      "low": 10,
+      "mode": 10,
+      "high": 14,
+      "unitCost": { "from": "cost-model", "rate": "storagePerGibMonth", "perHour": false },
+      "rationale": "TimescaleDB PVC; high case is a volume expansion before the archive tier rollout."
+    },
+    {
+      "id": "egress",
+      "category": "cloud",
+      "label": "Network egress",
+      "unit": "GiB",
+      "low": 9,
+      "mode": 12.5,
+      "high": 22,
+      "unitCost": { "fixedUsd": 0.09 },
+      "rationale": "Inferred from VPC flow logs (errorBandPct 18 in cost-model.json); skewed high for WS fan-out growth."
+    },
+    {
+      "id": "control-plane",
+      "category": "cloud",
+      "label": "Shared control-plane allocation",
+      "unit": "USD",
+      "low": 0.9,
+      "mode": 1.0,
+      "high": 1.2,
+      "unitCost": { "fixedUsd": 1 },
+      "rationale": "Namespace share of the $73/month control plane (errorBandPct 12)."
+    },
+    {
+      "id": "soroban-submissions",
+      "category": "network",
+      "label": "Soroban price submissions",
+      "unit": "submissions",
+      "low": 400000,
+      "mode": 432000,
+      "high": 520000,
+      "unitCost": { "xlm": 0.00015 },
+      "rationale": "5 assets at a 30s cadence; high case adds deviation-triggered submissions."
+    },
+    {
+      "id": "soroban-rent",
+      "category": "network",
+      "label": "Soroban state rent extensions",
+      "unit": "XLM",
+      "low": 450,
+      "mode": 500,
+      "high": 650,
+      "unitCost": { "xlm": 1 },
+      "rationale": "Monthly TTL extension job (scripts/extend-ttl-job.ts); see docs/RENT_BUDGET.md."
+    },
+    {
+      "id": "xlm-usd",
+      "category": "network",
+      "label": "XLM/USD exchange rate",
+      "unit": "USD per XLM",
+      "low": 0.08,
+      "mode": 0.12,
+      "high": 0.2,
+      "role": "fx",
+      "rationale": "Converts every XLM-denominated network cost; the widest single source of uncertainty."
+    }
+  ],
+  "networkActuals": [
+    { "month": "2026-07", "xlmSpent": 561.2, "avgXlmUsd": 0.118, "source": "Horizon fee + rent payments for the oracle account" },
+    { "month": "2026-08", "xlmSpent": 566.9, "avgXlmUsd": 0.124, "source": "Horizon fee + rent payments for the oracle account" },
+    { "month": "2026-09", "xlmSpent": 570.4, "avgXlmUsd": 0.131, "source": "Horizon fee + rent payments for the oracle account" },
+    { "month": "2026-10", "xlmSpent": 612.8, "avgXlmUsd": 0.142, "source": "Horizon fee + rent payments for the oracle account" }
+  ]
+}
