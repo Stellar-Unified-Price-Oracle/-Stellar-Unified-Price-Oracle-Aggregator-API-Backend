@@ -4,7 +4,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Issue #421 — keep the price_history dataset continuous and complete.
-# Runs hourly and on demand; fails (alerts) when a gap exceeds the threshold.
+# Runs hourly and on demand; fails when a gap exceeds the threshold. Only a
+# real threshold breach opens an alert issue; install or connection failures
+# just fail the run.
 
 on:
   schedule:
@@ -55,14 +57,26 @@ jobs:
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Exit codes from detect-history-gaps.ts: 0 = clean, 1 = a gap exceeded
+      # HISTORY_GAP_ALERT_SEC, 2 = usage/connection error. Only 1 is a data
+      # gap; anything else is a pipeline failure and must not be reported as one.
       - name: Detect gaps
+        id: detect
         if: steps.guard.outputs.configured == 'true'
         env:
           DATABASE_URL: ${{ secrets.HISTORY_DATABASE_URL }}
-        run: npm run history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }}
+          SINCE: ${{ github.event.inputs.since }}
+        run: |
+          set +e
+          npx tsx scripts/detect-history-gaps.ts --json ${SINCE:+--since "$SINCE"} > gaps.json
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          cat gaps.json
+          exit "$code"
 
       - name: Alert on threshold breach
-        if: failure()
+        if: failure() && steps.detect.outputs.exit_code == '1'
         uses: actions/github-script@v7
         with:
           script: |
