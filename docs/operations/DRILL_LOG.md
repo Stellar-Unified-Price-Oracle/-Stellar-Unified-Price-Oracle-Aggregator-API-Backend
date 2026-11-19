@@ -15,6 +15,7 @@ matter to recovery objectives.
 | 2026-11-19 | Backup/restore, remediation re-run (local, not scheduled) | pass | 0.9 s | 0 rows lost | PR closing #861 |
 | _add on each drill_ | Chaos engineering (`chaos-engineering.yml`) | | | n/a | |
 | 2026-10-25 | Chaos engineering (`chaos-engineering.yml`) | failure | not measured | n/a | [run 40178881197](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40178881197) / #862 |
+| 2026-11-02 | Load tests (`load-tests.yml`) | failure | not measured | n/a | [run 41413679663](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41413679663) / #903 |
 
 ### 2026-10-25 backup/restore failure (#861)
 
@@ -61,6 +62,21 @@ matter to recovery objectives.
   check and `generate-report.sh` all exit 0 locally. Without a cluster, the
   report now states `Cluster reachable: false` and carries no evidence, so an
   empty report cannot be read as a passing experiment.
+
+### 2026-11-02 load-test failure (#903)
+
+- **What failed:** the scheduled `load-test-full` job stopped at
+  **Install dependencies**: `npm ci` rejected `package-lock.json` because it was
+  missing the `@stellar-oracle/sdk-bindings` workspace. The API server, the
+  health wait, the k6 scenario set and the baseline comparison were all skipped,
+  so no load was generated and no RTO/latency figure was achieved.
+- **Repeated root cause:** this is the same lockfile failure recorded for #861
+  (rule 3). The lockfile now includes the `sdk-bindings` workspace, and
+  `npm ci` passes on `main` (History gap detection run
+  [44532904986](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/44532904986),
+  2026-11-19, Install dependencies: success).
+- **RTO / RPO:** not measured. A load-test drill has no data-loss objective, so
+  RPO is n/a. Record the next scheduled run here.
 
 ## Rules
 
