@@ -31,12 +31,13 @@ connection error.
 ## Alerting
 
 `.github/workflows/history-gap-detection.yml` runs the detector hourly against
-`secrets.HISTORY_DATABASE_URL`. Only detector exit `1` counts as a gap: the job
-then opens a `data` / `alert` issue listing each offending window with a
-ready-to-run backfill command, or comments on the gap issue that is already open
-instead of opening another. Any other failure (dependency install, exit `2`)
-fails the job without opening a gap issue; investigate it from the run log, not
-as missing data. Wire
+`secrets.HISTORY_DATABASE_URL`. A gap over threshold (detector exit `1`) fails
+the job and opens a `data` / `alert` issue with the offending window and the
+backfill command. While such an issue is open, later runs that still see a gap
+comment on it instead of opening a new one; close it once the backfill is
+confirmed. Any other failure — `npm ci`, a missing secret, a database
+connection error (exit `2`) — fails the job without opening a gap issue, so
+check the run log rather than backfilling. Wire
 the same script into Prometheus (via a `textfile` collector emitting
 `price_history_max_gap_seconds`) if you prefer alerting through Alertmanager.
 

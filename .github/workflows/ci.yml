@@ -83,6 +83,22 @@ jobs:
         # Issue #670. Fails on an invalid catalog or a broken signature chain.
         run: node scripts/feed-catalog-release.mjs --check
 
+      - name: Historical archive tiers — retention, retrieval, integrity, cost
+        # Issue #792. See docs/HISTORICAL_ARCHIVE_TIERS.md.
+        run: npm run archive:tiers:check
+
+      - name: Budget forecast — confidence ranges and variance vs actuals
+        # Issue #793. See docs/BUDGET_FORECAST_UNCERTAINTY.md.
+        run: npm run budget:forecast:check
+
+      - name: Service credits — incidents reconciled with measured SLOs
+        # Issue #794. See docs/SERVICE_CREDIT_RECONCILIATION.md.
+        run: npm run credits:reconcile:check
+
+      - name: Unit economics — regional and feed cost and margin
+        # Issue #795. See docs/REGIONAL_AND_FEED_UNIT_ECONOMICS.md.
+        run: npm run unit-economics:check
+
   aggregator:
     name: Aggregator service build
     runs-on: ubuntu-latest
