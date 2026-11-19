@@ -85,12 +85,7 @@ jobs:
               `| ${g.asset} | ${iso(g.startTs)} | ${iso(g.endTs)} | ${g.gapSeconds} | \`npm run history:backfill -- --asset ${g.asset} --from ${g.startTs} --to ${g.endTs}\` |`,
             );
             const more = alerting.length > rows.length ? [`_…and ${alerting.length - rows.length} more; see the run log._`] : [];
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
-              labels: ['data', 'alert'],
-              body: [
+            const body = [
                 `The scheduled history gap detector found ${alerting.length} gap(s) exceeding`,
                 `\`HISTORY_GAP_ALERT_SEC=${process.env.HISTORY_GAP_ALERT_SEC}\` since ${report.windowStart}.`,
                 '',
@@ -102,5 +97,33 @@ jobs:
                 ...more,
                 '',
                 'Run the backfill commands from `api/`, then re-run this workflow to confirm the gap is closed.',
-              ].join('\n'),
+              ].join('\n');
+
+            // Hourly runs would otherwise open a new issue every hour for the
+            // same unresolved gap; update the open alert instead.
+            const titlePrefix = 'price_history gap detected';
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'data,alert',
+              per_page: 100,
+            });
+            const existing = open.find((i) => !i.pull_request && i.title.startsWith(titlePrefix));
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+              core.notice(`Updated open gap alert #${existing.number}`);
+              return;
+            }
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `${titlePrefix} (${new Date().toISOString().slice(0, 10)})`,
+              labels: ['data', 'alert'],
+              body,
             });
