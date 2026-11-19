@@ -10,7 +10,12 @@ export type SsrfReason =
   | 'allowlist'
   | 'forbidden-host'
   | 'private-ip'
-  | 'dns-rebinding';
+  | 'dns-rebinding'
+  | 'dns-empty'
+  | 'deployment-allowlist'
+  | 'policy-missing'
+  | 'policy-malformed'
+  | 'redirect-limit';
 
 export class SsrfError extends Error {
   readonly url: string;
