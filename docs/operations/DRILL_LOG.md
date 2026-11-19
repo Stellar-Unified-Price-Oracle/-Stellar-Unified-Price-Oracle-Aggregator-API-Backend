@@ -15,6 +15,7 @@ matter to recovery objectives.
 | 2026-11-19 | Backup/restore, remediation re-run (local, not scheduled) | pass | 0.9 s | 0 rows lost | PR closing #861 |
 | _add on each drill_ | Chaos engineering (`chaos-engineering.yml`) | | | n/a | |
 | 2026-10-25 | Chaos engineering (`chaos-engineering.yml`) | failure | not measured | n/a | [run 40178881197](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40178881197) / #862 |
+| 2026-11-01 | Chaos engineering (`chaos-engineering.yml`) | failure | not measured | n/a | [run 41300387625](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41300387625) / #898, remediated by #862 |
 
 ### 2026-10-25 backup/restore failure (#861)
 
@@ -61,6 +62,17 @@ matter to recovery objectives.
   check and `generate-report.sh` all exit 0 locally. Without a cluster, the
   report now states `Cluster reachable: false` and carries no evidence, so an
   empty report cannot be read as a passing experiment.
+
+### 2026-11-01 chaos engineering failure (#898)
+
+- **What failed:** the same `scripts/validate-k8s.sh` check as #862 rejected
+  `api-stable` and `aggregator` in all three overlays with "writable mounts
+  missing /tmp, /app/data, /app/logs". `generate-report` was skipped, so no
+  experiment ran and no RTO was measured.
+- **Root cause:** identical to the 2026-10-25 failure (rule 3); the run used
+  commit `7771173`, before the `volumeMounts` were restored. The PR closing
+  #862 is the remediation, and chaos runs on `main` after it have passed
+  manifest validation. Record the next scheduled run here.
 
 ## Rules
 
