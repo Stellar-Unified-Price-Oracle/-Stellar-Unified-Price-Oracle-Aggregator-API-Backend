@@ -37,6 +37,7 @@ backfill applies.
 | :--- | :--- | :--- | :--- | :--- |
 | #901 | [41369390299](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41369390299) (2026-11-02 00:51 UTC) | Install dependencies (`npm ci`: `Missing: @stellar-oracle/sdk-bindings@1.0.0 from lock file`) | No | False positive; no backfill needed. Lockfile resynced and alert gated on detector exit `1`. |
 | #902 | [41408190697](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41408190697) (2026-11-02 07:44 UTC) | Install dependencies (`npm ci`: `Missing: @stellar-oracle/sdk-bindings@1.0.0 from lock file`) | No | False positive; no backfill needed. Lockfile resynced and alert gated on detector exit `1`. |
+| #904 | [41501001060](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41501001060) (2026-11-02 18:29 UTC) | Install dependencies (`npm ci`: `Missing: @stellar-oracle/sdk-bindings@1.0.0 from lock file`) | No | False positive; no backfill needed. Lockfile resynced and alert gated on detector exit `1`. |
 
 ## Diagnose
 
