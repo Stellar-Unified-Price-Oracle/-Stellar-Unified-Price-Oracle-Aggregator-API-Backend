@@ -164,7 +164,14 @@ jobs:
               per_page: 100,
             });
             const resolved = open.filter((i) => !i.pull_request && i.title.startsWith('price_history gap detected'));
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             for (const issue of resolved) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `No gaps over \`HISTORY_GAP_ALERT_SEC=${process.env.HISTORY_GAP_ALERT_SEC}\` in the latest scan. Closing.\n\nRun: ${runUrl}`,
+              });
               await github.rest.issues.update({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
