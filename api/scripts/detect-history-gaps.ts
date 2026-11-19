@@ -81,45 +81,58 @@ async function main(): Promise<void> {
     where += ` AND asset = $${params.length}`;
   }
 
-  const { rows } = await pool.query<{ asset: string; ts: string }>(
-    `SELECT asset, timestamp::bigint AS ts
+  const { rows } = await pool.query<{ asset: string; source: string; ts: string }>(
+    `SELECT asset, source, timestamp::bigint AS ts
        FROM price_history
       WHERE ${where}
-      ORDER BY asset, timestamp`,
+      ORDER BY asset, source, timestamp`,
     params,
   );
   await pool.end();
 
-  const byAsset = new Map<string, number[]>();
+  // Group by (asset, source) to detect gaps only within the same source.
+  const byAssetSource = new Map<string, Map<string, number[]>>();
   for (const row of rows) {
-    const list = byAsset.get(row.asset) ?? [];
-    list.push(Number(row.ts));
-    byAsset.set(row.asset, list);
+    const key = `${row.asset}`;
+    if (!byAssetSource.has(key)) {
+      byAssetSource.set(key, new Map());
+    }
+    const sources = byAssetSource.get(key)!;
+    if (!sources.has(row.source)) {
+      sources.set(row.source, []);
+    }
+    sources.get(row.source)!.push(Number(row.ts));
   }
 
   const gaps: Gap[] = [];
-  for (const [asset, tsList] of byAsset) {
-    for (let i = 1; i < tsList.length; i += 1) {
-      const delta = tsList[i] - tsList[i - 1];
-      if (delta > expectedInterval * 1.5) {
-        gaps.push({
-          asset,
-          startTs: tsList[i - 1],
-          endTs: tsList[i],
-          gapSeconds: delta,
-          missingSnapshots: Math.max(0, Math.round(delta / expectedInterval) - 1),
-        });
-      }
-    }
-    if (tsList.length === 0 && assetFilter) {
+  for (const [asset, sourceMap] of byAssetSource) {
+    // Check if asset has no data at all
+    if (sourceMap.size === 0 && assetFilter) {
       gaps.push({ asset, startTs: 0, endTs: 0, gapSeconds: Infinity, missingSnapshots: -1 });
+      continue;
+    }
+    
+    // For each source, detect gaps
+    for (const [source, tsList] of sourceMap) {
+      for (let i = 1; i < tsList.length; i += 1) {
+        const delta = tsList[i] - tsList[i - 1];
+        if (delta > expectedInterval * 1.5) {
+          gaps.push({
+            asset,
+            startTs: tsList[i - 1],
+            endTs: tsList[i],
+            gapSeconds: delta,
+            missingSnapshots: Math.max(0, Math.round(delta / expectedInterval) - 1),
+          });
+        }
+      }
     }
   }
 
   const alerting = gaps.filter((g) => g.gapSeconds > alertThreshold);
   const sortedGaps = gaps.sort((a, b) => b.gapSeconds - a.gapSeconds);
   const summary = {
-    scannedAssets: byAsset.size,
+    scannedAssets: byAssetSource.size,
     scannedRows: rows.length,
     windowStart: new Date(sinceMs).toISOString(),
     expectedInterval,

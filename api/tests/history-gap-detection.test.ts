@@ -31,37 +31,50 @@ async function detectGaps(
     where += ` AND asset = $${params.length}`;
   }
 
-  const { rows } = await pool.query<{ asset: string; ts: string }>(
-    `SELECT asset, timestamp::bigint AS ts
+  const { rows } = await pool.query<{ asset: string; source: string; ts: string }>(
+    `SELECT asset, source, timestamp::bigint AS ts
        FROM price_history
       WHERE ${where}
-      ORDER BY asset, timestamp`,
+      ORDER BY asset, source, timestamp`,
     params,
   );
 
-  const byAsset = new Map<string, number[]>();
+  // Group by (asset, source) to detect gaps only within the same source.
+  const byAssetSource = new Map<string, Map<string, number[]>>();
   for (const row of rows) {
-    const list = byAsset.get(row.asset) ?? [];
-    list.push(Number(row.ts));
-    byAsset.set(row.asset, list);
+    const key = `${row.asset}`;
+    if (!byAssetSource.has(key)) {
+      byAssetSource.set(key, new Map());
+    }
+    const sources = byAssetSource.get(key)!;
+    if (!sources.has(row.source)) {
+      sources.set(row.source, []);
+    }
+    sources.get(row.source)!.push(Number(row.ts));
   }
 
   const gaps: Gap[] = [];
-  for (const [asset, tsList] of byAsset) {
-    for (let i = 1; i < tsList.length; i += 1) {
-      const delta = tsList[i] - tsList[i - 1];
-      if (delta > expectedInterval * 1.5) {
-        gaps.push({
-          asset,
-          startTs: tsList[i - 1],
-          endTs: tsList[i],
-          gapSeconds: delta,
-          missingSnapshots: Math.max(0, Math.round(delta / expectedInterval) - 1),
-        });
-      }
-    }
-    if (tsList.length === 0 && assetFilter) {
+  for (const [asset, sourceMap] of byAssetSource) {
+    // Check if asset has no data at all
+    if (sourceMap.size === 0 && assetFilter) {
       gaps.push({ asset, startTs: 0, endTs: 0, gapSeconds: Infinity, missingSnapshots: -1 });
+      continue;
+    }
+    
+    // For each source, detect gaps
+    for (const [source, tsList] of sourceMap) {
+      for (let i = 1; i < tsList.length; i += 1) {
+        const delta = tsList[i] - tsList[i - 1];
+        if (delta > expectedInterval * 1.5) {
+          gaps.push({
+            asset,
+            startTs: tsList[i - 1],
+            endTs: tsList[i],
+            gapSeconds: delta,
+            missingSnapshots: Math.max(0, Math.round(delta / expectedInterval) - 1),
+          });
+        }
+      }
     }
   }
 
@@ -79,7 +92,7 @@ describe('History Gap Detection', () => {
     }
     pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-    await pool.query('CREATE TABLE IF NOT EXISTS price_history (asset TEXT, timestamp BIGINT)');
+    await pool.query('CREATE TABLE IF NOT EXISTS price_history (asset TEXT, source TEXT, timestamp BIGINT)');
   });
 
   afterEach(async () => {
@@ -97,8 +110,8 @@ describe('History Gap Detection', () => {
     const now = Math.floor(Date.now() / 1000);
     for (let i = 0; i < 10; i++) {
       await pool.query(
-        'INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)',
-        ['XLM', now - (10 - i) * 60],
+        'INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)',
+        ['XLM', 'chainlink', now - (10 - i) * 60],
       );
     }
 
@@ -115,16 +128,19 @@ describe('History Gap Detection', () => {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       now - 500,
     ]);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       now - 350,
     ]);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       now,
     ]);
 
@@ -142,12 +158,14 @@ describe('History Gap Detection', () => {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       now - 2000,
     ]);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       now,
     ]);
 
@@ -170,12 +188,14 @@ describe('History Gap Detection', () => {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'BTC',
+      'chainlink',
       now - 600,
     ]);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'BTC',
+      'chainlink',
       now,
     ]);
 
@@ -193,21 +213,25 @@ describe('History Gap Detection', () => {
 
     const now = Math.floor(Date.now() / 1000);
 
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       now - 500,
     ]);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       now,
     ]);
 
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'USDC',
+      'redstone',
       now - 2000,
     ]);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'USDC',
+      'redstone',
       now,
     ]);
 
@@ -230,21 +254,25 @@ describe('History Gap Detection', () => {
 
     const now = Math.floor(Date.now() / 1000);
 
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       now - 2000,
     ]);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       now,
     ]);
 
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'USDC',
+      'redstone',
       now - 2000,
     ]);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'USDC',
+      'redstone',
       now,
     ]);
 
@@ -267,8 +295,9 @@ describe('History Gap Detection', () => {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       now,
     ]);
 
@@ -295,21 +324,25 @@ describe('History Gap Detection', () => {
     const oldTs = now - 10 * 86_400_000;
     const recentTs = now - 3 * 86_400_000;
 
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       oldTs,
     ]);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       oldTs + 1800,
     ]);
 
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       recentTs,
     ]);
-    await pool.query('INSERT INTO price_history (asset, timestamp) VALUES ($1, $2)', [
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
       'XLM',
+      'chainlink',
       recentTs + 60,
     ]);
 
@@ -317,5 +350,59 @@ describe('History Gap Detection', () => {
     const { gaps } = await detectGaps(pool, Date.now() - lookbackMs, 60);
 
     expect(gaps.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('should not report false gaps when multiple sources have staggered updates', async () => {
+    if (!pool) {
+      console.warn('DATABASE_URL not set; skipping test');
+      return;
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+
+    // Chainlink updates every 60 seconds
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
+      'BTC',
+      'chainlink',
+      now - 120,
+    ]);
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
+      'BTC',
+      'chainlink',
+      now - 60,
+    ]);
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
+      'BTC',
+      'chainlink',
+      now,
+    ]);
+
+    // Redstone updates every 120 seconds (lagged)
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
+      'BTC',
+      'redstone',
+      now - 240,
+    ]);
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
+      'BTC',
+      'redstone',
+      now - 120,
+    ]);
+    await pool.query('INSERT INTO price_history (asset, source, timestamp) VALUES ($1, $2, $3)', [
+      'BTC',
+      'redstone',
+      now,
+    ]);
+
+    const { gaps, alertingGaps } = await detectGaps(
+      pool,
+      Date.now() - 7 * 86_400_000,
+      60,
+      900,
+    );
+
+    // No gaps should be detected because each source has consistent intervals
+    // within its own cadence
+    expect(alertingGaps).toHaveLength(0);
   });
 });
