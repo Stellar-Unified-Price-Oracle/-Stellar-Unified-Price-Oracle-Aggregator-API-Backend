@@ -27,6 +27,16 @@ the run without filing an issue:
 > `npm ci` was failing on a stale lockfile (`@stellar-oracle/sdk-bindings`
 > missing). That opened 121 "gap detected" issues when no scan had actually run.
 
+## Alert log
+
+Each row records one `price_history gap detected` issue and how it was resolved.
+"False positive" means the detector never ran, so no gap was measured and no
+backfill applies.
+
+| Issue | Run | Failed step | Detector ran? | Outcome |
+| :--- | :--- | :--- | :--- | :--- |
+| #901 | [41369390299](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41369390299) (2026-11-02 00:51 UTC) | Install dependencies (`npm ci`: `Missing: @stellar-oracle/sdk-bindings@1.0.0 from lock file`) | No | False positive; no backfill needed. Lockfile resynced and alert gated on detector exit `1`. |
+
 ## Diagnose
 
 1. Open the run linked in the issue and read the JSON report in the **Detect gaps** step.
