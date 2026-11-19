@@ -103,19 +103,32 @@ jobs:
                     : []),
                 ]
               : ['Gap details unavailable; see the run log.'];
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
-              labels: ['data', 'alert'],
-              body: [
-                `The scheduled history gap detector found ${alerting.length || 'a'} gap(s) exceeding`,
-                `\`HISTORY_GAP_ALERT_SEC=${threshold}\`.`,
-                '',
-                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-                '',
-                ...table,
-                '',
-                'Run each backfill command from `api/`, then re-run this workflow to confirm the gap is closed.',
-              ].join('\n'),
+            const body = [
+              `The scheduled history gap detector found ${alerting.length || 'a'} gap(s) exceeding`,
+              `\`HISTORY_GAP_ALERT_SEC=${threshold}\`.`,
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              ...table,
+              '',
+              'Run each backfill command from `api/`, then re-run this workflow to confirm the gap is closed.',
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', labels: 'data,alert', per_page: 100,
             });
+            const existing = open.find(
+              (i) => !i.pull_request && i.title.startsWith('price_history gap detected'),
+            );
+            if (existing) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: existing.number, body });
+              core.notice(`Gap still open; updated #${existing.number}.`);
+            } else {
+              const { data } = await github.rest.issues.create({
+                owner, repo,
+                title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
+                labels: ['data', 'alert'],
+                body,
+              });
+              core.notice(`Opened #${data.number}.`);
+            }
