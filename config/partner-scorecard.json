@@ -1,0 +1,105 @@
+{
+  "version": "1.0.0",
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "economics-sustainability-team",
+  "reviewers": ["Developer Relations Lead", "Security on-call", "Platform Operations"],
+  "reviewCadence": {
+    "fullReviewMonths": 12,
+    "triggeredReviewOn": ["major SDK upgrade", "new production feed consumed", "security incident", "two consecutive missed SLOs"],
+    "decisionSlaBusinessDays": 10
+  },
+  "ratings": [
+    { "name": "Certified", "minScore": 85, "requiresAllCritical": true },
+    { "name": "Conditional", "minScore": 70, "requiresAllCritical": true },
+    { "name": "Not ready", "minScore": 0, "requiresAllCritical": false }
+  ],
+  "categories": {
+    "integration": {
+      "name": "Integration quality",
+      "weight": 30,
+      "criteria": [
+        { "id": "staleness-guard", "metric": "rejectsStalePrices", "comparison": "true", "weight": 3, "critical": true, "evidence": "Code review or test showing prices older than the feed heartbeat are rejected" },
+        { "id": "decimals-normalized", "metric": "normalizesDecimals", "comparison": "true", "weight": 3, "critical": true, "evidence": "Integration test reading `decimals` per response instead of assuming a scale" },
+        { "id": "readiness-probe", "metric": "readinessProbePassRatePercent", "comparison": "gte", "threshold": 99, "weight": 2, "critical": false, "evidence": "`scripts/integrator-readiness-probe.mjs` pass rate over 30 days" },
+        { "id": "supported-sdk", "metric": "onSupportedSdkVersion", "comparison": "true", "weight": 1, "critical": false, "evidence": "SDK version vs. docs/integrators/sdk-release-compatibility.md" },
+        { "id": "deprecated-usage", "metric": "deprecatedEndpointTrafficPercent", "comparison": "lte", "threshold": 5, "weight": 1, "critical": false, "evidence": "Usage analytics: share of requests to deprecated routes" }
+      ]
+    },
+    "operations": {
+      "name": "Operational readiness",
+      "weight": 25,
+      "criteria": [
+        { "id": "rate-limit-hygiene", "metric": "throttledRequestPercent", "comparison": "lte", "threshold": 2, "weight": 2, "critical": false, "evidence": "Share of requests answered 429 over 30 days" },
+        { "id": "fallback-path", "metric": "hasFallbackOrCircuitBreaker", "comparison": "true", "weight": 3, "critical": true, "evidence": "Documented behaviour when the oracle is unavailable or stale" },
+        { "id": "staleness-alerting", "metric": "alertsOnStaleness", "comparison": "true", "weight": 2, "critical": false, "evidence": "Partner alert rule or dashboard screenshot" },
+        { "id": "incident-response", "metric": "incidentContactResponseMinutes", "comparison": "lte", "threshold": 60, "weight": 2, "critical": false, "evidence": "Measured response time from the last contact drill" }
+      ]
+    },
+    "security": {
+      "name": "Security",
+      "weight": 30,
+      "criteria": [
+        { "id": "key-storage", "metric": "apiKeyInSecretManager", "comparison": "true", "weight": 3, "critical": true, "evidence": "Attestation that keys are not in source, client bundles or logs" },
+        { "id": "key-rotation", "metric": "keyRotationDays", "comparison": "lte", "threshold": 90, "weight": 2, "critical": true, "evidence": "Key age from the API key registry" },
+        { "id": "open-critical-vulns", "metric": "openCriticalVulnerabilities", "comparison": "lte", "threshold": 0, "weight": 3, "critical": true, "evidence": "Partner disclosure plus dependency scan" },
+        { "id": "recent-audit", "metric": "monthsSinceSecurityAudit", "comparison": "lte", "threshold": 18, "weight": 2, "critical": false, "evidence": "Audit report date for contracts consuming the feed" }
+      ]
+    },
+    "support": {
+      "name": "Support",
+      "weight": 15,
+      "criteria": [
+        { "id": "named-contact", "metric": "hasNamedTechnicalContact", "comparison": "true", "weight": 3, "critical": true, "evidence": "Contact registered and reachable within 7 days of the request" },
+        { "id": "deprecation-notices", "metric": "subscribedToDeprecationNotices", "comparison": "true", "weight": 2, "critical": false, "evidence": "Subscription to release notes / deprecation channel" },
+        { "id": "ticket-resolution", "metric": "medianTicketResolutionHours", "comparison": "lte", "threshold": 72, "weight": 1, "critical": false, "evidence": "Median resolution of joint support tickets (docs/integrators/support-expectations.md)" }
+      ]
+    }
+  },
+  "partners": [
+    {
+      "id": "example-lending-protocol",
+      "label": "Worked example with synthetic evidence. Not a real partner.",
+      "reviewedAt": "2026-11-19",
+      "evidence": {
+        "rejectsStalePrices": true,
+        "normalizesDecimals": true,
+        "readinessProbePassRatePercent": 99.6,
+        "onSupportedSdkVersion": true,
+        "deprecatedEndpointTrafficPercent": 1.2,
+        "throttledRequestPercent": 0.4,
+        "hasFallbackOrCircuitBreaker": true,
+        "alertsOnStaleness": true,
+        "incidentContactResponseMinutes": 25,
+        "apiKeyInSecretManager": true,
+        "keyRotationDays": 60,
+        "openCriticalVulnerabilities": 0,
+        "monthsSinceSecurityAudit": 7,
+        "hasNamedTechnicalContact": true,
+        "subscribedToDeprecationNotices": true,
+        "medianTicketResolutionHours": 30
+      }
+    },
+    {
+      "id": "example-wallet-dashboard",
+      "label": "Worked example with synthetic evidence. Not a real partner.",
+      "reviewedAt": "2026-11-19",
+      "evidence": {
+        "rejectsStalePrices": true,
+        "normalizesDecimals": true,
+        "readinessProbePassRatePercent": 97.0,
+        "onSupportedSdkVersion": false,
+        "deprecatedEndpointTrafficPercent": 12,
+        "throttledRequestPercent": 1.5,
+        "hasFallbackOrCircuitBreaker": true,
+        "alertsOnStaleness": false,
+        "incidentContactResponseMinutes": 45,
+        "apiKeyInSecretManager": true,
+        "keyRotationDays": 120,
+        "openCriticalVulnerabilities": 0,
+        "hasNamedTechnicalContact": true,
+        "subscribedToDeprecationNotices": true,
+        "medianTicketResolutionHours": 48
+      }
+    }
+  ]
+}

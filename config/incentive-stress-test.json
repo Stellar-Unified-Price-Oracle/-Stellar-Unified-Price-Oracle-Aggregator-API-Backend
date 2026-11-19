@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "issue": 788,
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "Economics and Ecosystem Lead, with market-data maintainers (services/aggregator/src/price-aggregation) and contract maintainers (contracts/price-oracle/src/contract/submission.rs)",
+  "updatedAt": "2026-11-19",
+  "reviewIntervalDays": 90,
+  "nextReviewDate": "2027-02-17",
+  "seed": 788,
+  "roundsPerRun": 3000,
+  "sources": ["chainlink", "redstone", "band", "reflector"],
+  "market": {
+    "referencePriceUsd": 0.12,
+    "honestNoiseBps": 8,
+    "volatilityBpsPerRound": 5,
+    "maxTolerableErrorBps": 100,
+    "protocolTvlUsd": 2000000,
+    "extractableFractionOfError": 0.5,
+    "referenceVenueDepthUsdPer1Pct": 250000,
+    "venueConsolidationBelowLiquidity": 0.25
+  },
+  "slo": {
+    "availabilityPct": 99.0,
+    "corruptionBudgetPct": 0.1,
+    "honestFlagBudgetPct": 1.0
+  },
+  "policies": {
+    "current": {
+      "description": "Runtime behaviour today: quorum minimum 1, 20% circuit breaker, legacy fallback to suspicious prices",
+      "minSources": 1,
+      "circuitBreakerDeviationPct": 20,
+      "fallbackToSuspicious": true,
+      "distinctIssuersOnly": false
+    },
+    "recommended": {
+      "description": "Catalog quorum enforced at publish time, 2% circuit breaker, no suspicious fallback (freshness-policy path)",
+      "minSources": 3,
+      "circuitBreakerDeviationPct": 2,
+      "fallbackToSuspicious": false,
+      "distinctIssuersOnly": true
+    }
+  },
+  "incentives": {
+    "status": "proposed (docs/SOURCE_INCENTIVES.md); rewards are not yet paid on-chain and slash amounts are chosen by the admin",
+    "stakePerSourceUsd": 5000,
+    "slashFractionPerIncident": 0.5,
+    "detectionProbability": 0.9,
+    "rewardShareOfRevenue": 0.05,
+    "livenessPenaltyUsdPerMissedRound": 0.01,
+    "roundsPerMonth": 86400,
+    "submissionsPerOperatorMonthly": 432000,
+    "gasPerSubmissionXlm": 0.00015,
+    "xlmUsd": 0.12,
+    "operatorFixedMonthlyCostUsd": { "chainlink": 40, "redstone": 60, "band": 80, "reflector": 120 }
+  },
+  "scenarios": {
+    "lowLiquidity": {
+      "liquidityFactors": [1, 0.5, 0.25, 0.1, 0.05, 0.02, 0.01],
+      "contractDeviationGuardBps": 50
+    },
+    "collusion": {
+      "attackShiftsPct": [0.5, 1, 1.9, 3.8, 5, 10, 19, 25, 39, 60],
+      "expandedSourceSet": ["chainlink", "redstone", "band", "reflector", "independent-candidate"]
+    },
+    "correlatedOutage": {
+      "dependencyGroups": {
+        "shared-cloud-region": ["redstone", "band"],
+        "chainlink-network": ["chainlink"],
+        "stellar-rpc": ["reflector"]
+      },
+      "sharedGroup": "shared-cloud-region",
+      "independentOutageProbability": 0.002,
+      "groupOutageProbabilities": [0, 0.001, 0.005, 0.01, 0.02, 0.05, 0.1]
+    },
+    "demandShock": {
+      "demandMultipliers": [0.1, 0.25, 0.5, 1, 2, 5, 10, 20],
+      "gasSurgeAtDemand": [[1, 1], [2, 5], [5, 50], [10, 200], [20, 1000]]
+    }
+  }
+}

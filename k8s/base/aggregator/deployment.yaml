@@ -106,6 +106,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.labels['cell']
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/logs
           startupProbe:
             httpGet:
               path: /health/live

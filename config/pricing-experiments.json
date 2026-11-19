@@ -1,0 +1,67 @@
+{
+  "version": "1.0.0",
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "economics-sustainability-team",
+  "approvers": ["Economics and Ecosystem Lead", "Developer Relations Lead"],
+  "bounds": {
+    "eligibleTiers": ["free", "pro"],
+    "maxPriceIncreasePercent": 15,
+    "maxPriceDecreasePercent": 30,
+    "maxCohortPercentOfTier": 20,
+    "minCohortKeys": 5,
+    "minHoldoutPercent": 5,
+    "minDurationDays": 14,
+    "maxDurationDays": 60,
+    "maxActiveExperimentsPerTier": 1,
+    "allowedLevers": ["baseFeeMonthlyUsd", "overagePer1kRequestsUsd", "includedMonthlyRequests"],
+    "protectedGuarantees": ["rateLimit", "dataFreshness", "sla", "feedCoverage"]
+  },
+  "consent": {
+    "priceIncreaseNoticeDays": 30,
+    "priceDecreaseNoticeDays": 0,
+    "explicitOptInAbovePercent": 10,
+    "optOutAlwaysAvailable": true,
+    "noticeChannels": ["developer-portal", "billing-email", "release-notes"],
+    "billingProtection": "Treatment charges never exceed the control price for the cycle in which a consumer opts out or a rollback fires; any excess is credited."
+  },
+  "cohortIsolation": {
+    "assignment": "sha256(salt + ':' + apiKeyId) bucket in [0, 10000)",
+    "sticky": true,
+    "disjointAcrossActiveExperiments": true,
+    "excludeKeys": ["internal", "partner-sandbox", "enterprise-contract"]
+  },
+  "rollbackTriggers": [
+    { "metric": "churnRateDeltaPp", "comparison": "gt", "threshold": 2.0, "description": "Treatment churn exceeds control by more than 2 percentage points" },
+    { "metric": "downgradeRateDeltaPp", "comparison": "gt", "threshold": 3.0, "description": "Treatment tier downgrades exceed control by more than 3 percentage points" },
+    { "metric": "billingComplaintsPer100Keys", "comparison": "gt", "threshold": 3.0, "description": "Billing support tickets per 100 treatment keys" },
+    { "metric": "revenueDeltaPercent", "comparison": "lt", "threshold": -10.0, "description": "Treatment revenue per key falls more than 10% below control" },
+    { "metric": "optOutRatePercent", "comparison": "gt", "threshold": 20.0, "description": "More than 20% of the treatment cohort opted out" }
+  ],
+  "experiments": [
+    {
+      "id": "exp-2026q4-pro-overage",
+      "hypothesis": "Lowering the Pro overage rate from $0.20 to $0.17 per 1k requests increases metered volume enough to keep revenue per key within 5% of control.",
+      "tier": "pro",
+      "lever": "overagePer1kRequestsUsd",
+      "controlValue": 0.2,
+      "treatmentValue": 0.17,
+      "cohortPercent": 20,
+      "holdoutPercent": 10,
+      "salt": "exp-2026q4-pro-overage",
+      "noticeSentAt": "2026-11-20",
+      "startDate": "2026-11-20",
+      "endDate": "2027-01-15",
+      "optIn": false,
+      "touchesGuarantees": [],
+      "eligibleKeys": 35,
+      "observations": {
+        "label": "Worked example with synthetic observations. Replace with measured values before reporting a real outcome.",
+        "churnRateDeltaPp": 0.4,
+        "downgradeRateDeltaPp": 0.0,
+        "billingComplaintsPer100Keys": 0.0,
+        "revenueDeltaPercent": -3.1,
+        "optOutRatePercent": 0.0
+      }
+    }
+  ]
+}

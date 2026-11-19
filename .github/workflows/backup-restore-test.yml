@@ -49,8 +49,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
+      # Compile only the backup/restore modules the drill exercises. Whole-API
+      # type checking is enforced by ci.yml; an unrelated type error elsewhere
+      # in the API must not mask a backup/restore regression here.
+      - name: Build restore tester
+        run: |
+          npx tsc src/infrastructure/restore-tester.ts src/infrastructure/backup.ts \
+            --outDir dist --rootDir src --module commonjs --target ES2022 \
+            --esModuleInterop --strict --skipLibCheck
 
       - name: Seed test data for restore assertions
         run: |

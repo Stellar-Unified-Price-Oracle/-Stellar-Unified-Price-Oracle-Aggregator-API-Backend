@@ -128,16 +128,34 @@ export class DatabaseClient {
   ): Promise<void> {
     if (!this.initialized) throw new Error('Database not initialized');
 
-    try {
-      await this.pool.query(
-        `INSERT INTO price_history (asset, price, decimals, source, timestamp)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [asset, price, decimals, source, timestamp],
-      );
-    } catch (err) {
-      this.logger.error('Failed to insert price history', err);
-      throw err;
+    const maxAttempts = 3;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        // ON CONFLICT keeps retries and catch-up replays idempotent, matching
+        // the API writer and the history backfill script.
+        await this.pool.query(
+          `INSERT INTO price_history (asset, price, decimals, source, timestamp)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (asset, source, timestamp) DO NOTHING`,
+          [asset, price, decimals, source, timestamp],
+        );
+        return;
+      } catch (err) {
+        lastError = err;
+        this.logger.error(
+          `Failed to insert price history (attempt ${attempt}/${maxAttempts}) ` +
+            `for asset=${asset} source=${source} timestamp=${timestamp}`,
+          err,
+        );
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+        }
+      }
     }
+
+    throw lastError;
   }
 
   async getHistoricalPrices(
@@ -230,6 +248,72 @@ export class DatabaseClient {
       };
     } catch (err) {
       this.logger.error('Failed to fetch latest price', err);
+      throw err;
+    }
+  }
+
+  /**
+   * Detect gaps in `price_history` for an asset within [from, to] by comparing
+   * the expected sampling cadence against the timestamps actually present.
+   *
+   * Uses a `generate_series` over the expected interval so the database does
+   * the work and we never have to load every row into memory. Each returned
+   * window is a contiguous run of missing samples; `start` is the first
+   * expected-but-absent timestamp and `end` is the last one in that run.
+   */
+  async findHistoryGaps(
+    asset: string,
+    from: number,
+    to: number,
+    expectedIntervalSec: number,
+  ): Promise<Array<{ start: number; end: number; missing: number }>> {
+    if (!this.initialized) throw new Error('Database not initialized');
+    if (expectedIntervalSec <= 0) {
+      throw new Error('expectedIntervalSec must be a positive number of seconds');
+    }
+    if (to < from) {
+      throw new Error('`to` must be greater than or equal to `from`');
+    }
+
+    try {
+      const result = await this.pool.query(
+        `WITH expected AS (
+           SELECT generate_series($2::bigint, $3::bigint, $4::bigint) AS ts
+         ),
+         present AS (
+           SELECT DISTINCT timestamp AS ts
+           FROM price_history
+           WHERE asset = $1 AND timestamp >= $2 AND timestamp <= $3
+         ),
+         missing AS (
+           SELECT e.ts
+           FROM expected e
+           LEFT JOIN present p ON p.ts = e.ts
+           WHERE p.ts IS NULL
+         ),
+         grouped AS (
+           SELECT
+             ts,
+             ts - (ROW_NUMBER() OVER (ORDER BY ts) * $4::bigint) AS grp
+           FROM missing
+         )
+         SELECT
+           MIN(ts)::bigint AS start,
+           MAX(ts)::bigint AS "end",
+           COUNT(*)::bigint AS missing
+         FROM grouped
+         GROUP BY grp
+         ORDER BY start ASC`,
+        [asset, from, to, expectedIntervalSec],
+      );
+
+      return result.rows.map((row) => ({
+        start: Number(row.start),
+        end: Number(row.end),
+        missing: Number(row.missing),
+      }));
+    } catch (err) {
+      this.logger.error('Failed to detect price history gaps', err);
       throw err;
     }
   }
