@@ -13,7 +13,8 @@ The detector found two consecutive snapshots for the same asset more than
 (default 7 days). The issue body lists each asset, the exact range, and a
 ready-to-run backfill command.
 
-The workflow opens **one** issue and comments on it on later failing runs. It
+The workflow opens **one** issue, comments on it on later failing runs, and
+closes it on the next clean run (detector exit `0`). It
 only opens or comments when the detector itself exits `1`. These outcomes fail
 the run without filing an issue:
 
@@ -50,7 +51,7 @@ npm run history:gaps -- --asset BTC --since 2026-11-12
 ```
 
 Inserts are idempotent (`ON CONFLICT (asset, source, timestamp) DO NOTHING`), so it's safe
-to re-run them. Then re-run the workflow (`workflow_dispatch`). Close the issue once the run passes.
+to re-run them. Then re-run the workflow (`workflow_dispatch`). The run closes the issue once it passes.
 
 ## Tuning
 
