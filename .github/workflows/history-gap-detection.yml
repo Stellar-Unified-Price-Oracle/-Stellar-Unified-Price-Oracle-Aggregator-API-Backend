@@ -110,13 +110,34 @@ jobs:
               '',
               'then re-run this workflow to confirm the gap is closed.',
             ].join('\n');
-            await github.rest.issues.create({
+            const open = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
-              labels: ['data', 'alert'],
-              body,
+              state: 'open',
+              labels: 'data,alert',
+              per_page: 100,
             });
+            const existing = open
+              .filter((i) => !i.pull_request && i.title.startsWith('price_history gap detected'))
+              .sort((a, b) => a.number - b.number)[0];
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Still failing as of ${new Date().toISOString()}.\n\n${body}`,
+              });
+              core.info(`Updated open alert #${existing.number}`);
+            } else {
+              const { data: created } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
+                labels: ['data', 'alert'],
+                body,
+              });
+              core.info(`Opened alert #${created.number}`);
+            }
 
       - name: Fail on gap or detector error
         if: steps.detect.outputs.exit_code != '' && steps.detect.outputs.exit_code != '0'
