@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { alertingGaps, backfillCommand, renderGapAlertBody } from '../history-gap-alert.mjs';
+import { alertingGaps, backfillCommand, renderGapAlertBody, syncGapAlert } from '../history-gap-alert.mjs';
 
 const summary = {
   scannedAssets: 2,
@@ -55,4 +55,67 @@ test('renderGapAlertBody degrades gracefully without a summary', () => {
   const body = renderGapAlertBody(null, { threshold: 900 });
   assert.match(body, /HISTORY_GAP_ALERT_SEC=900/);
   assert.match(body, /summary was unavailable/);
+});
+
+function fakeGithub(openIssues) {
+  const calls = [];
+  const rest = {
+    issues: {
+      listForRepo: Symbol('listForRepo'),
+      create: async (args) => { calls.push(['create', args]); return { data: { number: 999 } }; },
+      createComment: async (args) => { calls.push(['comment', args]); },
+      update: async (args) => { calls.push(['update', args]); },
+    },
+  };
+  return {
+    calls,
+    rest,
+    paginate: async (fn, args) => {
+      assert.equal(fn, rest.issues.listForRepo);
+      assert.equal(args.state, 'open');
+      assert.equal(args.labels, 'data,alert');
+      return openIssues;
+    },
+  };
+}
+
+const repoRef = { owner: 'o', repo: 'r' };
+
+test('syncGapAlert opens a new issue when none is open', async () => {
+  const gh = fakeGithub([]);
+  const res = await syncGapAlert(gh, { ...repoRef, status: 'gap', body: 'B', date: new Date('2026-11-19T00:00:00Z') });
+  assert.deepEqual(res, { action: 'created', issue: 999 });
+  assert.equal(gh.calls[0][1].title, 'price_history gap detected (2026-11-19)');
+  assert.deepEqual(gh.calls[0][1].labels, ['data', 'alert']);
+});
+
+test('syncGapAlert comments on the newest open alert instead of opening another', async () => {
+  const gh = fakeGithub([
+    { number: 10, title: 'price_history gap detected (2026-11-17)' },
+    { number: 12, title: 'price_history gap detected (2026-11-18)' },
+    { number: 11, title: 'unrelated alert' },
+    { number: 13, title: 'price_history gap detected (pr)', pull_request: {} },
+  ]);
+  const res = await syncGapAlert(gh, { ...repoRef, status: 'gap', body: 'B' });
+  assert.deepEqual(res, { action: 'commented', issue: 12 });
+  assert.deepEqual(gh.calls.map((c) => c[0]), ['comment']);
+});
+
+test('syncGapAlert closes every open gap alert once the history is clean', async () => {
+  const gh = fakeGithub([
+    { number: 10, title: 'price_history gap detected (2026-11-17)' },
+    { number: 12, title: 'price_history gap detected (2026-11-18)' },
+    { number: 11, title: 'unrelated alert' },
+  ]);
+  const res = await syncGapAlert(gh, { ...repoRef, status: 'clean', runUrl: 'https://example.test/run/2' });
+  assert.deepEqual(res, { action: 'closed', issues: [12, 10] });
+  const updates = gh.calls.filter((c) => c[0] === 'update').map((c) => [c[1].issue_number, c[1].state]);
+  assert.deepEqual(updates, [[12, 'closed'], [10, 'closed']]);
+  assert.match(gh.calls[0][1].body, /example\.test\/run\/2/);
+});
+
+test('syncGapAlert is a no-op when clean and nothing is open', async () => {
+  const gh = fakeGithub([]);
+  assert.deepEqual(await syncGapAlert(gh, { ...repoRef, status: 'clean' }), { action: 'closed', issues: [] });
+  assert.equal(gh.calls.length, 0);
 });

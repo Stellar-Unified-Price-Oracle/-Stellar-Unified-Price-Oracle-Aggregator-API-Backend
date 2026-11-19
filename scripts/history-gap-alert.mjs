@@ -62,3 +62,54 @@ export function renderGapAlertBody(summary, { runUrl, threshold } = {}) {
   lines.push('', 'Then re-run this workflow to confirm the gap is closed.');
   return lines.join('\n');
 }
+
+export const ALERT_TITLE_PREFIX = 'price_history gap detected';
+export const ALERT_LABELS = ['data', 'alert'];
+
+export async function findOpenGapAlerts(github, { owner, repo }) {
+  const issues = await github.paginate(github.rest.issues.listForRepo, {
+    owner,
+    repo,
+    state: 'open',
+    labels: ALERT_LABELS.join(','),
+    per_page: 100,
+  });
+  return issues
+    .filter((i) => !i.pull_request && i.title.startsWith(ALERT_TITLE_PREFIX))
+    .sort((a, b) => b.number - a.number);
+}
+
+export async function syncGapAlert(github, { owner, repo, status, body, runUrl, date = new Date() }) {
+  const open = await findOpenGapAlerts(github, { owner, repo });
+
+  if (status === 'gap') {
+    const [current] = open;
+    if (current) {
+      await github.rest.issues.createComment({ owner, repo, issue_number: current.number, body });
+      return { action: 'commented', issue: current.number };
+    }
+    const { data } = await github.rest.issues.create({
+      owner,
+      repo,
+      title: `${ALERT_TITLE_PREFIX} (${date.toISOString().slice(0, 10)})`,
+      labels: ALERT_LABELS,
+      body,
+    });
+    return { action: 'created', issue: data.number };
+  }
+
+  if (status === 'clean') {
+    for (const issue of open) {
+      await github.rest.issues.createComment({
+        owner,
+        repo,
+        issue_number: issue.number,
+        body: `No gap exceeds the alert threshold any more${runUrl ? ` (${runUrl})` : ''}. Closing.`,
+      });
+      await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed', state_reason: 'completed' });
+    }
+    return { action: 'closed', issues: open.map((i) => i.number) };
+  }
+
+  throw new Error(`Unknown gap alert status: ${status}`);
+}
