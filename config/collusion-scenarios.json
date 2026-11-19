@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "issue": 790,
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "Economics and Ecosystem Lead, with market-data maintainers (services/aggregator/src/price-aggregation, api/src/feeds/feed-policy.ts) and contract maintainers (contracts/price-oracle/src/contract/submission.rs)",
+  "updatedAt": "2026-11-19",
+  "reviewIntervalDays": 90,
+  "nextReviewDate": "2027-02-17",
+  "parametersFrom": "config/incentive-stress-test.json",
+  "seed": 790,
+  "roundsPerRun": 3000,
+  "warmupRounds": 100,
+  "ruleSets": [
+    { "id": "current", "label": "Current runtime", "policy": "current", "guardBps": null, "sourceSet": "production" },
+    { "id": "current-guarded", "label": "Current + 50 bps contract guard", "policy": "current", "guardBps": 50, "sourceSet": "production" },
+    { "id": "recommended", "label": "Recommended rules", "policy": "recommended", "guardBps": null, "sourceSet": "production" },
+    { "id": "recommended-5", "label": "Recommended rules + 5th source", "policy": "recommended", "guardBps": null, "sourceSet": "expanded" }
+  ],
+  "attacks": [
+    {
+      "id": "single-outlier",
+      "description": "One staked source reports a 50% wrong price",
+      "colluders": 1,
+      "shift": { "pct": 50 }
+    },
+    {
+      "id": "breaker-evasion-pair",
+      "description": "Two staked sources shift by 1.9x the circuit breaker so each stays inside it relative to the moved median",
+      "colluders": 2,
+      "shift": { "breakerMultiple": 1.9 }
+    },
+    {
+      "id": "majority-cartel",
+      "description": "Three staked sources report the same 10% shift",
+      "colluders": 3,
+      "shift": { "pct": 10 }
+    },
+    {
+      "id": "dos-plus-one",
+      "description": "One staked source lies by 15% while two honest sources are knocked offline (DoS or withheld)",
+      "colluders": 1,
+      "dosHonest": 2,
+      "shift": { "pct": 15 }
+    },
+    {
+      "id": "sybil-flood",
+      "description": "One operator registers four extra source identities that all report a 10% shift",
+      "sybils": 4,
+      "shift": { "pct": 10 }
+    },
+    {
+      "id": "slow-drift",
+      "description": "Two staked sources drift 2 bps per round up to 1.9x the breaker, staying under any per-round guard",
+      "colluders": 2,
+      "shift": { "driftBpsPerRound": 2, "capBreakerMultiple": 1.9 }
+    }
+  ],
+  "expectedVerdicts": {
+    "single-outlier": { "current": "resisted", "current-guarded": "resisted", "recommended": "resisted", "recommended-5": "resisted" },
+    "breaker-evasion-pair": { "current": "vulnerable", "current-guarded": "halted", "recommended": "vulnerable", "recommended-5": "resisted" },
+    "majority-cartel": { "current": "vulnerable", "current-guarded": "halted", "recommended": "vulnerable", "recommended-5": "vulnerable" },
+    "dos-plus-one": { "current": "vulnerable", "current-guarded": "halted", "recommended": "halted", "recommended-5": "halted" },
+    "sybil-flood": { "current": "vulnerable", "current-guarded": "vulnerable", "recommended": "resisted", "recommended-5": "resisted" },
+    "slow-drift": { "current": "vulnerable", "current-guarded": "vulnerable", "recommended": "vulnerable", "recommended-5": "resisted" }
+  }
+}

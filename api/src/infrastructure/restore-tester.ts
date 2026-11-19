@@ -235,7 +235,7 @@ export class RestoreTester {
 
   private async restoreToTempDb(backupFile: string, dbName: string): Promise<void> {
     const tempUrl = this.databaseUrl.replace(/\/[^/]+$/, `/${dbName}`);
-    const result = await this.backupService.restore(backupFile);
+    const result = await this.backupService.restore(backupFile, tempUrl);
     if (!result.success) {
       throw new Error(`Restore failed: ${result.error}`);
     }

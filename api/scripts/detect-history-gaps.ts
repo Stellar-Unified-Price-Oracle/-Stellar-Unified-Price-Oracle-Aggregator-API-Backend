@@ -6,7 +6,9 @@
  * is longer than the expected cadence. Gaps break VWAP/EMA consumers and audits.
  *
  * Usage:
- *   tsx api/scripts/detect-history-gaps.ts [--asset BTC] [--since 2026-01-01] [--json]
+ *   tsx api/scripts/detect-history-gaps.ts [--asset BTC] [--since 2026-01-01] [--json] [--output gaps.json]
+ *
+ * --output writes the JSON summary to a file (used by the CI alert step).
  *
  * Environment:
  *   DATABASE_URL                     required
@@ -38,6 +40,7 @@ function flag(name: string): string | undefined {
 }
 const asJson = args.includes('--json');
 const assetFilter = flag('asset')?.toUpperCase();
+const outputPath = flag('output');
 const expectedInterval = Number(process.env.HISTORY_EXPECTED_INTERVAL_SEC ?? 60);
 const alertThreshold = Number(process.env.HISTORY_GAP_ALERT_SEC ?? 900);
 const lookbackDays = Number(process.env.HISTORY_LOOKBACK_DAYS ?? 7);
@@ -57,6 +60,10 @@ interface Gap {
   endTs: number;
   gapSeconds: number;
   missingSnapshots: number;
+}
+
+function backfillCommand(gap: Gap): string {
+  return `npm run history:backfill -- --asset ${gap.asset} --from ${gap.startTs} --to ${gap.endTs}`;
 }
 
 async function main(): Promise<void> {
@@ -110,16 +117,26 @@ async function main(): Promise<void> {
   }
 
   const alerting = gaps.filter((g) => g.gapSeconds > alertThreshold);
+  const sortedGaps = gaps.sort((a, b) => b.gapSeconds - a.gapSeconds);
   const summary = {
     scannedAssets: byAsset.size,
     scannedRows: rows.length,
     windowStart: new Date(sinceMs).toISOString(),
     expectedInterval,
     alertThreshold,
-    totalGaps: gaps.length,
+    totalGaps: sortedGaps.length,
     alertingGaps: alerting.length,
-    gaps: gaps.sort((a, b) => b.gapSeconds - a.gapSeconds),
+    gaps: sortedGaps.map((g) => ({
+      ...g,
+      startIso: new Date(g.startTs * 1000).toISOString(),
+      endIso: new Date(g.endTs * 1000).toISOString(),
+      backfillCommand: backfillCommand(g),
+    })),
   };
+
+  if (outputPath) {
+    fs.writeFileSync(outputPath, JSON.stringify(summary, null, 2));
+  }
 
   if (asJson) {
     console.log(JSON.stringify(summary, null, 2));
@@ -129,16 +146,20 @@ async function main(): Promise<void> {
     );
     console.log(`Found ${gaps.length} gap(s); ${alerting.length} exceed ${alertThreshold}s`);
     for (const g of summary.gaps.slice(0, 50)) {
-      const from = new Date(g.startTs * 1000).toISOString();
-      const to = new Date(g.endTs * 1000).toISOString();
       const mark = g.gapSeconds > alertThreshold ? 'ALERT' : 'warn ';
-      console.log(`  [${mark}] ${g.asset.padEnd(8)} ${from} -> ${to}  ${g.gapSeconds}s  (~${g.missingSnapshots} missing)`);
+      console.log(`  [${mark}] ${g.asset.padEnd(8)} ${g.startIso} -> ${g.endIso}  ${g.gapSeconds}s  (~${g.missingSnapshots} missing)`);
     }
-    console.log(
-      alerting.length > 0
-        ? `\nBackfill with: npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>`
-        : '\nNo gaps beyond threshold.',
-    );
+    if (alerting.length > 0) {
+      console.log(`\n${alerting.length} alerting gap(s) require backfill:`);
+      for (const g of alerting) {
+        console.log(
+          `  ${g.asset} ${new Date(g.startTs * 1000).toISOString()} -> ${new Date(g.endTs * 1000).toISOString()} (${g.gapSeconds}s)`,
+        );
+        console.log(`    ${backfillCommand(g)}`);
+      }
+    } else {
+      console.log('\nNo gaps beyond threshold.');
+    }
   }
 
   process.exit(alerting.length > 0 ? 1 : 0);

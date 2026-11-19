@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "issue": 789,
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "Economics and Ecosystem Lead, with market-data maintainers (config/feed-catalog.json and services/aggregator/src/oracle-sources)",
+  "updatedAt": "2026-11-19",
+  "reviewIntervalDays": 90,
+  "nextReviewDate": "2027-02-17",
+  "sources": {
+    "catalog": "config/feed-catalog.json",
+    "providerCost": "config/feed-cost-quality.json (sum of providerIngestionMonthlyUsd)",
+    "revenue": "config/sustainability-model.json (calculateRevenue at 1x demand)"
+  },
+  "policy": {
+    "quorumMinSources": 3,
+    "hhiModerate": 1500,
+    "hhiHigh": 2500,
+    "targetFeedHhi": 2000,
+    "maxProviderSpendSharePct": 35,
+    "maxHostingGroupWeightSharePct": 50,
+    "slaCreditMultiplier": 0.5,
+    "amortizationMonths": 36
+  },
+  "providers": {
+    "chainlink": { "monthlyCostUsd": 52.0, "hostingDependency": "chainlink-network", "expectedOutageHoursPerYear": 4 },
+    "redstone": { "monthlyCostUsd": 40.0, "hostingDependency": "shared-cloud-region", "expectedOutageHoursPerYear": 8 },
+    "band": { "monthlyCostUsd": 36.0, "hostingDependency": "shared-cloud-region", "expectedOutageHoursPerYear": 8 },
+    "reflector": { "monthlyCostUsd": 30.0, "hostingDependency": "stellar-rpc", "expectedOutageHoursPerYear": 6 }
+  },
+  "hostingDependencyOutageHoursPerYear": {
+    "chainlink-network": 2,
+    "shared-cloud-region": 12,
+    "stellar-rpc": 4
+  },
+  "alternatives": [
+    {
+      "id": "commercial-feed-b",
+      "kind": "second commercial data feed on independent infrastructure",
+      "status": "estimate pending vendor quote",
+      "monthlyCostUsd": 45.0,
+      "integrationOneOffUsd": 6000,
+      "opsHoursMonthly": 2,
+      "opsHourlyUsd": 90,
+      "hostingDependency": "independent-b",
+      "weightBps": 2000,
+      "expectedOutageHoursPerYear": 6
+    },
+    {
+      "id": "stellar-dex-twap",
+      "kind": "self-operated TWAP from Stellar DEX / AMM liquidity",
+      "status": "engineering estimate",
+      "monthlyCostUsd": 15.0,
+      "integrationOneOffUsd": 12000,
+      "opsHoursMonthly": 6,
+      "opsHourlyUsd": 90,
+      "hostingDependency": "stellar-rpc",
+      "weightBps": 1500,
+      "expectedOutageHoursPerYear": 10
+    },
+    {
+      "id": "exchange-direct-c",
+      "kind": "direct exchange market-data API, normalized in-house",
+      "status": "estimate pending vendor quote",
+      "monthlyCostUsd": 25.0,
+      "integrationOneOffUsd": 8000,
+      "opsHoursMonthly": 4,
+      "opsHourlyUsd": 90,
+      "hostingDependency": "independent-c",
+      "weightBps": 1500,
+      "expectedOutageHoursPerYear": 12
+    }
+  ]
+}

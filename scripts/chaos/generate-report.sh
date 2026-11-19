@@ -51,7 +51,8 @@ collect_dependency_evidence() {
       if (( rto > SLO_RTO_SECONDS )); then result="false"; fi
       if (( recovery > SLO_RECOVERY_SECONDS )); then result="false"; fi
       # Compare error-rate delta as integer percent to avoid float math.
-      if (( ${err_delta%.*} > SLO_ERROR_RATE_DELTA_PERCENT )); then result="false"; fi
+      local err_delta_int="${err_delta%.*}"
+      if (( ${err_delta_int:-0} > SLO_ERROR_RATE_DELTA_PERCENT )); then result="false"; fi
       printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
         "${dep}" "${name}" "${duration}" "${blast}" "${rto}" "${err_delta}" "${recovery}" "${result}"
     done < <(kubectl -n "${NS}" get "${kind}" \
@@ -68,6 +69,11 @@ collect_dependency_evidence() {
   fi
 }
 
+CLUSTER_REACHABLE=true
+if ! kubectl version --request-timeout=5s >/dev/null 2>&1; then
+  CLUSTER_REACHABLE=false
+fi
+
 experiments=(
   podchaos
   networkchaos
@@ -83,11 +89,17 @@ experiments=(
   echo "| Generated (UTC) | $(date -u +%Y-%m-%dT%H:%M:%SZ) |"
   echo "| Namespace | ${NS} |"
   echo "| Environment | ${ENV} |"
+  echo "| Cluster reachable | ${CLUSTER_REACHABLE} |"
   echo
+  if [[ "${CLUSTER_REACHABLE}" != "true" ]]; then
+    echo "> **No live evidence:** the Kubernetes API was not reachable from this runner, so"
+    echo "> every section below is empty. This report does not show that any experiment ran."
+    echo
+  fi
   echo "## Summary"
   echo
   for kind in "${experiments[@]}"; do
-    count="$(kubectl -n "${NS}" get "${kind}" --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+    count="$( { kubectl -n "${NS}" get "${kind}" --no-headers 2>/dev/null || true; } | wc -l | tr -d ' ')"
     echo "- **${kind}**: ${count} resource(s)"
   done
   echo
@@ -159,6 +171,7 @@ experiments=(
   echo "  \"generatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
   echo "  \"namespace\": \"${NS}\","
   echo "  \"environment\": \"${ENV}\","
+  echo "  \"clusterReachable\": ${CLUSTER_REACHABLE},"
   echo "  \"limits\": {\"maxDurationSeconds\": ${MAX_DURATION_SECONDS}, \"maxBlastRadiusPercent\": ${MAX_BLAST_RADIUS_PERCENT}},"
   echo "  \"slos\": {\"rtoSeconds\": ${SLO_RTO_SECONDS}, \"errorRateDeltaPercent\": ${SLO_ERROR_RATE_DELTA_PERCENT}, \"recoverySeconds\": ${SLO_RECOVERY_SECONDS}},"
   echo "  \"dependencies\": ["
