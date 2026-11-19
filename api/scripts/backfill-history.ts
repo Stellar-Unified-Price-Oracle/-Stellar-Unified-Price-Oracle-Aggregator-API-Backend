@@ -64,6 +64,7 @@ if (from !== undefined && to !== undefined && from >= to) {
 }
 
 const GAP_ALERT_SEC = Number(process.env.HISTORY_GAP_ALERT_SEC ?? 900);
+const EXPECTED_INTERVAL_SEC = Number(process.env.HISTORY_EXPECTED_INTERVAL_SEC ?? 60);
 
 function validateRange(): void {
   if (from !== undefined && !Number.isFinite(from)) {
@@ -213,7 +214,7 @@ async function main(): Promise<void> {
   }
 
   if (!dryRun) {
-    await verifyBackfill(pool);
+    await verifyBackfill(pool, files);
   }
 
   console.log(
@@ -261,7 +262,7 @@ async function main(): Promise<void> {
  * any remaining gaps larger than HISTORY_GAP_ALERT_SEC, so the operator can
  * confirm closure before re-running the detector workflow (#885–#888).
  */
-async function verifyBackfill(pool: Pool): Promise<void> {
+async function verifyBackfill(pool: Pool, files: string[]): Promise<void> {
   const verifyAsset = asset ?? (files.length === 1 ? files[0].replace(/^history-/i, '').replace(/\.json$/i, '').toUpperCase() : undefined);
   if (!verifyAsset) {
     console.log('\nVerification skipped: pass --asset to verify a single asset range.');

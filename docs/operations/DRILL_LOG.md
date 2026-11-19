@@ -15,6 +15,7 @@ matter to recovery objectives.
 | 2026-11-19 | Backup/restore, remediation re-run (local, not scheduled) | pass | 0.9 s | 0 rows lost | PR closing #861 |
 | _add on each drill_ | Chaos engineering (`chaos-engineering.yml`) | | | n/a | |
 | 2026-10-25 | Chaos engineering (`chaos-engineering.yml`) | failure | not measured | n/a | [run 40178881197](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40178881197) / #862 |
+| 2026-11-25 | Load Tests (`load-tests.yml`) | failure | not measured | n/a | [run 42588451219](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/42588451219) |
 
 ### 2026-10-25 backup/restore failure (#861)
 
@@ -42,6 +43,22 @@ matter to recovery objectives.
   CI fixture, not production-sized data, and only confirm the drill works end
   to end. Record the next scheduled run here.
 
+### 2026-11-25 load tests failure (run 42588451219)
+
+- **What failed:** `record-outcome` declared `needs: [load-test-pr, load-test-full]`.
+  On a `schedule` trigger `load-test-pr` is skipped (its `if` condition requires
+  `pull_request`). GitHub Actions propagates a skipped dependency to any dependent
+  job even when that job has `if: always()`, so `record-outcome` was silently
+  skipped on every scheduled run. No drill-outcome issue was opened and no RTO/RPO
+  figures were recorded.
+- **Root cause:** `needs` lists both tier jobs unconditionally. The fix removes
+  `load-test-pr` from `record-outcome`'s `needs`; on a schedule only
+  `load-test-full` runs and `record-outcome` only needs to observe its result.
+- **RTO/RPO:** not measured; k6 never ran because the job was skipped before
+  setup. Record figures from the next successful scheduled run.
+- **Remediation:** `load-tests.yml` updated — `record-outcome` now needs only
+  `load-test-full`.
+
 ### 2026-10-25 chaos engineering failure (#862)
 
 - **What failed:** `scripts/validate-k8s.sh` rejected `api-stable` and
@@ -61,6 +78,33 @@ matter to recovery objectives.
   check and `generate-report.sh` all exit 0 locally. Without a cluster, the
   report now states `Cluster reachable: false` and carries no evidence, so an
   empty report cannot be read as a passing experiment.
+
+### 2026-11-25 history gap detection (runs 42512101509, 42532663534, 42552413795)
+
+- **What failed:** Three consecutive hourly runs of `history-gap-detection.yml`
+  exited 1 (gap over threshold) and opened/commented on a `price_history gap
+  detected` alert issue. The issue body contained only the placeholder
+  `--asset <ASSET> --from <startTs> --to <endTs>` text instead of actual asset
+  names and timestamps.
+- **Root cause:** The `Detect gaps` step piped `npm run --silent history:gaps --
+  --json` to stdout and redirected that into `$RUNNER_TEMP/gaps.json`. When `tsx`
+  or any npm lifecycle hook writes anything to stdout before the JSON (e.g. a
+  loader message), the redirect captures mixed output and `JSON.parse` throws.
+  The alert step's catch block sets `report = null`, so `alerting.length` ends up
+  0 and the fallback placeholder text is used even though the gap is real.
+  Additionally, `backfill-history.ts` referenced two undefined names:
+  `EXPECTED_INTERVAL_SEC` (never declared) and `files` (a `const` local to
+  `main`, referenced from the separate `verifyBackfill` function), which would
+  crash the backfill script on any run that reached the gap-remaining check.
+- **Remediation:** `history-gap-detection.yml` updated to pass `--output
+  "$RUNNER_TEMP/gaps.json"` directly to the detect script instead of relying on
+  stdout redirect, so the JSON is always written atomically to the file.
+  `backfill-history.ts` gains the `EXPECTED_INTERVAL_SEC` constant and
+  `verifyBackfill` now receives `files` as a parameter.
+- **Backfill status:** no asset-specific timestamps were recoverable from the
+  alert issue bodies. Re-run `history-gap-detection.yml` after deploying the fix;
+  the next run will produce a correctly populated alert with asset names,
+  timestamps, and ready-to-run backfill commands.
 
 ## Rules
 

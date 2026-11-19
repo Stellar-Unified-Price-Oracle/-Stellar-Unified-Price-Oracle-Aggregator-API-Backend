@@ -65,7 +65,7 @@ jobs:
           DATABASE_URL: ${{ secrets.HISTORY_DATABASE_URL }}
         run: |
           set +e
-          npm run --silent history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }} > "$RUNNER_TEMP/gaps.json"
+          npm run --silent history:gaps -- --output "$RUNNER_TEMP/gaps.json" ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }}
           code=$?
           cat "$RUNNER_TEMP/gaps.json"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
