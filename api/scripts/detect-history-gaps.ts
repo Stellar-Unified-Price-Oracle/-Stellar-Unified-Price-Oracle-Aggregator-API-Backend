@@ -121,7 +121,7 @@ async function main(): Promise<void> {
     windowStart: new Date(sinceMs).toISOString(),
     expectedInterval,
     alertThreshold,
-    totalGaps: gaps.length,
+    totalGaps: sortedGaps.length,
     alertingGaps: alerting.length,
     gaps: sortedGaps.map((g) => ({
       ...g,

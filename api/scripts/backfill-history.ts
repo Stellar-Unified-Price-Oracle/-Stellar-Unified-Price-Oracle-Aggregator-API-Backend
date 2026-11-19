@@ -36,8 +36,32 @@ function flag(name: string): string | undefined {
 const dryRun = args.includes('--dry-run');
 const all = args.includes('--all');
 const asset = flag('asset')?.toUpperCase();
-const from = flag('from') ? Number(flag('from')) : undefined;
-const to = flag('to') ? Number(flag('to')) : undefined;
+
+/**
+ * Parse a --from/--to value as either epoch seconds or an ISO-8601 timestamp.
+ * Returns epoch seconds, or undefined when the value is absent/invalid.
+ */
+function parseTimestamp(name: string, value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed);
+  }
+  const ms = Date.parse(trimmed);
+  if (Number.isNaN(ms)) {
+    console.error(`Invalid --${name} value "${value}": expected epoch seconds or an ISO timestamp`);
+    process.exit(2);
+  }
+  return Math.floor(ms / 1000);
+}
+
+const from = parseTimestamp('from', flag('from'));
+const to = parseTimestamp('to', flag('to'));
+
+if (from !== undefined && to !== undefined && from >= to) {
+  console.error(`Invalid range: --from (${from}) must be less than --to (${to})`);
+  process.exit(2);
+}
 
 const GAP_ALERT_SEC = Number(process.env.HISTORY_GAP_ALERT_SEC ?? 900);
 
@@ -159,6 +183,9 @@ async function main(): Promise<void> {
   let considered = 0;
   let inserted = 0;
 
+  // Per-asset tallies so the summary is actionable for each reported gap.
+  const perAsset = new Map<string, { considered: number; inserted: number }>();
+
   for (const file of files) {
     const rows = loadFile(path.join(dataDir, file)).filter((r) => {
       if (from !== undefined && r.timestamp < from) return false;
@@ -172,11 +199,12 @@ async function main(): Promise<void> {
     }
     let fileInserted = 0;
     for (const r of rows) {
+      const rowAsset = String(r.asset).toUpperCase();
       const res = await pool.query(
         `INSERT INTO price_history (asset, price, decimals, source, timestamp)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (asset, source, timestamp) DO NOTHING`,
-        [String(r.asset).toUpperCase(), String(r.price), r.decimals, r.source, r.timestamp],
+        [rowAsset, String(r.price), r.decimals, r.source, r.timestamp],
       );
       fileInserted += res.rowCount ?? 0;
     }
