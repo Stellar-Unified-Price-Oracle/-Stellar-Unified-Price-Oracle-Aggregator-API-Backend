@@ -4,7 +4,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Issue #421 — keep the price_history dataset continuous and complete.
-# Runs hourly and on demand; fails (alerts) when a gap exceeds the threshold.
+# Runs hourly and on demand. A gap over the threshold (detector exit 1) opens an
+# alert issue; install or connection failures fail the job without one.
 
 on:
   schedule:
