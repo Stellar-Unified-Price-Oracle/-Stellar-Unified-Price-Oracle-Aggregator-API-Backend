@@ -128,15 +128,17 @@ export class DatabaseClient {
   ): Promise<void> {
     if (!this.initialized) throw new Error('Database not initialized');
 
-    const maxAttempts = Math.max(1, config.database.insertMaxRetries ?? 3);
-    const baseDelayMs = Math.max(0, config.database.insertRetryBaseDelayMs ?? 100);
-
+    const maxAttempts = 3;
     let lastError: unknown;
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
+        // ON CONFLICT keeps retries and catch-up replays idempotent, matching
+        // the API writer and the history backfill script.
         await this.pool.query(
           `INSERT INTO price_history (asset, price, decimals, source, timestamp)
-           VALUES ($1, $2, $3, $4, $5)`,
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (asset, source, timestamp) DO NOTHING`,
           [asset, price, decimals, source, timestamp],
         );
         return;
@@ -144,23 +146,15 @@ export class DatabaseClient {
         lastError = err;
         this.logger.error(
           `Failed to insert price history (attempt ${attempt}/${maxAttempts}) ` +
-            `asset=${asset} timestamp=${timestamp} source=${source}`,
+            `for asset=${asset} source=${source} timestamp=${timestamp}`,
           err,
         );
         if (attempt < maxAttempts) {
-          const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
-          if (delayMs > 0) {
-            await new Promise((resolve) => setTimeout(resolve, delayMs));
-          }
+          await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
         }
       }
     }
 
-    this.logger.error(
-      `Exhausted ${maxAttempts} insert attempts for price history ` +
-        `asset=${asset} timestamp=${timestamp} source=${source}`,
-      lastError,
-    );
     throw lastError;
   }
 

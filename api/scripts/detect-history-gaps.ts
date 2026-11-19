@@ -59,31 +59,8 @@ interface Gap {
   missingSnapshots: number;
 }
 
-/** Structured, self-describing representation of a gap for JSON consumers. */
-interface GapReport {
-  asset: string;
-  gapStart: number;
-  gapEnd: number;
-  durationSec: number;
-  missingSnapshots: number;
-  alerting: boolean;
-  backfillCommand: string;
-}
-
 function backfillCommand(gap: Gap): string {
   return `npm run history:backfill -- --asset ${gap.asset} --from ${gap.startTs} --to ${gap.endTs}`;
-}
-
-function toReport(gap: Gap, threshold: number): GapReport {
-  return {
-    asset: gap.asset,
-    gapStart: gap.startTs,
-    gapEnd: gap.endTs,
-    durationSec: gap.gapSeconds,
-    missingSnapshots: gap.missingSnapshots,
-    alerting: gap.gapSeconds > threshold,
-    backfillCommand: backfillCommand(gap),
-  };
 }
 
 async function main(): Promise<void> {
@@ -136,10 +113,8 @@ async function main(): Promise<void> {
     }
   }
 
+  const alerting = gaps.filter((g) => g.gapSeconds > alertThreshold);
   const sortedGaps = gaps.sort((a, b) => b.gapSeconds - a.gapSeconds);
-  const alerting = sortedGaps.filter((g) => g.gapSeconds > alertThreshold);
-  const reports = sortedGaps.map((g) => toReport(g, alertThreshold));
-  const alertingReports = reports.filter((r) => r.alerting);
   const summary = {
     scannedAssets: byAsset.size,
     scannedRows: rows.length,
@@ -148,8 +123,12 @@ async function main(): Promise<void> {
     alertThreshold,
     totalGaps: gaps.length,
     alertingGaps: alerting.length,
-    gaps: reports,
-    alerts: alertingReports,
+    gaps: sortedGaps.map((g) => ({
+      ...g,
+      startIso: new Date(g.startTs * 1000).toISOString(),
+      endIso: new Date(g.endTs * 1000).toISOString(),
+      backfillCommand: backfillCommand(g),
+    })),
   };
 
   if (asJson) {
@@ -159,21 +138,17 @@ async function main(): Promise<void> {
       `Scanned ${summary.scannedRows} rows across ${summary.scannedAssets} assets since ${summary.windowStart}`,
     );
     console.log(`Found ${gaps.length} gap(s); ${alerting.length} exceed ${alertThreshold}s`);
-    for (const r of reports.slice(0, 50)) {
-      const from = new Date(r.gapStart * 1000).toISOString();
-      const to = new Date(r.gapEnd * 1000).toISOString();
-      const mark = r.alerting ? 'ALERT' : 'warn ';
-      console.log(
-        `  [${mark}] ${r.asset.padEnd(8)} ${from} -> ${to}  ${r.durationSec}s  (~${r.missingSnapshots} missing)`,
-      );
-      if (r.alerting) {
-        console.log(`         backfill: ${r.backfillCommand}`);
-      }
+    for (const g of summary.gaps.slice(0, 50)) {
+      const mark = g.gapSeconds > alertThreshold ? 'ALERT' : 'warn ';
+      console.log(`  [${mark}] ${g.asset.padEnd(8)} ${g.startIso} -> ${g.endIso}  ${g.gapSeconds}s  (~${g.missingSnapshots} missing)`);
     }
-    if (alertingReports.length > 0) {
-      console.log(`\n${alertingReports.length} alerting gap(s) — backfill commands:`);
-      for (const r of alertingReports) {
-        console.log(`  ${r.backfillCommand}`);
+    if (alerting.length > 0) {
+      console.log(`\n${alerting.length} alerting gap(s) require backfill:`);
+      for (const g of alerting) {
+        console.log(
+          `  ${g.asset} ${new Date(g.startTs * 1000).toISOString()} -> ${new Date(g.endTs * 1000).toISOString()} (${g.gapSeconds}s)`,
+        );
+        console.log(`    ${backfillCommand(g)}`);
       }
     } else {
       console.log('\nNo gaps beyond threshold.');
