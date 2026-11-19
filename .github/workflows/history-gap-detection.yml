@@ -88,6 +88,12 @@ jobs:
             }
             const iso = (ts) => new Date(ts * 1000).toISOString();
             const alerting = (report?.gaps ?? []).filter((g) => g.gapSeconds === null || g.gapSeconds > threshold);
+            // Exit 1 without a parsable report of breaching gaps means the detector
+            // itself crashed, not that a gap was found; do not file a gap alert.
+            if (alerting.length === 0) {
+              core.warning('Detector exited 1 but reported no gaps over the threshold; not filing a gap alert.');
+              return;
+            }
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
 
             const lines = [
@@ -97,30 +103,26 @@ jobs:
               `Run: ${runUrl}`,
               '',
             ];
-            if (alerting.length > 0) {
-              lines.push(
-                `Scanned ${report.scannedRows} rows across ${report.scannedAssets} assets since ${report.windowStart}.`,
-                '',
-                '| Asset | From | To | Gap (s) | Missing snapshots |',
-                '| --- | --- | --- | --- | --- |',
-                ...alerting.slice(0, 50).map((g) =>
-                  g.gapSeconds === null
-                    ? `| ${g.asset} | — | — | no rows in window | — |`
-                    : `| ${g.asset} | ${iso(g.startTs)} | ${iso(g.endTs)} | ${g.gapSeconds} | ${g.missingSnapshots} |`),
-                '',
-                'Backfill from `api/`:',
-                '',
-                '```sh',
-                ...alerting
-                  .filter((g) => g.gapSeconds !== null)
-                  .slice(0, 50)
-                  .map((g) => `npm run history:backfill -- --asset ${g.asset} --from ${g.startTs} --to ${g.endTs}`),
-                '```',
-              );
-              if (alerting.length > 50) lines.push('', `…and ${alerting.length - 50} more; see the run log.`);
-            } else {
-              lines.push('Backfill with `npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>`');
-            }
+            lines.push(
+              `Scanned ${report.scannedRows} rows across ${report.scannedAssets} assets since ${report.windowStart}.`,
+              '',
+              '| Asset | From | To | Gap (s) | Missing snapshots |',
+              '| --- | --- | --- | --- | --- |',
+              ...alerting.slice(0, 50).map((g) =>
+                g.gapSeconds === null
+                  ? `| ${g.asset} | — | — | no rows in window | — |`
+                  : `| ${g.asset} | ${iso(g.startTs)} | ${iso(g.endTs)} | ${g.gapSeconds} | ${g.missingSnapshots} |`),
+              '',
+              'Backfill from `api/`:',
+              '',
+              '```sh',
+              ...alerting
+                .filter((g) => g.gapSeconds !== null)
+                .slice(0, 50)
+                .map((g) => `npm run history:backfill -- --asset ${g.asset} --from ${g.startTs} --to ${g.endTs}`),
+              '```',
+            );
+            if (alerting.length > 50) lines.push('', `…and ${alerting.length - 50} more; see the run log.`);
             lines.push('', 'then re-run this workflow to confirm the gap is closed.');
 
             const body = lines.join('\n');
