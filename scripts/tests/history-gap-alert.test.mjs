@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   alertingGaps,
@@ -147,4 +148,40 @@ test('syncGapAlert is a no-op when clean and nothing is open', async () => {
   const gh = fakeGithub([]);
   assert.deepEqual(await syncGapAlert(gh, { ...repoRef, status: 'clean' }), { action: 'closed', issues: [] });
   assert.equal(gh.calls.length, 0);
+});
+
+const repoRoot = new URL('../../', import.meta.url);
+const workflow = readFileSync(new URL('.github/workflows/history-gap-detection.yml', repoRoot), 'utf8');
+
+function stepBlock(name) {
+  const start = workflow.indexOf(`- name: ${name}`);
+  assert.ok(start >= 0, `workflow step "${name}" is missing`);
+  const next = workflow.indexOf('\n      - ', start + 1);
+  return workflow.slice(start, next < 0 ? undefined : next);
+}
+
+test('workflow only alerts on detector exit 1, never on any failure', () => {
+  const alert = stepBlock('Alert on threshold breach');
+  assert.match(alert, /if: .*steps\.detect\.outputs\.exit_code == '1'/);
+  assert.doesNotMatch(alert, /if: failure\(\)\s*$/m);
+  assert.match(alert, /scripts\/history-gap-alert\.mjs/);
+  assert.match(alert, /gapAlertStatus\(/);
+});
+
+test('workflow reads the detector report from --output, not stdout', () => {
+  const detect = stepBlock('Detect gaps');
+  assert.match(detect, /--output "\$report"/);
+  assert.doesNotMatch(detect, /> "\$RUNNER_TEMP\/gaps\.json"/);
+});
+
+test('workflow closes open alerts after a clean scan', () => {
+  const close = stepBlock('Close resolved gap alerts');
+  assert.match(close, /exit_code == '0'/);
+  assert.match(close, /status: 'clean'/);
+});
+
+test('gap alert logic has a single implementation', () => {
+  for (const stale of ['scripts/lib/history-gap-alert.mjs', 'api/scripts/history-gap-alert.cjs']) {
+    assert.equal(existsSync(new URL(stale, repoRoot)), false, `${stale} duplicates scripts/history-gap-alert.mjs`);
+  }
 });

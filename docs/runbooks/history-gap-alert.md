@@ -62,7 +62,8 @@ to re-run them. Then re-run the workflow (`workflow_dispatch`). A passing run cl
 
 ## Rollback
 
-The alert logic lives in `scripts/lib/history-gap-alert.mjs`, and
-`scripts/tests/history-gap-alert.test.mjs` covers it. Reverting the workflow
+The alert logic lives only in `scripts/history-gap-alert.mjs`, which the
+workflow imports directly. `scripts/tests/history-gap-alert.test.mjs` covers it
+and also asserts the workflow's alert gating. Reverting the workflow
 change brings back the old behaviour (a new issue on any failure). It touches
 no data or schema.
