@@ -47,6 +47,47 @@ curl -sf http://localhost:3000/api/v1/health
 3. If staging data is corrupted, redeploy from last known-good overlay
 4. Document findings in [incident-review.md](incident-review.md)
 
+## Recording rollback drill outcomes (#891)
+
+Every rollback drill run must be recorded consistently so outcomes are durable and
+auditable. The drill workflow posts its result to the drill issue and uploads a
+`drill-report` artifact to the workflow run.
+
+### Where the drill report lives
+
+- **Artifact:** `drill-report` on the GitHub Actions run page
+  (`Actions → <workflow run> → Artifacts → drill-report`).
+- **Issue:** the drill issue (e.g. #891) is updated with the run link, status,
+  simulated TTR, and environment.
+
+### Expected TTR target
+
+Simulated TTR must be **under 10 minutes** (`< 10 min`). A run that exceeds the
+target is still recorded but flagged as a miss in the drill report.
+
+### Acknowledge and close a successful drill
+
+Once the run shows `Status: success` and the simulated TTR is within target:
+
+1. Confirm the run link and `drill-report` artifact are present on the issue.
+2. Verify the environment is the expected one (e.g. `staging (dry-run)`).
+3. Add an acknowledgement comment referencing the run and artifact:
+
+   ```bash
+   gh issue comment <issue-number> --body \
+     "Acknowledged: rollback drill succeeded. Run: <run-url> (drill-report artifact). Simulated TTR: <ttr> (target < 10 min). Env: <env>."
+   ```
+
+4. Close the issue:
+
+   ```bash
+   gh issue close <issue-number> --reason completed
+   ```
+
+If the run failed or exceeded the TTR target, do **not** close the issue — escalate
+per the steps above and document findings in
+[incident-review.md](incident-review.md).
+
 ## Pre-flight guard
 
 Install and automation scripts refuse to run unless:

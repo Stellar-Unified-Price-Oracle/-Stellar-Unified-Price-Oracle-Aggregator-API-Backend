@@ -77,6 +77,7 @@ curl -X POST https://events.pagerduty.com/v2/enqueue \
 - [high-error-rate.md](high-error-rate.md)
 - [database-issues.md](database-issues.md)
 - [mainnet-deployment.md](mainnet-deployment.md)
+- [history-gap-alert.md](history-gap-alert.md)
 
 ## Runbooks Index
 
@@ -89,6 +90,7 @@ curl -X POST https://events.pagerduty.com/v2/enqueue \
 | High API error rate | [high-error-rate.md](high-error-rate.md) |
 | Database connectivity issues | [database-issues.md](database-issues.md) |
 | Mainnet deployment | [mainnet-deployment.md](mainnet-deployment.md) |
+| `price_history` gap detected | [history-gap-alert.md](history-gap-alert.md) |
 
 ## Post-Mortem
 

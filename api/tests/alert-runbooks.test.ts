@@ -27,6 +27,58 @@ function loadYamlFiles(dir: string): any[] {
   return results;
 }
 
+describe('History gap detector tooling', () => {
+  const repoRoot = path.resolve(__dirname, '..', '..');
+  const detectorPath = path.join(repoRoot, 'scripts', 'history-gap-detector.js');
+  const backfillPath = path.join(repoRoot, 'scripts', 'history-backfill.js');
+
+  function readScript(p: string): string {
+    expect(fs.existsSync(p), `expected script at ${p}`).toBe(true);
+    return fs.readFileSync(p, 'utf8');
+  }
+
+  it('gap detector emits structured output with asset, gapStart, gapEnd, durationSec and backfill command', () => {
+    const src = readScript(detectorPath);
+
+    // Structured fields must be present in the emitted report.
+    expect(src).toMatch(/asset/);
+    expect(src).toMatch(/gapStart/);
+    expect(src).toMatch(/gapEnd/);
+    expect(src).toMatch(/durationSec/);
+    expect(src).toMatch(/history:backfill/);
+
+    // The backfill command should be constructed with --asset/--from/--to.
+    expect(src).toMatch(/--asset/);
+    expect(src).toMatch(/--from/);
+    expect(src).toMatch(/--to/);
+
+    // The alert threshold env var should be honoured.
+    expect(src).toMatch(/HISTORY_GAP_ALERT_SEC/);
+  });
+
+  it('gap detector exits non-zero when gaps remain and zero when closed', () => {
+    const src = readScript(detectorPath);
+
+    // Must set a non-zero exit code when gaps are detected.
+    expect(src).toMatch(/process\.exitCode\s*=\s*1|process\.exit\(\s*1\s*\)/);
+    // And a zero exit code when no gaps remain.
+    expect(src).toMatch(/process\.exitCode\s*=\s*0|process\.exit\(\s*0\s*\)/);
+  });
+
+  it('backfill script verifies gaps are closed and exits non-zero if any remain', () => {
+    const src = readScript(backfillPath);
+
+    // Backfill must accept the documented CLI flags.
+    expect(src).toMatch(/--asset/);
+    expect(src).toMatch(/--from/);
+    expect(src).toMatch(/--to/);
+
+    // It must verify the result and fail when gaps remain.
+    expect(src).toMatch(/process\.exitCode\s*=\s*1|process\.exit\(\s*1\s*\)/);
+    expect(src).toMatch(/process\.exitCode\s*=\s*0|process\.exit\(\s*0\s*\)/);
+  });
+});
+
 describe('Alert runbooks', () => {
   it('all P0/P1 alerts include a runbook_url annotation', () => {
     // Resolve repository root relative to this test file and locate `k8s`

@@ -21,6 +21,9 @@ If service performance materially breaches the above targets, the operator will:
 - prioritize recovery and mitigations under the incident runbook;
 - communicate status updates through the project channel or release notes.
 
+Eligible incidents are converted into consumer credits using the auditable method and monthly
+ledger in [Service Credit Reconciliation](./SERVICE_CREDIT_RECONCILIATION.md).
+
 The SLA is an operational target for reliability and response quality, not a guarantee of zero downtime or zero latency variance.
 
 ## 3. Maintenance windows
