@@ -83,18 +83,14 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
+            const { buildAlertBody } = require(`${process.env.GITHUB_WORKSPACE}/api/scripts/history-gap-alert.cjs`);
+            const summary = JSON.parse(fs.readFileSync('api/gaps.json', 'utf8'));
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
               labels: ['data', 'alert'],
-              body: [
-                'The scheduled history gap detector found a gap exceeding',
-                `\`HISTORY_GAP_ALERT_SEC=${process.env.HISTORY_GAP_ALERT_SEC}\`.`,
-                '',
-                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-                '',
-                'Backfill with `npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>`',
-                'then re-run this workflow to confirm the gap is closed.',
-              ].join('\n'),
+              body: buildAlertBody(summary, runUrl),
             });
