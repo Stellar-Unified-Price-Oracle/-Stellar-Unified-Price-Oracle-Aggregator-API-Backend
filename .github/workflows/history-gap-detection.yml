@@ -16,7 +16,7 @@ on:
         required: false
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '22'
   HISTORY_EXPECTED_INTERVAL_SEC: '60'
   HISTORY_GAP_ALERT_SEC: '900'
 
@@ -87,29 +87,48 @@ jobs:
               `| ${g.asset} | ${iso(g.startTs)} | ${iso(g.endTs)} | ${g.gapSeconds ?? 'no data'} | ${g.missingSnapshots} |`);
             const commands = alerting.slice(0, 50).map((g) =>
               `npm run history:backfill -- --asset ${g.asset} --from ${g.startTs} --to ${g.endTs}`);
-            await github.rest.issues.create({
+            const { data: open } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
-              labels: ['data', 'alert'],
-              body: [
-                `The scheduled history gap detector found ${alerting.length} gap(s) exceeding`,
-                `\`HISTORY_GAP_ALERT_SEC=${threshold}\` (scanned ${report.scannedRows} rows across ${report.scannedAssets} assets since ${report.windowStart}).`,
-                '',
-                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-                '',
-                '| Asset | From | To | Gap (s) | Missing snapshots |',
-                '| --- | --- | --- | --- | --- |',
-                ...rows,
-                ...(alerting.length > 50 ? [`| … | ${alerting.length - 50} more in the run log | | | |`] : []),
-                '',
-                'Backfill from `api/`, then re-run this workflow to confirm the gaps are closed:',
-                '',
-                '```sh',
-                ...commands,
-                '```',
-              ].join('\n'),
+              state: 'open',
+              labels: 'data,alert',
+              per_page: 100,
             });
+            const existing = open.find((i) => !i.pull_request && i.title.startsWith('price_history gap detected'));
+            const body = [
+              `The scheduled history gap detector found ${alerting.length} gap(s) exceeding`,
+              `\`HISTORY_GAP_ALERT_SEC=${threshold}\` (scanned ${report.scannedRows} rows across ${report.scannedAssets} assets since ${report.windowStart}).`,
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              '| Asset | From | To | Gap (s) | Missing snapshots |',
+              '| --- | --- | --- | --- | --- |',
+              ...rows,
+              ...(alerting.length > 50 ? [`| … | ${alerting.length - 50} more in the run log | | | |`] : []),
+              '',
+              'Backfill from `api/`, then re-run this workflow to confirm the gaps are closed:',
+              '',
+              '```sh',
+              ...commands,
+              '```',
+            ].join('\n');
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+              core.notice(`Gap still open; updated #${existing.number}`);
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
+                labels: ['data', 'alert'],
+                body,
+              });
+            }
 
       - name: Fail job on threshold breach
         if: steps.detect.outputs.exit_code == '1'

@@ -30,8 +30,12 @@ Exit `0` = clean, `1` = a gap exceeded `HISTORY_GAP_ALERT_SEC`, `2` = usage erro
 ## Alerting
 
 `.github/workflows/history-gap-detection.yml` runs the detector hourly against
-`secrets.HISTORY_DATABASE_URL`. A gap over threshold fails the job, which opens a
-`data` / `alert` issue with the offending window and the backfill command. Wire
+`secrets.HISTORY_DATABASE_URL`. Only a detector exit `1` (a gap over threshold)
+files an alert: it lists each offending asset and window with a ready-to-run
+backfill command. If a `price_history gap detected` issue is already open, the
+run comments on it instead of opening a new one; close the issue once the gap is
+backfilled. Install, connection or usage failures (exit `2`) fail the job
+without filing a gap alert — check the run log, not the data. Wire
 the same script into Prometheus (via a `textfile` collector emitting
 `price_history_max_gap_seconds`) if you prefer alerting through Alertmanager.
 
