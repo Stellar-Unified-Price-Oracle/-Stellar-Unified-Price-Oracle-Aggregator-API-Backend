@@ -124,7 +124,7 @@ jobs:
             lines.push('', 'then re-run this workflow to confirm the gap is closed.');
 
             const body = lines.join('\n');
-            const { data: open } = await github.rest.issues.listForRepo({
+            const open = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
