@@ -4,7 +4,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Issue #421 — keep the price_history dataset continuous and complete.
-# Runs hourly and on demand; fails (alerts) when a gap exceeds the threshold.
+# Runs hourly and on demand. A gap over the threshold (detector exit 1) opens an
+# alert issue; install or connection failures fail the job without one.
 
 on:
   schedule:
@@ -56,13 +57,21 @@ jobs:
           fi
 
       - name: Detect gaps
+        id: detect
         if: steps.guard.outputs.configured == 'true'
         env:
           DATABASE_URL: ${{ secrets.HISTORY_DATABASE_URL }}
-        run: npm run history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }}
+          SINCE: ${{ github.event.inputs.since }}
+        run: |
+          set +e
+          npm run --silent history:gaps -- --json ${SINCE:+--since "$SINCE"} > gap-report.json
+          code=$?
+          set -e
+          cat gap-report.json
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
       - name: Alert on threshold breach
-        if: failure()
+        if: steps.detect.outputs.exit_code == '1'
         uses: actions/github-script@v7
         with:
           script: |
@@ -81,3 +90,13 @@ jobs:
                 'then re-run this workflow to confirm the gap is closed.',
               ].join('\n'),
             });
+
+      - name: Fail on gap or detector error
+        if: steps.detect.outputs.exit_code != '' && steps.detect.outputs.exit_code != '0'
+        run: |
+          if [ "${{ steps.detect.outputs.exit_code }}" = "1" ]; then
+            echo "::error::A price_history gap exceeded HISTORY_GAP_ALERT_SEC=${HISTORY_GAP_ALERT_SEC}."
+          else
+            echo "::error::Gap detector could not complete (exit ${{ steps.detect.outputs.exit_code }}); no gap was measured."
+          fi
+          exit 1
