@@ -34,7 +34,11 @@ Exit `0` = clean, `1` = a gap exceeded `HISTORY_GAP_ALERT_SEC`, `2` = usage erro
 the job and opens a `data` / `alert` issue with the offending window and the
 backfill command. Any other failure — `npm ci`, a database connection error
 (exit `2`) — fails the job without opening a gap issue; check the run log
-instead. Wire
+instead.
+
+While an alert issue is open, later runs that still see a gap add a comment to
+it rather than opening a new issue. Close the issue once the recovery loop below
+confirms the gap is gone; the next breach opens a fresh one. Wire
 the same script into Prometheus (via a `textfile` collector emitting
 `price_history_max_gap_seconds`) if you prefer alerting through Alertmanager.
 

@@ -97,19 +97,39 @@ jobs:
                 ]
               : ['Gap details unavailable; see the run log.'];
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            await github.rest.issues.create({
+            const body = [
+              `The scheduled history gap detector found ${alerting.length} gap(s) exceeding`,
+              `\`HISTORY_GAP_ALERT_SEC=${threshold}\`.`,
+              '',
+              `Run: ${runUrl}`,
+              '',
+              ...table,
+              '',
+              'Run each backfill command from `api/`, then re-run this workflow to confirm the gap is closed.',
+            ].join('\n');
+            const titlePrefix = 'price_history gap detected';
+            const open = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
-              labels: ['data', 'alert'],
-              body: [
-                `The scheduled history gap detector found ${alerting.length} gap(s) exceeding`,
-                `\`HISTORY_GAP_ALERT_SEC=${threshold}\`.`,
-                '',
-                `Run: ${runUrl}`,
-                '',
-                ...table,
-                '',
-                'Run each backfill command from `api/`, then re-run this workflow to confirm the gap is closed.',
-              ].join('\n'),
+              state: 'open',
+              labels: 'data,alert',
+              per_page: 100,
             });
+            const existing = open.find((i) => !i.pull_request && i.title.startsWith(titlePrefix));
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+              core.notice(`Gap still open; commented on #${existing.number}`);
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `${titlePrefix} (${new Date().toISOString().slice(0, 10)})`,
+                labels: ['data', 'alert'],
+                body,
+              });
+            }
