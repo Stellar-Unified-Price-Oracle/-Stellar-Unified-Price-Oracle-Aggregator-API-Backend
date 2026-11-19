@@ -62,8 +62,9 @@ jobs:
           DATABASE_URL: ${{ secrets.HISTORY_DATABASE_URL }}
         run: |
           set +e
-          npm run history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }}
+          npm run --silent history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }} > "$RUNNER_TEMP/gaps.json"
           code=$?
+          cat "$RUNNER_TEMP/gaps.json"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit $code
 
@@ -74,18 +75,55 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
+            const threshold = Number(process.env.HISTORY_GAP_ALERT_SEC);
+            let report = null;
+            try {
+              report = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/gaps.json`, 'utf8'));
+            } catch (err) {
+              core.warning(`Could not parse detector output: ${err.message}`);
+            }
+            const iso = (ts) => new Date(ts * 1000).toISOString();
+            const alerting = (report?.gaps ?? []).filter((g) => g.gapSeconds === null || g.gapSeconds > threshold);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const lines = [
+              'The scheduled history gap detector found a gap exceeding',
+              `\`HISTORY_GAP_ALERT_SEC=${threshold}\`.`,
+              '',
+              `Run: ${runUrl}`,
+              '',
+            ];
+            if (alerting.length > 0) {
+              lines.push(
+                `Scanned ${report.scannedRows} rows across ${report.scannedAssets} assets since ${report.windowStart}.`,
+                '',
+                '| Asset | From | To | Gap (s) | Missing snapshots |',
+                '| --- | --- | --- | --- | --- |',
+                ...alerting.slice(0, 50).map((g) =>
+                  g.gapSeconds === null
+                    ? `| ${g.asset} | — | — | no rows in window | — |`
+                    : `| ${g.asset} | ${iso(g.startTs)} | ${iso(g.endTs)} | ${g.gapSeconds} | ${g.missingSnapshots} |`),
+                '',
+                'Backfill from `api/`:',
+                '',
+                '```sh',
+                ...alerting
+                  .filter((g) => g.gapSeconds !== null)
+                  .slice(0, 50)
+                  .map((g) => `npm run history:backfill -- --asset ${g.asset} --from ${g.startTs} --to ${g.endTs}`),
+                '```',
+              );
+              if (alerting.length > 50) lines.push('', `…and ${alerting.length - 50} more; see the run log.`);
+            } else {
+              lines.push('Backfill with `npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>`');
+            }
+            lines.push('', 'then re-run this workflow to confirm the gap is closed.');
+
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
               labels: ['data', 'alert'],
-              body: [
-                'The scheduled history gap detector found a gap exceeding',
-                `\`HISTORY_GAP_ALERT_SEC=${process.env.HISTORY_GAP_ALERT_SEC}\`.`,
-                '',
-                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-                '',
-                'Backfill with `npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>`',
-                'then re-run this workflow to confirm the gap is closed.',
-              ].join('\n'),
+              body: lines.join('\n'),
             });
