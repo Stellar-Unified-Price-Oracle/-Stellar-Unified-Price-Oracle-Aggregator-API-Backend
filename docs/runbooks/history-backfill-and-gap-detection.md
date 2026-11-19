@@ -25,13 +25,18 @@ npm run history:gaps -- --asset BTC --json  # machine-readable, one asset
 npm run history:gaps -- --since 2026-01-01
 ```
 
-Exit `0` = clean, `1` = a gap exceeded `HISTORY_GAP_ALERT_SEC`, `2` = usage error.
+Exit `0` = clean, `1` = a gap exceeded `HISTORY_GAP_ALERT_SEC`, `2` = usage or
+connection error.
 
 ## Alerting
 
 `.github/workflows/history-gap-detection.yml` runs the detector hourly against
-`secrets.HISTORY_DATABASE_URL`. A gap over threshold fails the job, which opens a
-`data` / `alert` issue with the offending window and the backfill command. Wire
+`secrets.HISTORY_DATABASE_URL`. Only detector exit `1` counts as a gap: the job
+then opens a `data` / `alert` issue listing each offending window with a
+ready-to-run backfill command, or comments on the gap issue that is already open
+instead of opening another. Any other failure (dependency install, exit `2`)
+fails the job without opening a gap issue; investigate it from the run log, not
+as missing data. Wire
 the same script into Prometheus (via a `textfile` collector emitting
 `price_history_max_gap_seconds`) if you prefer alerting through Alertmanager.
 
