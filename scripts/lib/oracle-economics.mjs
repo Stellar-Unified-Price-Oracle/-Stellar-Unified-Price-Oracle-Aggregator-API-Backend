@@ -127,7 +127,8 @@ export function round(value, digits = 2) {
 
 export function money(value) {
   if (!Number.isFinite(value)) return value > 0 ? '∞' : '—';
-  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatted = Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return value < 0 ? `-$${formatted}` : `$${formatted}`;
 }
 
 export function pct(value, digits = 2) {
