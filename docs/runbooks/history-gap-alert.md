@@ -14,7 +14,9 @@ The detector found two consecutive snapshots for the same asset more than
 ready-to-run backfill command.
 
 The workflow opens **one** issue and comments on it on later failing runs. It
-only opens or comments when the detector itself exits `1`. These outcomes fail
+only opens or comments when the detector itself exits `1` and its report lists
+at least one window above the threshold. The next clean run (detector exit `0`)
+closes every open gap alert automatically. These outcomes fail
 the run without filing an issue:
 
 | Exit / failure | Meaning | Action |
@@ -50,7 +52,7 @@ npm run history:gaps -- --asset BTC --since 2026-11-12
 ```
 
 Inserts are idempotent (`ON CONFLICT (asset, source, timestamp) DO NOTHING`), so it's safe
-to re-run them. Then re-run the workflow (`workflow_dispatch`). Close the issue once the run passes.
+to re-run them. Then re-run the workflow (`workflow_dispatch`). A passing run closes the issue.
 
 ## Tuning
 
