@@ -17,7 +17,7 @@ on:
         required: false
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '22'
   HISTORY_EXPECTED_INTERVAL_SEC: '60'
   HISTORY_GAP_ALERT_SEC: '900'
 
@@ -56,6 +56,8 @@ jobs:
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Exit codes: 0 = clean, 1 = gap over threshold, 2 = usage/connection error.
+      # Only exit 1 is a data gap; anything else must not file a gap alert.
       - name: Detect gaps
         id: detect
         if: steps.guard.outputs.configured == 'true'
