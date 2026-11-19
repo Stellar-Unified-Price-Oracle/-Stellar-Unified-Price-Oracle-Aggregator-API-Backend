@@ -64,8 +64,9 @@ jobs:
           DATABASE_URL: ${{ secrets.HISTORY_DATABASE_URL }}
         run: |
           set +e
-          npm run --silent history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }}
+          npm run --silent history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }} > gaps.json
           code=$?
+          cat gaps.json
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
             echo "::error::Gap detector errored (exit $code) — no gap alert filed."
@@ -77,19 +78,36 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
+            const threshold = Number(process.env.HISTORY_GAP_ALERT_SEC);
+            const report = JSON.parse(fs.readFileSync(`${process.env.GITHUB_WORKSPACE}/api/gaps.json`, 'utf8'));
+            const alerting = report.gaps.filter((g) => g.gapSeconds === null || g.gapSeconds > threshold);
+            const iso = (ts) => new Date(ts * 1000).toISOString();
+            const rows = alerting.slice(0, 50).map((g) =>
+              `| ${g.asset} | ${iso(g.startTs)} | ${iso(g.endTs)} | ${g.gapSeconds ?? 'no data'} | ${g.missingSnapshots} |`);
+            const commands = alerting.slice(0, 50).map((g) =>
+              `npm run history:backfill -- --asset ${g.asset} --from ${g.startTs} --to ${g.endTs}`);
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
               labels: ['data', 'alert'],
               body: [
-                'The scheduled history gap detector found a gap exceeding',
-                `\`HISTORY_GAP_ALERT_SEC=${process.env.HISTORY_GAP_ALERT_SEC}\`.`,
+                `The scheduled history gap detector found ${alerting.length} gap(s) exceeding`,
+                `\`HISTORY_GAP_ALERT_SEC=${threshold}\` (scanned ${report.scannedRows} rows across ${report.scannedAssets} assets since ${report.windowStart}).`,
                 '',
                 `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
                 '',
-                'Backfill with `npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>`',
-                'then re-run this workflow to confirm the gap is closed.',
+                '| Asset | From | To | Gap (s) | Missing snapshots |',
+                '| --- | --- | --- | --- | --- |',
+                ...rows,
+                ...(alerting.length > 50 ? [`| … | ${alerting.length - 50} more in the run log | | | |`] : []),
+                '',
+                'Backfill from `api/`, then re-run this workflow to confirm the gaps are closed:',
+                '',
+                '```sh',
+                ...commands,
+                '```',
               ].join('\n'),
             });
 
