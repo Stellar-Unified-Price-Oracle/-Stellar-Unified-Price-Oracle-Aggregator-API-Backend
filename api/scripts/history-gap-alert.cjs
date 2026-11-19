@@ -1,6 +1,7 @@
 'use strict';
 
 const MAX_ROWS = 25;
+const TITLE_PREFIX = 'price_history gap detected';
 
 function iso(ts) {
   return new Date(ts * 1000).toISOString().replace('.000Z', 'Z');
@@ -32,4 +33,8 @@ function buildAlertBody(summary, runUrl) {
   return lines.join('\n');
 }
 
-module.exports = { alertingGaps, buildAlertBody };
+function findOpenAlert(issues) {
+  return issues.find((i) => !i.pull_request && i.state === 'open' && i.title.startsWith(TITLE_PREFIX));
+}
+
+module.exports = { TITLE_PREFIX, alertingGaps, buildAlertBody, findOpenAlert };

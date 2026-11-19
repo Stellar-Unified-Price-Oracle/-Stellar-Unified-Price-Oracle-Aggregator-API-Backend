@@ -39,3 +39,20 @@ describe('history gap alert body', () => {
     expect(body).toContain('and 5 more');
   });
 });
+
+describe('history gap alert de-duplication', () => {
+  const { findOpenAlert, TITLE_PREFIX } = require('../scripts/history-gap-alert.cjs');
+
+  it('reuses an open gap alert issue', () => {
+    const issues = [
+      { number: 1, state: 'open', title: 'Unrelated data alert' },
+      { number: 2, state: 'open', title: `${TITLE_PREFIX} (2026-10-25)` },
+    ];
+    expect(findOpenAlert(issues)?.number).toBe(2);
+  });
+
+  it('ignores pull requests and returns undefined when no alert is open', () => {
+    const issues = [{ number: 3, state: 'open', title: `${TITLE_PREFIX} (x)`, pull_request: {} }];
+    expect(findOpenAlert(issues)).toBeUndefined();
+  });
+});

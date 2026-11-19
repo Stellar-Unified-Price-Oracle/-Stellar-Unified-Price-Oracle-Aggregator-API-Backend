@@ -31,7 +31,9 @@ Exit `0` = clean, `1` = a gap exceeded `HISTORY_GAP_ALERT_SEC`, `2` = usage erro
 
 `.github/workflows/history-gap-detection.yml` runs the detector hourly against
 `secrets.HISTORY_DATABASE_URL`. A gap over threshold (detector exit `1`) fails
-the job and opens a `data` / `alert` issue. Any other failure (dependency
+the job and opens a `data` / `alert` issue listing every gap with its exact
+backfill command. While that issue stays open, later failing runs add a comment
+to it instead of opening a new issue, so close it once the gaps are backfilled. Any other failure (dependency
 install, database connection, bad `--since`) also fails the job but does **not**
 open a gap issue: check the run log, because no gap scan took place. Wire
 the same script into Prometheus (via a `textfile` collector emitting
