@@ -142,7 +142,9 @@ function quantile(sorted, q) {
 
 /**
  * Runs `rounds` publication rounds over a random-walk true price.
- * Attackers report truePrice * (1 + attackShiftBps / 1e4); offline sources report nothing.
+ * Attackers report truePrice * (1 + attackShiftBps / 1e4), where attackShiftBps may be a
+ * function of rounds since attackStartRound; before that round attackers behave honestly and
+ * forcedOffline sources are live. Offline sources report nothing.
  * A round is *available* when it publishes and the contract guard accepts it,
  * and *corrupted* when an accepted price is further than maxTolerableErrorBps from truth.
  */
@@ -160,6 +162,8 @@ export function simulateRounds({
   attackShiftBps = 0,
   issuers = {},
   outage = null,
+  forcedOffline = [],
+  attackStartRound = 0,
 }) {
   if (!Number.isInteger(rounds) || rounds <= 0) throw new Error('rounds must be a positive integer');
   if (!Array.isArray(sources) || sources.length === 0) throw new Error('at least one source is required');
@@ -201,10 +205,12 @@ export function simulateRounds({
       }
     }
     const reports = sources.map((source) => {
-      const down = outage && (downGroups.has(groupOf[source]) || rng.bernoulli(outage.independentProbability ?? 0));
+      const attacking = i >= attackStartRound;
+      const down = (attacking && forcedOffline.includes(source)) ||
+        (outage && (downGroups.has(groupOf[source]) || rng.bernoulli(outage.independentProbability ?? 0)));
       if (down) return { source, issuer: issuers[source], price: null };
-      const price = attackerSet.has(source)
-        ? truth * (1 + attackShiftBps / 10_000)
+      const price = attacking && attackerSet.has(source)
+        ? truth * (1 + (typeof attackShiftBps === 'function' ? attackShiftBps(i - attackStartRound) : attackShiftBps) / 10_000)
         : truth * (1 + rng.normal(0, honestNoiseBps / 10_000));
       return { source, issuer: issuers[source], price };
     });
