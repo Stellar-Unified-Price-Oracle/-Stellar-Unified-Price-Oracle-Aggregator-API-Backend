@@ -80,18 +80,42 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
+            const threshold = Number(process.env.HISTORY_GAP_ALERT_SEC);
+            let alerting = [];
+            try {
+              const summary = JSON.parse(fs.readFileSync('api/gaps.json', 'utf8'));
+              alerting = (summary.gaps || []).filter((g) => g.gapSeconds > threshold);
+            } catch (err) {
+              core.warning(`Could not parse detector output: ${err.message}`);
+            }
+            const iso = (ts) => new Date(ts * 1000).toISOString();
+            const shown = alerting.slice(0, 25);
+            const table = shown.length
+              ? [
+                  '| Asset | From | To | Gap (s) | Backfill |',
+                  '| --- | --- | --- | --- | --- |',
+                  ...shown.map((g) =>
+                    `| ${g.asset} | ${iso(g.startTs)} | ${iso(g.endTs)} | ${g.gapSeconds} | ` +
+                    `\`npm run history:backfill -- --asset ${g.asset} --from ${g.startTs} --to ${g.endTs}\` |`),
+                  ...(alerting.length > shown.length
+                    ? ['', `…and ${alerting.length - shown.length} more; see the run log.`]
+                    : []),
+                ]
+              : ['Gap details unavailable; see the run log.'];
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
               labels: ['data', 'alert'],
               body: [
-                'The scheduled history gap detector found a gap exceeding',
-                `\`HISTORY_GAP_ALERT_SEC=${process.env.HISTORY_GAP_ALERT_SEC}\`.`,
+                `The scheduled history gap detector found ${alerting.length || 'a'} gap(s) exceeding`,
+                `\`HISTORY_GAP_ALERT_SEC=${threshold}\`.`,
                 '',
                 `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
                 '',
-                'Backfill with `npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>`',
-                'then re-run this workflow to confirm the gap is closed.',
+                ...table,
+                '',
+                'Run each backfill command from `api/`, then re-run this workflow to confirm the gap is closed.',
               ].join('\n'),
             });
