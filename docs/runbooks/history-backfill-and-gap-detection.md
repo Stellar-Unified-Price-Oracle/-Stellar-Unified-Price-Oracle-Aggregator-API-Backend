@@ -25,7 +25,8 @@ npm run history:gaps -- --asset BTC --json  # machine-readable, one asset
 npm run history:gaps -- --since 2026-01-01
 ```
 
-Exit `0` = clean, `1` = a gap exceeded `HISTORY_GAP_ALERT_SEC`, `2` = usage error.
+Exit `0` = clean, `1` = a gap exceeded `HISTORY_GAP_ALERT_SEC`, `2` = usage or
+connection error.
 
 ## Alerting
 
