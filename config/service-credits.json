@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "Economics and ecosystem sustainability workstream (Reliability + Billing)",
+  "updatedAt": "2026-11-19",
+  "reviewIntervalDays": 30,
+  "nextReviewDate": "2026-12-19",
+  "period": "2026-10",
+  "policy": {
+    "eligiblePlans": ["pro", "enterprise"],
+    "monthlyCreditCapPct": 50,
+    "reconciliationTolerancePp": 0.01,
+    "minimumMaintenanceNoticeHours": 72,
+    "excludedCauses": ["scheduled-maintenance", "customer-caused", "force-majeure"],
+    "knownCauses": [
+      "deploy-regression",
+      "database-failover",
+      "upstream-provider-outage",
+      "network-partition",
+      "capacity-exhaustion",
+      "scheduled-maintenance",
+      "customer-caused",
+      "force-majeure"
+    ],
+    "slis": {
+      "availability": {
+        "label": "API availability",
+        "objectivePct": 99.9,
+        "schedule": [
+          { "belowPct": 99.9, "creditPct": 10 },
+          { "belowPct": 99.5, "creditPct": 25 },
+          { "belowPct": 99.0, "creditPct": 50 }
+        ]
+      },
+      "freshness": {
+        "label": "Price freshness",
+        "objectivePct": 99.5,
+        "schedule": [
+          { "belowPct": 99.5, "creditPct": 10 },
+          { "belowPct": 99.0, "creditPct": 25 }
+        ]
+      },
+      "latency": {
+        "label": "API latency (< 1 s)",
+        "objectivePct": 99.0,
+        "schedule": [
+          { "belowPct": 99.0, "creditPct": 5 },
+          { "belowPct": 95.0, "creditPct": 10 }
+        ]
+      }
+    }
+  },
+  "regions": ["us-east-1", "eu-west-1", "ap-southeast-1"],
+  "consumers": [
+    { "id": "c-ent-01", "plan": "enterprise", "region": "us-east-1" },
+    { "id": "c-ent-03", "plan": "enterprise", "region": "ap-southeast-1" },
+    { "id": "c-pro-07", "plan": "pro", "region": "us-east-1" },
+    { "id": "c-pro-12", "plan": "pro", "region": "eu-west-1" },
+    { "id": "c-free-44", "plan": "free", "region": "us-east-1" }
+  ],
+  "incidents": [
+    {
+      "id": "INC-101",
+      "sli": "availability",
+      "regions": ["us-east-1"],
+      "startedAt": "2026-10-03T14:10:00Z",
+      "endedAt": "2026-10-03T15:05:00Z",
+      "cause": "deploy-regression",
+      "evidence": "Postmortem PM-2026-10-03 (API 5xx after deploy and DB failover)",
+      "classifiedBy": "oncall-primary",
+      "approvedBy": "reliability-lead"
+    },
+    {
+      "id": "INC-102",
+      "sli": "availability",
+      "regions": ["us-east-1"],
+      "startedAt": "2026-10-03T14:50:00Z",
+      "endedAt": "2026-10-03T15:20:00Z",
+      "cause": "database-failover",
+      "evidence": "Postmortem PM-2026-10-03 (API 5xx after deploy and DB failover)",
+      "classifiedBy": "oncall-primary",
+      "approvedBy": "reliability-lead"
+    },
+    {
+      "id": "INC-103",
+      "sli": "freshness",
+      "regions": ["*"],
+      "startedAt": "2026-10-12T02:00:00Z",
+      "endedAt": "2026-10-12T05:30:00Z",
+      "cause": "upstream-provider-outage",
+      "evidence": "Postmortem PM-2026-10-12 (provider quorum loss)",
+      "classifiedBy": "oncall-secondary",
+      "approvedBy": "reliability-lead"
+    },
+    {
+      "id": "INC-104",
+      "sli": "availability",
+      "regions": ["eu-west-1"],
+      "startedAt": "2026-10-20T01:00:00Z",
+      "endedAt": "2026-10-20T02:00:00Z",
+      "cause": "scheduled-maintenance",
+      "maintenanceNoticeHours": 96,
+      "evidence": "Maintenance notice MN-2026-10-16 (published 96h ahead)",
+      "classifiedBy": "oncall-primary",
+      "approvedBy": "reliability-lead"
+    },
+    {
+      "id": "INC-105",
+      "sli": "availability",
+      "regions": ["ap-southeast-1"],
+      "startedAt": "2026-10-25T03:00:00Z",
+      "endedAt": "2026-10-25T03:40:00Z",
+      "cause": "scheduled-maintenance",
+      "maintenanceNoticeHours": 24,
+      "evidence": "Maintenance notice MN-2026-10-24 (published 24h ahead)",
+      "classifiedBy": "oncall-secondary",
+      "approvedBy": "reliability-lead"
+    },
+    {
+      "id": "INC-106",
+      "sli": "latency",
+      "regions": ["eu-west-1"],
+      "startedAt": "2026-10-31T23:00:00Z",
+      "endedAt": "2026-11-01T01:00:00Z",
+      "cause": "capacity-exhaustion",
+      "evidence": "Postmortem PM-2026-10-31 (eu-west-1 latency)",
+      "classifiedBy": "oncall-primary",
+      "approvedBy": "reliability-lead"
+    },
+    {
+      "id": "INC-107",
+      "sli": "availability",
+      "regions": ["eu-west-1"],
+      "startedAt": "2026-10-28T09:00:00Z",
+      "endedAt": "2026-10-28T09:45:00Z",
+      "cause": "customer-caused",
+      "evidence": "Rate-limit lockout of a single key after an AUP violation",
+      "classifiedBy": "oncall-secondary",
+      "approvedBy": "reliability-lead"
+    }
+  ],
+  "measuredAttainment": {
+    "source": "Prometheus SLO recording rules (monitoring/) for calendar month 2026-10, announced maintenance windows (>= 72h notice) excluded",
+    "values": {
+      "us-east-1": { "availability": 99.844, "freshness": 99.531, "latency": 100 },
+      "eu-west-1": { "availability": 100, "freshness": 99.531, "latency": 99.866 },
+      "ap-southeast-1": { "availability": 99.911, "freshness": 99.531, "latency": 100 }
+    }
+  }
+}

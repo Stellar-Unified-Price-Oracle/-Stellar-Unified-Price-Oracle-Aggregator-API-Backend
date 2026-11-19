@@ -4,7 +4,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Issue #421 — keep the price_history dataset continuous and complete.
-# Runs hourly and on demand; fails (alerts) when a gap exceeds the threshold.
+# Runs hourly and on demand. A gap over the threshold (detector exit 1) opens an
+# alert issue; install or connection failures fail the job without one.
 
 on:
   schedule:
@@ -16,7 +17,7 @@ on:
         required: false
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '22'
   HISTORY_EXPECTED_INTERVAL_SEC: '60'
   HISTORY_GAP_ALERT_SEC: '900'
 
@@ -55,39 +56,82 @@ jobs:
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Exit codes: 0 = clean, 1 = gap over threshold, 2 = usage/connection error.
+      # Only exit 1 is a data gap; anything else must not file a gap alert.
       - name: Detect gaps
         id: detect
         if: steps.guard.outputs.configured == 'true'
         env:
           DATABASE_URL: ${{ secrets.HISTORY_DATABASE_URL }}
-        # Exit 1 = gap beyond threshold, 2 = usage/connection error. Only 1 opens an alert.
         run: |
           set +e
           npm run --silent history:gaps -- --json ${{ github.event.inputs.since && format('--since {0}', github.event.inputs.since) || '' }} > "$RUNNER_TEMP/gaps.json"
           code=$?
-          set -e
           cat "$RUNNER_TEMP/gaps.json"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit $code
 
+      # Only exit code 1 means a gap exceeded the threshold. Install, guard or
+      # connection failures (exit 2) fail the job without opening a gap issue.
       - name: Alert on threshold breach
         if: failure() && steps.detect.outputs.exit_code == '1'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const lib = await import(`${process.env.GITHUB_WORKSPACE}/scripts/lib/history-gap-alert.mjs`);
-            const report = lib.parseGapReport(fs.readFileSync(`${process.env.RUNNER_TEMP}/gaps.json`, 'utf8'));
+            const threshold = Number(process.env.HISTORY_GAP_ALERT_SEC);
+            let report = null;
+            try {
+              report = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/gaps.json`, 'utf8'));
+            } catch (err) {
+              core.warning(`Could not parse detector output: ${err.message}`);
+            }
+            const iso = (ts) => new Date(ts * 1000).toISOString();
+            const alerting = (report?.gaps ?? []).filter((g) => g.gapSeconds === null || g.gapSeconds > threshold);
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const body = lib.renderGapAlertBody(report, { runUrl });
-            const open = await github.paginate(github.rest.issues.listForRepo, {
+
+            const lines = [
+              'The scheduled history gap detector found a gap exceeding',
+              `\`HISTORY_GAP_ALERT_SEC=${threshold}\`.`,
+              '',
+              `Run: ${runUrl}`,
+              '',
+            ];
+            if (alerting.length > 0) {
+              lines.push(
+                `Scanned ${report.scannedRows} rows across ${report.scannedAssets} assets since ${report.windowStart}.`,
+                '',
+                '| Asset | From | To | Gap (s) | Missing snapshots |',
+                '| --- | --- | --- | --- | --- |',
+                ...alerting.slice(0, 50).map((g) =>
+                  g.gapSeconds === null
+                    ? `| ${g.asset} | — | — | no rows in window | — |`
+                    : `| ${g.asset} | ${iso(g.startTs)} | ${iso(g.endTs)} | ${g.gapSeconds} | ${g.missingSnapshots} |`),
+                '',
+                'Backfill from `api/`:',
+                '',
+                '```sh',
+                ...alerting
+                  .filter((g) => g.gapSeconds !== null)
+                  .slice(0, 50)
+                  .map((g) => `npm run history:backfill -- --asset ${g.asset} --from ${g.startTs} --to ${g.endTs}`),
+                '```',
+              );
+              if (alerting.length > 50) lines.push('', `…and ${alerting.length - 50} more; see the run log.`);
+            } else {
+              lines.push('Backfill with `npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>`');
+            }
+            lines.push('', 'then re-run this workflow to confirm the gap is closed.');
+
+            const body = lines.join('\n');
+            const { data: open } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
-              labels: lib.GAP_ALERT_LABELS.join(','),
+              labels: 'data,alert',
               per_page: 100,
             });
-            const existing = lib.findOpenGapAlert(open);
+            const existing = open.find((i) => !i.pull_request && i.title.startsWith('price_history gap detected'));
             if (existing) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -95,12 +139,13 @@ jobs:
                 issue_number: existing.number,
                 body,
               });
+              core.info(`Gap still open; commented on #${existing.number}`);
             } else {
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: lib.gapAlertTitle(),
-                labels: lib.GAP_ALERT_LABELS,
+                title: `price_history gap detected (${new Date().toISOString().slice(0, 10)})`,
+                labels: ['data', 'alert'],
                 body,
               });
             }
