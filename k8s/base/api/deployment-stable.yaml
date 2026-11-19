@@ -71,6 +71,13 @@ spec:
                 name: stellar-oracle-config
             - secretRef:
                 name: stellar-oracle-secrets
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/logs
           startupProbe:
             httpGet:
               path: /api/v1/health/live

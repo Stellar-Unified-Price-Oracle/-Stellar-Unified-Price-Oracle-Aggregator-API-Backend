@@ -106,6 +106,18 @@ export const config = {
   },
   priceCacheTtl: parseInt(process.env.PRICE_CACHE_TTL_MS || '15000', 10),
   historyCacheTtl: parseInt(process.env.HISTORY_CACHE_TTL_MS || '60000', 10),
+  // History gap detection + backfill (issues #889/#890/#893). The scheduled
+  // gap detector and `npm run history:backfill` share these thresholds so an
+  // alert and its remediation always agree on what counts as a gap.
+  history: {
+    expectedIntervalSec: parseInt(process.env.HISTORY_EXPECTED_INTERVAL_SEC || '60', 10),
+    gapAlertSec: parseInt(process.env.HISTORY_GAP_ALERT_SEC || '900', 10),
+    lookbackDays: parseInt(process.env.HISTORY_LOOKBACK_DAYS || '7', 10),
+    backfill: {
+      dataDir: process.env.HISTORY_BACKFILL_DATA_DIR || './data/history',
+      batchSize: parseInt(process.env.HISTORY_BACKFILL_BATCH_SIZE || '1000', 10),
+    },
+  },
   sourcesCacheTtl: parseInt(process.env.SOURCES_CACHE_TTL_MS || '300000', 10),
   healthCacheTtl: parseInt(process.env.HEALTH_CACHE_TTL_MS || '30000', 10),
   // Sensitive: decrypted at rest if stored as an `enc:` payload (issue #41).

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "issue": 791,
+  "workstream": "Economics and ecosystem sustainability",
+  "owner": "Economics and Ecosystem Lead (metric definitions and decisions), with observability and privacy maintainers (api/src/governance/usage-tracking.ts, docs/privacy/)",
+  "updatedAt": "2026-11-19",
+  "reviewIntervalDays": 90,
+  "nextReviewDate": "2027-02-17",
+  "input": {
+    "recordShape": "UsageRecord in api/src/governance/usage-tracking.ts",
+    "allowedFields": ["apiKeyPrefix", "timestamp", "asset", "status", "tier"],
+    "anonymousKey": "anonymous",
+    "activeStatusRange": [200, 399]
+  },
+  "privacy": {
+    "minCohortSize": 10,
+    "roundCountsTo": 5,
+    "complementarySuppression": true,
+    "saltEnv": "ADOPTION_METRICS_SALT",
+    "minSaltLength": 32,
+    "pseudonymHexLength": 16,
+    "saltRotationMonths": 12,
+    "rawEventRetentionDays": 30,
+    "activityLedgerRetentionMonths": 13,
+    "aggregateRetentionMonths": 24
+  },
+  "retentionOffsetsWeeks": [1, 4, 12],
+  "metrics": [
+    {
+      "id": "weekly_active_consumers",
+      "definition": "Distinct API keys with at least one successful request in the ISO week (UTC)",
+      "decision": "Capacity planning and the quarterly sustainability review (demand multiplier in config/sustainability-model.json)"
+    },
+    {
+      "id": "new_consumers",
+      "definition": "Distinct API keys whose first successful request in the ledger falls in the week",
+      "decision": "Integrator onboarding and developer-relations investment"
+    },
+    {
+      "id": "stickiness",
+      "definition": "Mean weekly active consumers divided by distinct consumers active in the period",
+      "decision": "Whether usage is habitual (production integrations) or exploratory (trials)"
+    },
+    {
+      "id": "cohort_retention",
+      "definition": "Share of a weekly first-seen cohort active again N weeks later, for N in retentionOffsetsWeeks",
+      "decision": "Onboarding quality, SDK investment, and churn alerts before pricing changes"
+    },
+    {
+      "id": "feed_adoption",
+      "definition": "Distinct consumers requesting each asset in the period",
+      "decision": "Feed lifecycle decisions (promote, keep, deprecate) alongside docs/FEED_COST_AND_QUALITY_COMPARISON.md"
+    },
+    {
+      "id": "tier_mix",
+      "definition": "Distinct consumers per pricing tier in the period",
+      "decision": "Pricing-tier design and free-to-paid conversion targets"
+    }
+  ]
+}
