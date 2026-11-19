@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { alertingGaps, backfillCommand, renderGapAlertBody, syncGapAlert } from '../history-gap-alert.mjs';
+import {
+  alertingGaps,
+  backfillCommand,
+  gapAlertStatus,
+  parseGapReport,
+  renderGapAlertBody,
+  syncGapAlert,
+} from '../history-gap-alert.mjs';
 
 const summary = {
   scannedAssets: 2,
@@ -55,6 +62,28 @@ test('renderGapAlertBody degrades gracefully without a summary', () => {
   const body = renderGapAlertBody(null, { threshold: 900 });
   assert.match(body, /HISTORY_GAP_ALERT_SEC=900/);
   assert.match(body, /summary was unavailable/);
+});
+
+test('parseGapReport accepts the detector --output summary', () => {
+  assert.equal(parseGapReport(JSON.stringify(summary)).gaps.length, 3);
+});
+
+test('parseGapReport rejects empty, non-JSON and incomplete reports', () => {
+  assert.throws(() => parseGapReport(''), /empty/);
+  assert.throws(() => parseGapReport('npm warn something\n{'), /not valid JSON/);
+  assert.throws(() => parseGapReport('{"gaps":[]}'), /alertThreshold/);
+});
+
+test('gapAlertStatus only alerts on exit 1 with a gap above the threshold', () => {
+  assert.equal(gapAlertStatus(0, summary), 'none');
+  assert.equal(gapAlertStatus(2, null), 'none');
+  assert.equal(gapAlertStatus('1', summary), 'gap');
+});
+
+test('gapAlertStatus refuses a vague alert when the report is missing or has no alerting gap', () => {
+  assert.throws(() => gapAlertStatus(1, null), /no readable report/);
+  const quiet = { ...summary, gaps: [summary.gaps[2]] };
+  assert.throws(() => gapAlertStatus(1, quiet), /no gap above the threshold/);
 });
 
 function fakeGithub(openIssues) {
