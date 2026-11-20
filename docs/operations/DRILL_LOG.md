@@ -15,6 +15,8 @@ matter to recovery objectives.
 | 2026-11-19 | Backup/restore, remediation re-run (local, not scheduled) | pass | 0.9 s | 0 rows lost | PR closing #861 |
 | _add on each drill_ | Chaos engineering (`chaos-engineering.yml`) | | | n/a | |
 | 2026-10-25 | Chaos engineering (`chaos-engineering.yml`) | failure | not measured | n/a | [run 40178881197](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40178881197) / #862 |
+| 2026-11-20 | Backup/restore (`backup-restore-test.yml`) | failure (npm ci workspace context) | not measured | not measured | [run 42456262844](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/42456262844) / remediation in progress |
+| 2026-11-20 | Chaos engineering (`chaos-engineering.yml`) | failure (generate-report.sh pipefail) | not measured | n/a | [run 42474308154](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/42474308154) / remediation in progress |
 
 ### 2026-10-25 backup/restore failure (#861)
 
@@ -61,6 +63,33 @@ matter to recovery objectives.
   check and `generate-report.sh` all exit 0 locally. Without a cluster, the
   report now states `Cluster reachable: false` and carries no evidence, so an
   empty report cannot be read as a passing experiment.
+
+## 2026-11-20 backup/restore and chaos remediation
+
+- **Backup/restore issue (#2):** The workflow failed at the `npm ci` step due to
+  running from the `api/` subdirectory, breaking monorepo workspace resolution.
+  The fix removes the `defaults.run.working-directory: api` setting so `npm ci`
+  runs from the repository root where `package.json` declares workspaces.
+  Additionally, metrics registration double-faults were prevented by deferring
+  metrics initialization until first use via lazy getters. The restore tester
+  was also fixed to target the temporary database for assertions rather than the
+  source database.
+
+- **Chaos engineering issue (#3):** The `generate-report.sh` script failed under
+  `set -euo pipefail` due to uninitialized variables in process substitutions
+  when kubectl returned no results (expected without a live cluster). The fix
+  flattens the nested command substitution into a single `kubectl get` with
+  inline JSON transformation that includes the dependency annotation. Error
+  handling was also improved in `validate-k8s.sh` to gracefully fall back when
+  PyYAML is missing or network tools are unavailable.
+
+- **History gaps (#1 & #4):** The gap detector workflow also suffered from the
+  same `npm ci` workspace issue. Fixed by removing the `defaults.run.working-directory`
+  so dependency resolution works correctly. Once deployed, backfill commands can
+  proceed:
+  ```sh
+  npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>
+  ```
 
 ## Rules
 

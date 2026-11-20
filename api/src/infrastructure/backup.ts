@@ -32,24 +32,54 @@ function psqlFromStdin(databaseUrl: string, sql: Buffer): Promise<void> {
   });
 }
 
-export const backupTotal = new client.Counter({
-  name: 'backup_total',
-  help: 'Total backup runs by result',
-  labelNames: ['result'],
-});
-register.registerMetric(backupTotal);
+let backupTotal: client.Counter<'result'>;
+let backupSizeBytes: client.Gauge<never>;
+let backupDurationMs: client.Gauge<never>;
 
-export const backupSizeBytes = new client.Gauge({
-  name: 'backup_size_bytes',
-  help: 'Size of the most recent backup in bytes',
-});
-register.registerMetric(backupSizeBytes);
+// Lazy initialization: only register metrics once on first access
+function initializeMetrics() {
+  if (backupTotal) return;
+  
+  backupTotal = new client.Counter({
+    name: 'backup_total',
+    help: 'Total backup runs by result',
+    labelNames: ['result'],
+  });
+  try {
+    register.registerMetric(backupTotal);
+  } catch (err) {
+    // Metric may already be registered if module is reloaded; check registry
+    const existing = register.getSingleMetric('backup_total');
+    if (!existing) throw err;
+  }
 
-export const backupDurationMs = new client.Gauge({
-  name: 'backup_duration_ms',
-  help: 'Duration of the most recent backup in ms',
-});
-register.registerMetric(backupDurationMs);
+  backupSizeBytes = new client.Gauge({
+    name: 'backup_size_bytes',
+    help: 'Size of the most recent backup in bytes',
+  });
+  try {
+    register.registerMetric(backupSizeBytes);
+  } catch (err) {
+    const existing = register.getSingleMetric('backup_size_bytes');
+    if (!existing) throw err;
+  }
+
+  backupDurationMs = new client.Gauge({
+    name: 'backup_duration_ms',
+    help: 'Duration of the most recent backup in ms',
+  });
+  try {
+    register.registerMetric(backupDurationMs);
+  } catch (err) {
+    const existing = register.getSingleMetric('backup_duration_ms');
+    if (!existing) throw err;
+  }
+}
+
+export function getBackupMetrics() {
+  initializeMetrics();
+  return { backupTotal, backupSizeBytes, backupDurationMs };
+}
 
 export interface BackupEntry {
   file: string;
@@ -147,6 +177,7 @@ export class BackupService {
       fs.mkdirSync(this.backupDir, { recursive: true });
     }
 
+    const { backupTotal, backupSizeBytes, backupDurationMs } = getBackupMetrics();
     const t0 = Date.now();
     const isoDate = new Date(t0).toISOString().replace(/[:.]/g, '-');
     const ext = this.encKey ? '.sql.gz.enc' : '.sql.gz';
