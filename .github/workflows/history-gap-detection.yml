@@ -29,9 +29,6 @@ jobs:
       contents: read
       # The threshold-breach step opens a tracking issue; a clean run closes it.
       issues: write
-    defaults:
-      run:
-        working-directory: api
     steps:
       - uses: actions/checkout@v4
 

@@ -42,27 +42,24 @@ collect_dependency_evidence() {
   local dep="$1"
   local found=0
   for kind in "${experiments[@]}"; do
-    while IFS='|' read -r name duration blast rto err_delta recovery; do
+    kubectl -n "${NS}" get "${kind}" \
+      -o jsonpath='{range .items[*]}{.metadata.name}|{.metadata.annotations.chaos\.stellar\.org/duration-seconds}|{.metadata.annotations.chaos\.stellar\.org/blast-radius-percent}|{.metadata.annotations.chaos\.stellar\.org/rto-seconds}|{.metadata.annotations.chaos\.stellar\.org/error-rate-delta-percent}|{.metadata.annotations.chaos\.stellar\.org/recovery-seconds}|{.metadata.annotations.chaos\.stellar\.org/dependency}{"\n"}{end}' \
+      2>/dev/null || true | while IFS='|' read -r name duration blast rto err_delta recovery dep_ann; do
       [[ -z "${name}" ]] && continue
-      found=1
-      local result="true"
-      if (( duration > MAX_DURATION_SECONDS )); then result="false"; fi
-      if (( blast > MAX_BLAST_RADIUS_PERCENT )); then result="false"; fi
-      if (( rto > SLO_RTO_SECONDS )); then result="false"; fi
-      if (( recovery > SLO_RECOVERY_SECONDS )); then result="false"; fi
-      # Compare error-rate delta as integer percent to avoid float math.
-      local err_delta_int="${err_delta%.*}"
-      if (( ${err_delta_int:-0} > SLO_ERROR_RATE_DELTA_PERCENT )); then result="false"; fi
-      printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
-        "${dep}" "${name}" "${duration}" "${blast}" "${rto}" "${err_delta}" "${recovery}" "${result}"
-    done < <(kubectl -n "${NS}" get "${kind}" \
-      -o jsonpath='{range .items[*]}{.metadata.name}|{.metadata.annotations.chaos\.stellar\.org/duration-seconds}|{.metadata.annotations.chaos\.stellar\.org/blast-radius-percent}|{.metadata.annotations.chaos\.stellar\.org/rto-seconds}|{.metadata.annotations.chaos\.stellar\.org/error-rate-delta-percent}|{.metadata.annotations.chaos\.stellar\.org/recovery-seconds}{"\n"}{end}' \
-      2>/dev/null | while IFS='|' read -r n d b r e rec; do
-        dep_ann="$(kubectl -n "${NS}" get "${kind}" "${n}" -o jsonpath='{.metadata.annotations.chaos\.stellar\.org/dependency}' 2>/dev/null || true)"
-        if [[ "${dep_ann}" == "${dep}" ]]; then
-          printf '%s|%s|%s|%s|%s|%s\n' "${n}" "${d}" "${b}" "${r}" "${e}" "${rec}"
-        fi
-      done)
+      if [[ "${dep_ann}" == "${dep}" ]]; then
+        found=1
+        local result="true"
+        if (( duration > MAX_DURATION_SECONDS )); then result="false"; fi
+        if (( blast > MAX_BLAST_RADIUS_PERCENT )); then result="false"; fi
+        if (( rto > SLO_RTO_SECONDS )); then result="false"; fi
+        if (( recovery > SLO_RECOVERY_SECONDS )); then result="false"; fi
+        # Compare error-rate delta as integer percent to avoid float math.
+        local err_delta_int="${err_delta%.*}"
+        if (( ${err_delta_int:-0} > SLO_ERROR_RATE_DELTA_PERCENT )); then result="false"; fi
+        printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
+          "${dep}" "${name}" "${duration}" "${blast}" "${rto}" "${err_delta}" "${recovery}" "${result}"
+      fi
+    done
   done
   if (( found == 0 )); then
     echo "_No ${dep} exercise evidence recorded_"
