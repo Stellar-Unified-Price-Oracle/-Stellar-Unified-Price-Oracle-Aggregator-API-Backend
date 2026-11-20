@@ -111,9 +111,9 @@ async function main(): Promise<void> {
         });
       }
     }
-    if (tsList.length === 0 && assetFilter) {
-      gaps.push({ asset, startTs: 0, endTs: 0, gapSeconds: Infinity, missingSnapshots: -1 });
-    }
+  }
+  if (assetFilter && !byAsset.has(assetFilter)) {
+    gaps.push({ asset: assetFilter, startTs: 0, endTs: 0, gapSeconds: Infinity, missingSnapshots: -1 });
   }
 
   const alerting = gaps.filter((g) => g.gapSeconds > alertThreshold);
