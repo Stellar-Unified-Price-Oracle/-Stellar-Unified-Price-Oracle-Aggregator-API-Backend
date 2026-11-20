@@ -65,6 +65,13 @@ auditable. The drill workflow posts its result to the drill issue and uploads a
 Simulated TTR must be **under 10 minutes** (`< 10 min`). A run that exceeds the
 target is still recorded but flagged as a miss in the drill report.
 
+The TTR is the `ttr_seconds` that `scripts/rollback.sh` writes in its
+`ROLLBACK_COMPLETE` event. A drill whose script exits non-zero, or that never
+logs `ROLLBACK_COMPLETE`, fails and reports `Status: failure`. It is never
+reported as a successful `0m 0s` drill. The dry-run skips the kubeconfig check
+because it issues no `kubectl` calls, so its TTR covers the script's own steps,
+not cluster rollout time.
+
 ### Acknowledge and close a successful drill
 
 Once the run shows `Status: success` and the simulated TTR is within target:

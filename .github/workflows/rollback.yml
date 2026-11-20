@@ -122,25 +122,35 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Record drill start time
-        id: start
-        run: echo "ts=$(date +%s)" >> "$GITHUB_OUTPUT"
-
       - name: Run rollback script in dry-run mode
         env:
           ROLLBACK_DRY_RUN: "true"
           REPO: ${{ github.repository }}
         run: |
           mkdir -p logs
+          set +e
           bash scripts/rollback.sh staging 2>&1 | tee logs/drill-output.log
-          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=${code}" >> "$GITHUB_ENV"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::rollback.sh exited ${code}; the drill did not complete."
+            exit "$code"
+          fi
 
+      # TTR comes from the script's own ROLLBACK_COMPLETE event. A drill that
+      # never reached that event did not exercise the rollback and must fail.
       - name: Compute simulated TTR
         id: ttr
+        if: always()
         run: |
-          start_ts=${{ steps.start.outputs.ts }}
-          end_ts=$(date +%s)
-          ttr=$(( end_ts - start_ts ))
+          ttr=$(grep -o 'ROLLBACK_COMPLETE .*ttr_seconds=[0-9]*' logs/rollback-events.log 2>/dev/null | tail -1 | sed 's/.*ttr_seconds=//')
+          if [ -z "$ttr" ]; then
+            echo "ttr=" >> "$GITHUB_OUTPUT"
+            echo "ttr_readable=n/a (drill did not complete)" >> "$GITHUB_OUTPUT"
+            echo "::error::No ROLLBACK_COMPLETE event in logs/rollback-events.log; the drill did not run end to end."
+            exit 1
+          fi
           echo "ttr=${ttr}" >> "$GITHUB_OUTPUT"
           echo "ttr_readable=$(printf '%dm %ds' $((ttr/60)) $((ttr%60)))" >> "$GITHUB_OUTPUT"
 
