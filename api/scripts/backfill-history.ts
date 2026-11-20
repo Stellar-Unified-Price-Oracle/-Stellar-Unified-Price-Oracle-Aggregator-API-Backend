@@ -184,9 +184,6 @@ async function main(): Promise<void> {
   let considered = 0;
   let inserted = 0;
 
-  // Per-asset tallies so the summary is actionable for each reported gap.
-  const perAsset = new Map<string, { considered: number; inserted: number }>();
-
   for (const file of files) {
     const rows = loadFile(path.join(dataDir, file)).filter((r) => {
       if (from !== undefined && r.timestamp < from) return false;

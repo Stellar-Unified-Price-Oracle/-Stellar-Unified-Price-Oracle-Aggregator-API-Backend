@@ -12,10 +12,11 @@ matter to recovery objectives.
 | _add on each drill_ | Backup/restore (`backup-restore-test.yml`) | | | | |
 | _add on each drill_ | Secret rotation (`secret-rotation-drill.yml`) | | n/a | n/a | |
 | 2026-10-25 | Backup/restore (`backup-restore-test.yml`) | failure | not measured | not measured | [run 40165774400](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40165774400) / #861 |
+| 2026-11-01 | Backup/restore (`backup-restore-test.yml`) | failure | not measured | not measured | [run 41282975752](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41282975752) / #896, same root cause as #861, fixed by #983 |
 | 2026-11-19 | Backup/restore, remediation re-run (local, not scheduled) | pass | 0.9 s | 0 rows lost | PR closing #861 |
 | _add on each drill_ | Chaos engineering (`chaos-engineering.yml`) | | | n/a | |
 | 2026-10-25 | Chaos engineering (`chaos-engineering.yml`) | failure | not measured | n/a | [run 40178881197](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40178881197) / #862 |
-| 2026-11-25 | Load Tests (`load-tests.yml`) | failure | not measured | n/a | [run 42588451219](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/42588451219) |
+| 2026-11-01 | Chaos engineering (`chaos-engineering.yml`) | failure | not measured | n/a | [run 41300387625](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41300387625) / #898, remediated by #862 |
 
 ### 2026-10-25 backup/restore failure (#861)
 
@@ -23,7 +24,8 @@ matter to recovery objectives.
   because `package-lock.json` was missing the `@stellar-oracle/sdk-bindings`
   workspace. RTO and RPO were therefore never measured.
 - **Repeated root cause:** the same failure hit the 2026-11-01, 2026-11-08 and
-  2026-11-15 runs (rule 3). The PR closing #861 is the tracked action.
+  2026-11-15 runs (rule 3); the 2026-11-01 run is #896. The PR closing #861
+  (#983) is the tracked action.
 - **Latent defects found once install passed:**
   1. `observability/metrics.ts` registered the feed-catalog metrics twice, so
      loading the restore tester threw `A metric with the name
@@ -79,32 +81,16 @@ matter to recovery objectives.
   report now states `Cluster reachable: false` and carries no evidence, so an
   empty report cannot be read as a passing experiment.
 
-### 2026-11-25 history gap detection (runs 42512101509, 42532663534, 42552413795)
+### 2026-11-01 chaos engineering failure (#898)
 
-- **What failed:** Three consecutive hourly runs of `history-gap-detection.yml`
-  exited 1 (gap over threshold) and opened/commented on a `price_history gap
-  detected` alert issue. The issue body contained only the placeholder
-  `--asset <ASSET> --from <startTs> --to <endTs>` text instead of actual asset
-  names and timestamps.
-- **Root cause:** The `Detect gaps` step piped `npm run --silent history:gaps --
-  --json` to stdout and redirected that into `$RUNNER_TEMP/gaps.json`. When `tsx`
-  or any npm lifecycle hook writes anything to stdout before the JSON (e.g. a
-  loader message), the redirect captures mixed output and `JSON.parse` throws.
-  The alert step's catch block sets `report = null`, so `alerting.length` ends up
-  0 and the fallback placeholder text is used even though the gap is real.
-  Additionally, `backfill-history.ts` referenced two undefined names:
-  `EXPECTED_INTERVAL_SEC` (never declared) and `files` (a `const` local to
-  `main`, referenced from the separate `verifyBackfill` function), which would
-  crash the backfill script on any run that reached the gap-remaining check.
-- **Remediation:** `history-gap-detection.yml` updated to pass `--output
-  "$RUNNER_TEMP/gaps.json"` directly to the detect script instead of relying on
-  stdout redirect, so the JSON is always written atomically to the file.
-  `backfill-history.ts` gains the `EXPECTED_INTERVAL_SEC` constant and
-  `verifyBackfill` now receives `files` as a parameter.
-- **Backfill status:** no asset-specific timestamps were recoverable from the
-  alert issue bodies. Re-run `history-gap-detection.yml` after deploying the fix;
-  the next run will produce a correctly populated alert with asset names,
-  timestamps, and ready-to-run backfill commands.
+- **What failed:** the same `scripts/validate-k8s.sh` check as #862 rejected
+  `api-stable` and `aggregator` in all three overlays with "writable mounts
+  missing /tmp, /app/data, /app/logs". `generate-report` was skipped, so no
+  experiment ran and no RTO was measured.
+- **Root cause:** identical to the 2026-10-25 failure (rule 3); the run used
+  commit `7771173`, before the `volumeMounts` were restored. The PR closing
+  #862 is the remediation, and chaos runs on `main` after it have passed
+  manifest validation. Record the next scheduled run here.
 
 ## Rules
 
