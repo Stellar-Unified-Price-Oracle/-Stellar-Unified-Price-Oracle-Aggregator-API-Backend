@@ -13,9 +13,10 @@ The detector found two consecutive snapshots for the same asset more than
 (default 7 days). The issue body lists each asset, the exact range, and a
 ready-to-run backfill command.
 
-The workflow opens **one** issue, comments on it on later failing runs, and
-closes it on the next clean run (detector exit `0`). It
-only opens or comments when the detector itself exits `1`. These outcomes fail
+The workflow opens **one** issue and comments on it on later failing runs. It
+only opens or comments when the detector itself exits `1` and its report lists
+at least one window above the threshold. The next clean run (detector exit `0`)
+closes every open gap alert automatically. These outcomes fail
 the run without filing an issue:
 
 | Exit / failure | Meaning | Action |
@@ -51,7 +52,7 @@ npm run history:gaps -- --asset BTC --since 2026-11-12
 ```
 
 Inserts are idempotent (`ON CONFLICT (asset, source, timestamp) DO NOTHING`), so it's safe
-to re-run them. Then re-run the workflow (`workflow_dispatch`). The run closes the issue once it passes.
+to re-run them. Then re-run the workflow (`workflow_dispatch`). A passing run closes the issue.
 
 ## Tuning
 
@@ -61,7 +62,8 @@ to re-run them. Then re-run the workflow (`workflow_dispatch`). The run closes t
 
 ## Rollback
 
-The alert logic lives in `scripts/lib/history-gap-alert.mjs`, and
-`scripts/tests/history-gap-alert.test.mjs` covers it. Reverting the workflow
+The alert logic lives only in `scripts/history-gap-alert.mjs`, which the
+workflow imports directly. `scripts/tests/history-gap-alert.test.mjs` covers it
+and also asserts the workflow's alert gating. Reverting the workflow
 change brings back the old behaviour (a new issue on any failure). It touches
 no data or schema.

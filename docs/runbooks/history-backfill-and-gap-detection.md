@@ -34,8 +34,8 @@ connection error.
 `secrets.HISTORY_DATABASE_URL`. A gap over threshold (detector exit `1`) fails
 the job and opens a `data` / `alert` issue with the offending window and the
 backfill command. While such an issue is open, later runs that still see a gap
-comment on it instead of opening a new one; the first clean run (exit `0`)
-closes it. Any other failure — `npm ci`, a missing secret, a database
+comment on it instead of opening a new one. The first clean run (detector exit
+`0`) closes every open gap alert automatically. Any other failure — `npm ci`, a missing secret, a database
 connection error (exit `2`) — fails the job without opening a gap issue, so
 check the run log rather than backfilling. Wire
 the same script into Prometheus (via a `textfile` collector emitting

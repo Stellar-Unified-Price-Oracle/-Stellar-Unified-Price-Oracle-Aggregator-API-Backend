@@ -12,6 +12,35 @@ function formatDuration(seconds) {
   return [h ? `${h}h` : '', m ? `${m}m` : '', s || (!h && !m) ? `${s}s` : ''].filter(Boolean).join(' ');
 }
 
+export const GAPS_EXIT_CODE = 1;
+
+export function parseGapReport(raw) {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    throw new Error('Gap report is empty');
+  }
+  let report;
+  try {
+    report = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Gap report is not valid JSON: ${err.message}`);
+  }
+  if (!report || !Array.isArray(report.gaps) || typeof report.alertThreshold !== 'number') {
+    throw new Error('Gap report is missing gaps[] or alertThreshold');
+  }
+  return report;
+}
+
+export function gapAlertStatus(exitCode, report) {
+  if (Number(exitCode) !== GAPS_EXIT_CODE) return 'none';
+  if (!report) {
+    throw new Error('Detector reported a gap but produced no readable report; refusing to file an alert without gap windows');
+  }
+  if (alertingGaps(report).length === 0) {
+    throw new Error('Detector exited 1 but its report lists no gap above the threshold; refusing to file an alert');
+  }
+  return 'gap';
+}
+
 export function alertingGaps(summary) {
   const threshold = summary?.alertThreshold ?? Infinity;
   return (summary?.gaps ?? []).filter((g) => g.gapSeconds === null || g.gapSeconds > threshold);
