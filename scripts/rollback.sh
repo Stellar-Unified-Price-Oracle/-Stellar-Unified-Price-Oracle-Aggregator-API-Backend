@@ -92,6 +92,10 @@ require_confirm_production() {
 }
 
 check_kubeconfig() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "[dry-run] skipping kubeconfig check; no kubectl command is executed"
+    return 0
+  fi
   if [[ -z "${KUBECONFIG:-}" ]] && [[ ! -f "${HOME}/.kube/config" ]]; then
     die "KUBECONFIG is not set and ~/.kube/config does not exist"
   fi
@@ -182,6 +186,7 @@ main() {
 
   [[ "$sha_arg" == "--freeze-only" ]] && freeze_only=true
 
+  mkdir -p "$(dirname "$LOG_FILE")"
   validate_env "$env"
   require_confirm_production "$env"
   check_kubeconfig
@@ -190,7 +195,6 @@ main() {
   local start_ts
   start_ts=$(date +%s)
 
-  mkdir -p logs
   record_event "ROLLBACK_START env=${env} freeze_only=${freeze_only} dry_run=${DRY_RUN}"
 
   log "Step 0: Coordinate with release train (halt promotion if active)"

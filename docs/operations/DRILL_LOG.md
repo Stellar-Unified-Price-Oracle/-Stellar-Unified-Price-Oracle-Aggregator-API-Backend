@@ -12,11 +12,11 @@ matter to recovery objectives.
 | _add on each drill_ | Backup/restore (`backup-restore-test.yml`) | | | | |
 | _add on each drill_ | Secret rotation (`secret-rotation-drill.yml`) | | n/a | n/a | |
 | 2026-10-25 | Backup/restore (`backup-restore-test.yml`) | failure | not measured | not measured | [run 40165774400](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40165774400) / #861 |
+| 2026-11-01 | Backup/restore (`backup-restore-test.yml`) | failure | not measured | not measured | [run 41282975752](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41282975752) / #896, same root cause as #861, fixed by #983 |
 | 2026-11-19 | Backup/restore, remediation re-run (local, not scheduled) | pass | 0.9 s | 0 rows lost | PR closing #861 |
 | _add on each drill_ | Chaos engineering (`chaos-engineering.yml`) | | | n/a | |
 | 2026-10-25 | Chaos engineering (`chaos-engineering.yml`) | failure | not measured | n/a | [run 40178881197](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40178881197) / #862 |
-| 2026-11-20 | Backup/restore (`backup-restore-test.yml`) | failure (npm ci workspace context) | not measured | not measured | [run 42456262844](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/42456262844) / remediation in progress |
-| 2026-11-20 | Chaos engineering (`chaos-engineering.yml`) | failure (generate-report.sh pipefail) | not measured | n/a | [run 42474308154](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/42474308154) / remediation in progress |
+| 2026-11-01 | Chaos engineering (`chaos-engineering.yml`) | failure | not measured | n/a | [run 41300387625](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41300387625) / #898, remediated by #862 |
 
 ### 2026-10-25 backup/restore failure (#861)
 
@@ -24,7 +24,8 @@ matter to recovery objectives.
   because `package-lock.json` was missing the `@stellar-oracle/sdk-bindings`
   workspace. RTO and RPO were therefore never measured.
 - **Repeated root cause:** the same failure hit the 2026-11-01, 2026-11-08 and
-  2026-11-15 runs (rule 3). The PR closing #861 is the tracked action.
+  2026-11-15 runs (rule 3); the 2026-11-01 run is #896. The PR closing #861
+  (#983) is the tracked action.
 - **Latent defects found once install passed:**
   1. `observability/metrics.ts` registered the feed-catalog metrics twice, so
      loading the restore tester threw `A metric with the name
@@ -43,6 +44,22 @@ matter to recovery objectives.
   889 ms and recovered 5 of 5 rows (5 of 5 assets). These figures come from the
   CI fixture, not production-sized data, and only confirm the drill works end
   to end. Record the next scheduled run here.
+
+### 2026-11-25 load tests failure (run 42588451219)
+
+- **What failed:** `record-outcome` declared `needs: [load-test-pr, load-test-full]`.
+  On a `schedule` trigger `load-test-pr` is skipped (its `if` condition requires
+  `pull_request`). GitHub Actions propagates a skipped dependency to any dependent
+  job even when that job has `if: always()`, so `record-outcome` was silently
+  skipped on every scheduled run. No drill-outcome issue was opened and no RTO/RPO
+  figures were recorded.
+- **Root cause:** `needs` lists both tier jobs unconditionally. The fix removes
+  `load-test-pr` from `record-outcome`'s `needs`; on a schedule only
+  `load-test-full` runs and `record-outcome` only needs to observe its result.
+- **RTO/RPO:** not measured; k6 never ran because the job was skipped before
+  setup. Record figures from the next successful scheduled run.
+- **Remediation:** `load-tests.yml` updated — `record-outcome` now needs only
+  `load-test-full`.
 
 ### 2026-10-25 chaos engineering failure (#862)
 
@@ -64,32 +81,16 @@ matter to recovery objectives.
   report now states `Cluster reachable: false` and carries no evidence, so an
   empty report cannot be read as a passing experiment.
 
-## 2026-11-20 backup/restore and chaos remediation
+### 2026-11-01 chaos engineering failure (#898)
 
-- **Backup/restore issue (#2):** The workflow failed at the `npm ci` step due to
-  running from the `api/` subdirectory, breaking monorepo workspace resolution.
-  The fix removes the `defaults.run.working-directory: api` setting so `npm ci`
-  runs from the repository root where `package.json` declares workspaces.
-  Additionally, metrics registration double-faults were prevented by deferring
-  metrics initialization until first use via lazy getters. The restore tester
-  was also fixed to target the temporary database for assertions rather than the
-  source database.
-
-- **Chaos engineering issue (#3):** The `generate-report.sh` script failed under
-  `set -euo pipefail` due to uninitialized variables in process substitutions
-  when kubectl returned no results (expected without a live cluster). The fix
-  flattens the nested command substitution into a single `kubectl get` with
-  inline JSON transformation that includes the dependency annotation. Error
-  handling was also improved in `validate-k8s.sh` to gracefully fall back when
-  PyYAML is missing or network tools are unavailable.
-
-- **History gaps (#1 & #4):** The gap detector workflow also suffered from the
-  same `npm ci` workspace issue. Fixed by removing the `defaults.run.working-directory`
-  so dependency resolution works correctly. Once deployed, backfill commands can
-  proceed:
-  ```sh
-  npm run history:backfill -- --asset <ASSET> --from <startTs> --to <endTs>
-  ```
+- **What failed:** the same `scripts/validate-k8s.sh` check as #862 rejected
+  `api-stable` and `aggregator` in all three overlays with "writable mounts
+  missing /tmp, /app/data, /app/logs". `generate-report` was skipped, so no
+  experiment ran and no RTO was measured.
+- **Root cause:** identical to the 2026-10-25 failure (rule 3); the run used
+  commit `7771173`, before the `volumeMounts` were restored. The PR closing
+  #862 is the remediation, and chaos runs on `main` after it have passed
+  manifest validation. Record the next scheduled run here.
 
 ## Rules
 

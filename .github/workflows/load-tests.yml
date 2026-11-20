@@ -202,7 +202,7 @@ jobs:
   record-outcome:
     name: Record drill outcome
     if: always() && github.event_name == 'schedule'
-    needs: [load-test-pr, load-test-full]
+    needs: [load-test-full]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7

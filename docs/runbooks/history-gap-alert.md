@@ -14,7 +14,9 @@ The detector found two consecutive snapshots for the same asset more than
 ready-to-run backfill command.
 
 The workflow opens **one** issue and comments on it on later failing runs. It
-only opens or comments when the detector itself exits `1`. These outcomes fail
+only opens or comments when the detector itself exits `1` and its report lists
+at least one window above the threshold. The next clean run (detector exit `0`)
+closes every open gap alert automatically. These outcomes fail
 the run without filing an issue:
 
 | Exit / failure | Meaning | Action |
@@ -26,6 +28,18 @@ the run without filing an issue:
 > History: from 2026-10-20 to 2026-11-19 the alert step ran on any failure, and
 > `npm ci` was failing on a stale lockfile (`@stellar-oracle/sdk-bindings`
 > missing). That opened 121 "gap detected" issues when no scan had actually run.
+
+## Alert log
+
+Each row records one `price_history gap detected` issue and how it was resolved.
+"False positive" means the detector never ran, so no gap was measured and no
+backfill applies.
+
+| Issue | Run | Failed step | Detector ran? | Outcome |
+| :--- | :--- | :--- | :--- | :--- |
+| #901 | [41369390299](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41369390299) (2026-11-02 00:51 UTC) | Install dependencies (`npm ci`: `Missing: @stellar-oracle/sdk-bindings@1.0.0 from lock file`) | No | False positive; no backfill needed. Lockfile resynced and alert gated on detector exit `1`. |
+| #902 | [41408190697](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41408190697) (2026-11-02 07:44 UTC) | Install dependencies (`npm ci`: `Missing: @stellar-oracle/sdk-bindings@1.0.0 from lock file`) | No | False positive; no backfill needed. Lockfile resynced and alert gated on detector exit `1`. |
+| #904 | [41501001060](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41501001060) (2026-11-02 18:29 UTC) | Install dependencies (`npm ci`: `Missing: @stellar-oracle/sdk-bindings@1.0.0 from lock file`) | No | False positive; no backfill needed. Lockfile resynced and alert gated on detector exit `1`. |
 
 ## Diagnose
 
@@ -50,7 +64,7 @@ npm run history:gaps -- --asset BTC --since 2026-11-12
 ```
 
 Inserts are idempotent (`ON CONFLICT (asset, source, timestamp) DO NOTHING`), so it's safe
-to re-run them. Then re-run the workflow (`workflow_dispatch`). Close the issue once the run passes.
+to re-run them. Then re-run the workflow (`workflow_dispatch`). A passing run closes the issue.
 
 ## Tuning
 
@@ -60,7 +74,8 @@ to re-run them. Then re-run the workflow (`workflow_dispatch`). Close the issue 
 
 ## Rollback
 
-The alert logic lives in `scripts/lib/history-gap-alert.mjs`, and
-`scripts/tests/history-gap-alert.test.mjs` covers it. Reverting the workflow
+The alert logic lives only in `scripts/history-gap-alert.mjs`, which the
+workflow imports directly. `scripts/tests/history-gap-alert.test.mjs` covers it
+and also asserts the workflow's alert gating. Reverting the workflow
 change brings back the old behaviour (a new issue on any failure). It touches
 no data or schema.
