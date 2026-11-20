@@ -18,9 +18,6 @@ jobs:
   restore-test:
     name: Restore integrity test
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: api
 
     services:
       postgres:
@@ -54,6 +51,7 @@ jobs:
       # in the API must not mask a backup/restore regression here.
       - name: Build restore tester
         run: |
+          cd api
           npx tsc src/infrastructure/restore-tester.ts src/infrastructure/backup.ts \
             --outDir dist --rootDir src --module commonjs --target ES2022 \
             --esModuleInterop --strict --skipLibCheck

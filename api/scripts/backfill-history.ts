@@ -63,6 +63,7 @@ if (from !== undefined && to !== undefined && from >= to) {
   process.exit(2);
 }
 
+const EXPECTED_INTERVAL_SEC = Number(process.env.HISTORY_EXPECTED_INTERVAL_SEC ?? 60);
 const GAP_ALERT_SEC = Number(process.env.HISTORY_GAP_ALERT_SEC ?? 900);
 const EXPECTED_INTERVAL_SEC = Number(process.env.HISTORY_EXPECTED_INTERVAL_SEC ?? 60);
 

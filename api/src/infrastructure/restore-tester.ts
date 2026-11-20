@@ -11,26 +11,55 @@ import { BackupService, BackupEntry } from './backup';
 
 const execFileAsync = promisify(execFile);
 
-export const restoreTestTotal = new client.Counter({
-  name: 'restore_test_total',
-  help: 'Total restore test runs by type and result',
-  labelNames: ['type', 'result'],
-});
-register.registerMetric(restoreTestTotal);
+let restoreTestTotal: client.Counter<'type' | 'result'>;
+let restoreTestDurationMs: client.Gauge<'type'>;
+let restoreIntegrityFailures: client.Counter<'type'>;
 
-export const restoreTestDurationMs = new client.Gauge({
-  name: 'restore_test_duration_ms',
-  help: 'Duration of the most recent restore test in ms by type',
-  labelNames: ['type'],
-});
-register.registerMetric(restoreTestDurationMs);
+// Lazy initialization: only register metrics once on first access
+function initializeMetrics() {
+  if (restoreTestTotal) return;
+  
+  restoreTestTotal = new client.Counter({
+    name: 'restore_test_total',
+    help: 'Total restore test runs by type and result',
+    labelNames: ['type', 'result'],
+  });
+  try {
+    register.registerMetric(restoreTestTotal);
+  } catch (err) {
+    const existing = register.getSingleMetric('restore_test_total');
+    if (!existing) throw err;
+  }
 
-export const restoreIntegrityFailures = new client.Counter({
-  name: 'restore_integrity_failures',
-  help: 'Total restore integrity assertion failures by type',
-  labelNames: ['type'],
-});
-register.registerMetric(restoreIntegrityFailures);
+  restoreTestDurationMs = new client.Gauge({
+    name: 'restore_test_duration_ms',
+    help: 'Duration of the most recent restore test in ms by type',
+    labelNames: ['type'],
+  });
+  try {
+    register.registerMetric(restoreTestDurationMs);
+  } catch (err) {
+    const existing = register.getSingleMetric('restore_test_duration_ms');
+    if (!existing) throw err;
+  }
+
+  restoreIntegrityFailures = new client.Counter({
+    name: 'restore_integrity_failures',
+    help: 'Total restore integrity assertion failures by type',
+    labelNames: ['type'],
+  });
+  try {
+    register.registerMetric(restoreIntegrityFailures);
+  } catch (err) {
+    const existing = register.getSingleMetric('restore_integrity_failures');
+    if (!existing) throw err;
+  }
+}
+
+export function getRestoreMetrics() {
+  initializeMetrics();
+  return { restoreTestTotal, restoreTestDurationMs, restoreIntegrityFailures };
+}
 
 export interface TimescaleRestoreResult {
   type: 'timescaledb';
@@ -111,6 +140,7 @@ export class RestoreTester {
   async testTimescaleRestore(): Promise<TimescaleRestoreResult> {
     const t0 = Date.now();
     const type = 'timescaledb';
+    const { restoreTestTotal, restoreTestDurationMs, restoreIntegrityFailures } = getRestoreMetrics();
 
     const entries = this.backupService.listBackups();
     if (entries.length === 0) {
@@ -151,6 +181,7 @@ export class RestoreTester {
   async testHistoryFilesRestore(): Promise<HistoryFilesRestoreResult> {
     const t0 = Date.now();
     const type = 'history_files';
+    const { restoreTestTotal, restoreTestDurationMs } = getRestoreMetrics();
 
     let tempDir: string | null = null;
 
@@ -195,6 +226,7 @@ export class RestoreTester {
   async testConfigRestore(): Promise<ConfigRestoreResult> {
     const t0 = Date.now();
     const type = 'config';
+    const { restoreTestTotal, restoreTestDurationMs } = getRestoreMetrics();
 
     try {
       const verified: string[] = [];
@@ -239,12 +271,14 @@ export class RestoreTester {
     if (!result.success) {
       throw new Error(`Restore failed: ${result.error}`);
     }
-    const restoreResult = await execFileAsync('psql', [
+    const verifyResult = await execFileAsync('psql', [
+      '--tuples-only',
+      '--no-align',
       tempUrl,
       '-c',
-      '\\l',
+      'SELECT COUNT(*) FROM price_history',
     ]).catch(() => null);
-    if (!restoreResult) {
+    if (!verifyResult) {
       throw new Error(`Could not connect to temp database ${dbName}`);
     }
   }
@@ -387,6 +421,7 @@ export class RestoreTester {
   }
 
   private failTimescale(t0: number, errorMsg: string): TimescaleRestoreResult {
+    const { restoreTestTotal, restoreTestDurationMs, restoreIntegrityFailures } = getRestoreMetrics();
     const durationMs = Date.now() - t0;
     restoreTestTotal.inc({ type: 'timescaledb', result: 'failure' });
     restoreTestDurationMs.set({ type: 'timescaledb' }, durationMs);
@@ -396,6 +431,7 @@ export class RestoreTester {
   }
 
   private failHistoryFiles(t0: number, errorMsg: string): HistoryFilesRestoreResult {
+    const { restoreTestTotal, restoreTestDurationMs, restoreIntegrityFailures } = getRestoreMetrics();
     const durationMs = Date.now() - t0;
     restoreTestTotal.inc({ type: 'history_files', result: 'failure' });
     restoreTestDurationMs.set({ type: 'history_files' }, durationMs);
@@ -405,6 +441,7 @@ export class RestoreTester {
   }
 
   private failConfig(t0: number, errorMsg: string): ConfigRestoreResult {
+    const { restoreTestTotal, restoreTestDurationMs, restoreIntegrityFailures } = getRestoreMetrics();
     const durationMs = Date.now() - t0;
     restoreTestTotal.inc({ type: 'config', result: 'failure' });
     restoreTestDurationMs.set({ type: 'config' }, durationMs);

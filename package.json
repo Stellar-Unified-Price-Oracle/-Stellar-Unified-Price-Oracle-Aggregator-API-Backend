@@ -58,7 +58,10 @@
     "rent:extend": "tsx scripts/extend-ttl-job.ts",
     "install:all": "npm install",
     "prepare": "(husky || true) && npm run build:packages",
-    "quality:report": "tsx scripts/price-quality-report.ts"
+    "quality:report": "tsx scripts/price-quality-report.ts",
+    "diagnose:gaps": "node scripts/diagnose-history-gaps.mjs",
+    "fix:gaps": "node scripts/fix-history-gaps.mjs",
+    "extract:gap-report": "node scripts/extract-gap-report.mjs"
   },
   "devDependencies": {
     "husky": "^9.1.0"

@@ -105,15 +105,9 @@ async function main(): Promise<void> {
   }
 
   const gaps: Gap[] = [];
-  for (const [asset, sourceMap] of byAssetSource) {
-    // Check if asset has no data at all
-    if (sourceMap.size === 0 && assetFilter) {
-      gaps.push({ asset, startTs: 0, endTs: 0, gapSeconds: Infinity, missingSnapshots: -1 });
-      continue;
-    }
-
-    // For each source, detect gaps
-    for (const [source, tsList] of sourceMap) {
+  // Iterate over assets and their sources to detect gaps within each source.
+  for (const [asset, sources] of byAssetSource) {
+    for (const [, tsList] of sources) {
       for (let i = 1; i < tsList.length; i += 1) {
         const delta = tsList[i] - tsList[i - 1];
         if (delta > expectedInterval * 1.5) {
@@ -127,6 +121,9 @@ async function main(): Promise<void> {
         }
       }
     }
+  }
+  if (assetFilter && !byAssetSource.has(assetFilter)) {
+    gaps.push({ asset: assetFilter, startTs: 0, endTs: 0, gapSeconds: Infinity, missingSnapshots: -1 });
   }
 
   const alerting = gaps.filter((g) => g.gapSeconds > alertThreshold);
