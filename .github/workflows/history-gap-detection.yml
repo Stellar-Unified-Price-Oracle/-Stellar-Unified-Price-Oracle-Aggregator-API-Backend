@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # The threshold-breach step opens a tracking issue.
+      # The threshold-breach step opens a tracking issue; a clean run closes it.
       issues: write
     defaults:
       run:
