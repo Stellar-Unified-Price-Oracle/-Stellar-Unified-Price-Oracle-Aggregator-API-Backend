@@ -1,0 +1,262 @@
+================================================================================
+GET STARTED - FIXING HISTORY GAPS
+================================================================================
+
+You have 4 GitHub issues about history gaps. Here's how to fix them in 5 minutes:
+
+================================================================================
+STEP 1: UNDERSTAND THE PROBLEM
+================================================================================
+
+Price history is missing data for more than 15 minutes straight (called a "gap").
+This breaks calculations and needs to be backfilled.
+
+GitHub issues:
+  - Run 41955809693
+  - Run 42136337865
+  - Run 42016055744
+  - Run 42087698872
+
+================================================================================
+STEP 2: DIAGNOSE (< 2 minutes)
+================================================================================
+
+From repository root:
+
+  $ npm run diagnose:gaps
+
+This will output:
+  ✅ Database connectivity check
+  ✅ List of available history data files
+  ✅ Current gaps detected
+  ✅ Recommended fixes
+
+Example output:
+  
+  ✅ Database connection OK
+  ✅ Found 12 history data file(s)
+  ⚠️  Found 1 alerting gap(s)
+    BTC: 1800s (30 missing snapshots)
+
+  Recommended next steps:
+    npm run history:backfill -- --asset BTC --from 1704864000 --to 1704865800
+
+================================================================================
+STEP 3: BACKFILL (< 2 minutes)
+================================================================================
+
+Copy the recommended command from Step 2 and run it:
+
+  $ cd api
+  $ npm run history:backfill -- --asset BTC --from 1704864000 --to 1704865800
+
+This will:
+  ✅ Find source data files
+  ✅ Load matching snapshots
+  ✅ Insert into database
+  ✅ Verify no gaps remain
+  ✅ Report success/failure
+
+Expected output:
+
+  history-BTC.json: considered 1450, inserted 1450
+
+  Verification for BTC from 1704864000 to 1704865800: 1450 row(s) present
+  No gaps larger than 900s remain in range.
+
+================================================================================
+STEP 4: VERIFY (< 1 minute)
+================================================================================
+
+Confirm the gap is closed:
+
+  $ cd api
+  $ npm run history:gaps
+
+Expected output:
+
+  Scanned 5000 rows across 12 assets since 2026-01-14T00:00:00.000Z
+  Found 0 gap(s); 0 exceed 900s
+  No gaps beyond threshold.
+
+Exit code 0 = Success ✅
+
+================================================================================
+STEP 5: WAIT FOR AUTO-CLOSE (< 1 hour)
+================================================================================
+
+The GitHub issue will automatically close when the scheduled gap detection
+workflow runs next (hourly at :17 past the hour).
+
+To trigger it immediately:
+
+  $ gh workflow run history-gap-detection.yml
+
+To force a close manually:
+
+  $ gh issue comment <issue-number> -b "Gap resolved, closing."
+  $ gh issue close <issue-number>
+
+================================================================================
+IF SOMETHING GOES WRONG
+================================================================================
+
+Problem: "No data directory found"
+Solution: 
+  $ mkdir -p api/data
+  $ cp /your/source/data/history-BTC.json api/data/
+  $ npm run history:backfill -- --asset BTC --from X --to Y
+
+Problem: DATABASE_URL not set
+Solution:
+  $ export DATABASE_URL="postgresql://user:pass@localhost:5432/oracle"
+  $ npm run history:backfill -- --asset BTC --from X --to Y
+
+Problem: Backfill shows remaining gaps
+Solution:
+  $ cd api
+  $ npm run history:backfill -- --asset BTC --from 1704863000 --to 1704866600
+  (Extend range by 10% on each side)
+
+Problem: Need more help
+Solution:
+  Read: FIXING_HISTORY_GAPS.md (quick reference)
+  Or:   docs/RUNBOOKS/HISTORY_GAP_RUNBOOK.md (detailed steps)
+  Or:   HISTORY_GAP_FIXES.md (comprehensive guide)
+
+================================================================================
+COMMAND REFERENCE
+================================================================================
+
+Diagnostics:
+  npm run diagnose:gaps                    # Full health check
+  npm run diagnose:gaps -- --verbose       # With verbose output
+
+Gap Detection:
+  cd api && npm run history:gaps           # Detect all gaps
+  cd api && npm run history:gaps -- --json # Machine-readable format
+
+Backfilling:
+  cd api && npm run history:backfill -- --asset BTC --from X --to Y
+  cd api && npm run history:backfill -- --asset BTC --dry-run
+  cd api && npm run history:backfill -- --all
+
+Testing:
+  node scripts/test-gap-tools.mjs --skip-db
+
+================================================================================
+DOCUMENTATION
+================================================================================
+
+FOR QUICK START:
+  → FIXING_HISTORY_GAPS.md (this repo root)
+
+FOR COMPREHENSIVE GUIDE:
+  → HISTORY_GAP_FIXES.md (in docs/)
+
+FOR OPERATIONAL RUNBOOK:
+  → docs/RUNBOOKS/HISTORY_GAP_RUNBOOK.md
+
+FOR ARCHITECTURE / SUMMARY:
+  → HISTORY_GAP_FIXES_SUMMARY.md
+
+================================================================================
+WHAT'S BEEN ADDED
+================================================================================
+
+New Tools:
+  ✅ npm run diagnose:gaps          # Comprehensive diagnostics
+  ✅ npm run fix:gaps                # Gap recovery wrapper
+  ✅ npm run extract:gap-report      # Report extraction
+
+New Documentation:
+  ✅ FIXING_HISTORY_GAPS.md          # Quick start
+  ✅ docs/HISTORY_GAP_FIXES.md       # Reference guide
+  ✅ docs/RUNBOOKS/HISTORY_GAP_RUNBOOK.md  # Operational runbook
+  ✅ HISTORY_GAP_FIXES_SUMMARY.md    # Architecture overview
+
+New Scripts:
+  ✅ scripts/diagnose-history-gaps.mjs
+  ✅ scripts/fix-history-gaps.mjs
+  ✅ scripts/extract-gap-report.mjs
+  ✅ scripts/test-gap-tools.mjs
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+RIGHT NOW:
+  1. Run: npm run diagnose:gaps
+  2. Copy the backfill command it suggests
+  3. Run: cd api && npm run history:backfill -- <command from step 2>
+  4. Run: cd api && npm run history:gaps (verify)
+
+SOON:
+  1. Wait for GitHub issue to auto-close (within 1 hour)
+  2. Or manually trigger: gh workflow run history-gap-detection.yml
+  3. Update on-call documentation with new commands
+
+LATER:
+  1. Review HISTORY_GAP_FIXES_SUMMARY.md for architecture
+  2. Implement automation improvements from roadmap
+  3. Monitor for recurring gaps
+
+================================================================================
+QUICK HELP
+================================================================================
+
+Need help? Choose your path:
+
+OPERATOR (on-call, responding to alert):
+  → Read: FIXING_HISTORY_GAPS.md (4-step guide)
+  → Run: npm run diagnose:gaps
+  → Execute: backfill command from diagnostics
+  → Verify: npm run history:gaps
+
+ENGINEER (debugging, implementing):
+  → Read: HISTORY_GAP_FIXES_SUMMARY.md (architecture)
+  → Review: scripts/ source code
+  → Check: api/scripts/detect-history-gaps.ts
+
+RUNBOOK OWNER (keeping documentation current):
+  → Use: docs/RUNBOOKS/HISTORY_GAP_RUNBOOK.md
+  → Update with your learnings
+  → Share templates for RCA
+
+================================================================================
+TROUBLESHOOTING QUICK LINKS
+================================================================================
+
+Issue: "No data directory found"
+  → See HISTORY_GAP_FIXES.md → Troubleshooting → Option 1
+
+Issue: "DATABASE_URL is not set"
+  → See HISTORY_GAP_FIXES.md → Troubleshooting → Option 3
+
+Issue: "Backfill complete but gaps remain"
+  → See HISTORY_GAP_FIXES.md → Troubleshooting → Option 5
+
+Issue: Multiple assets with gaps
+  → Run diagnostics to see all gaps
+  → Backfill each asset separately
+
+More scenarios:
+  → HISTORY_GAP_FIXES.md → Troubleshooting (6 scenarios)
+  → HISTORY_GAP_RUNBOOK.md → Troubleshooting (detailed)
+
+================================================================================
+READY? LET'S GO!
+================================================================================
+
+1. Start here:       npm run diagnose:gaps
+2. Then backfill:    cd api && npm run history:backfill -- ...
+3. Then verify:      cd api && npm run history:gaps
+4. Wait for close:   GitHub issue closes automatically
+
+Total time: ~5-30 minutes depending on data availability
+
+Questions? Check FIXING_HISTORY_GAPS.md in the repo root.
+
+Good luck! 🚀
+
+================================================================================
