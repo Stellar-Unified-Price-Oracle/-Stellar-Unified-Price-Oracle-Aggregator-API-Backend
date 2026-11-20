@@ -45,6 +45,22 @@ matter to recovery objectives.
   CI fixture, not production-sized data, and only confirm the drill works end
   to end. Record the next scheduled run here.
 
+### 2026-11-25 load tests failure (run 42588451219)
+
+- **What failed:** `record-outcome` declared `needs: [load-test-pr, load-test-full]`.
+  On a `schedule` trigger `load-test-pr` is skipped (its `if` condition requires
+  `pull_request`). GitHub Actions propagates a skipped dependency to any dependent
+  job even when that job has `if: always()`, so `record-outcome` was silently
+  skipped on every scheduled run. No drill-outcome issue was opened and no RTO/RPO
+  figures were recorded.
+- **Root cause:** `needs` lists both tier jobs unconditionally. The fix removes
+  `load-test-pr` from `record-outcome`'s `needs`; on a schedule only
+  `load-test-full` runs and `record-outcome` only needs to observe its result.
+- **RTO/RPO:** not measured; k6 never ran because the job was skipped before
+  setup. Record figures from the next successful scheduled run.
+- **Remediation:** `load-tests.yml` updated — `record-outcome` now needs only
+  `load-test-full`.
+
 ### 2026-10-25 chaos engineering failure (#862)
 
 - **What failed:** `scripts/validate-k8s.sh` rejected `api-stable` and
