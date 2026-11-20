@@ -305,7 +305,6 @@ export function appendHistoricalPrice(
   ensureDataDir();
   const filePath = HISTORY_FILE(asset);
   const entry: HistoricalPriceEntry = { price, decimals, source, timestamp };
-=======
 
   const status = readHistoryFileStatus(filePath);
   let history: HistoricalPriceEntry[];

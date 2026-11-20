@@ -81,20 +81,27 @@ async function main(): Promise<void> {
     where += ` AND asset = $${params.length}`;
   }
 
-  const { rows } = await pool.query<{ asset: string; ts: string }>(
-    `SELECT asset, timestamp::bigint AS ts
+  const { rows } = await pool.query<{ asset: string; source: string; ts: string }>(
+    `SELECT asset, source, timestamp::bigint AS ts
        FROM price_history
       WHERE ${where}
-      ORDER BY asset, timestamp`,
+      ORDER BY asset, source, timestamp`,
     params,
   );
   await pool.end();
 
-  const byAsset = new Map<string, number[]>();
+  // Group by (asset, source) to detect gaps only within the same source.
+  const byAssetSource = new Map<string, Map<string, number[]>>();
   for (const row of rows) {
-    const list = byAsset.get(row.asset) ?? [];
-    list.push(Number(row.ts));
-    byAsset.set(row.asset, list);
+    const key = `${row.asset}`;
+    if (!byAssetSource.has(key)) {
+      byAssetSource.set(key, new Map());
+    }
+    const sources = byAssetSource.get(key)!;
+    if (!sources.has(row.source)) {
+      sources.set(row.source, []);
+    }
+    sources.get(row.source)!.push(Number(row.ts));
   }
 
   const gaps: Gap[] = [];
@@ -111,15 +118,15 @@ async function main(): Promise<void> {
         });
       }
     }
-    if (tsList.length === 0 && assetFilter) {
-      gaps.push({ asset, startTs: 0, endTs: 0, gapSeconds: Infinity, missingSnapshots: -1 });
-    }
+  }
+  if (assetFilter && !byAsset.has(assetFilter)) {
+    gaps.push({ asset: assetFilter, startTs: 0, endTs: 0, gapSeconds: Infinity, missingSnapshots: -1 });
   }
 
   const alerting = gaps.filter((g) => g.gapSeconds > alertThreshold);
   const sortedGaps = gaps.sort((a, b) => b.gapSeconds - a.gapSeconds);
   const summary = {
-    scannedAssets: byAsset.size,
+    scannedAssets: byAssetSource.size,
     scannedRows: rows.length,
     windowStart: new Date(sinceMs).toISOString(),
     expectedInterval,
