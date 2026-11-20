@@ -105,21 +105,24 @@ async function main(): Promise<void> {
   }
 
   const gaps: Gap[] = [];
-  for (const [asset, tsList] of byAsset) {
-    for (let i = 1; i < tsList.length; i += 1) {
-      const delta = tsList[i] - tsList[i - 1];
-      if (delta > expectedInterval * 1.5) {
-        gaps.push({
-          asset,
-          startTs: tsList[i - 1],
-          endTs: tsList[i],
-          gapSeconds: delta,
-          missingSnapshots: Math.max(0, Math.round(delta / expectedInterval) - 1),
-        });
+  // Iterate over assets and their sources to detect gaps within each source.
+  for (const [asset, sources] of byAssetSource) {
+    for (const [, tsList] of sources) {
+      for (let i = 1; i < tsList.length; i += 1) {
+        const delta = tsList[i] - tsList[i - 1];
+        if (delta > expectedInterval * 1.5) {
+          gaps.push({
+            asset,
+            startTs: tsList[i - 1],
+            endTs: tsList[i],
+            gapSeconds: delta,
+            missingSnapshots: Math.max(0, Math.round(delta / expectedInterval) - 1),
+          });
+        }
       }
     }
   }
-  if (assetFilter && !byAsset.has(assetFilter)) {
+  if (assetFilter && !byAssetSource.has(assetFilter)) {
     gaps.push({ asset: assetFilter, startTs: 0, endTs: 0, gapSeconds: Infinity, missingSnapshots: -1 });
   }
 
