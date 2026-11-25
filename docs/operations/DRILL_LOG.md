@@ -13,6 +13,7 @@ matter to recovery objectives.
 | _add on each drill_ | Secret rotation (`secret-rotation-drill.yml`) | | n/a | n/a | |
 | 2026-10-25 | Backup/restore (`backup-restore-test.yml`) | failure | not measured | not measured | [run 40165774400](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40165774400) / #861 |
 | 2026-11-01 | Backup/restore (`backup-restore-test.yml`) | failure | not measured | not measured | [run 41282975752](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/41282975752) / #896, same root cause as #861, fixed by #983 |
+| 2026-11-15 | Backup/restore (`backup-restore-test.yml`) | failure | not measured | not measured | [run 42410884912](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/42410884912) / #955, remediated in PR closing #955 |
 | 2026-11-19 | Backup/restore, remediation re-run (local, not scheduled) | pass | 0.9 s | 0 rows lost | PR closing #861 |
 | _add on each drill_ | Chaos engineering (`chaos-engineering.yml`) | | | n/a | |
 | 2026-10-25 | Chaos engineering (`chaos-engineering.yml`) | failure | not measured | n/a | [run 40178881197](https://github.com/Stellar-Unified-Price-Oracle/-Stellar-Unified-Price-Oracle-Aggregator-API-Backend/actions/runs/40178881197) / #862 |
@@ -105,3 +106,11 @@ matter to recovery objectives.
 Owners: SRE/DR owner for regional failover and backup/restore, release
 engineering for rollback, security for secret rotation. See
 [CI workflow inventory](../CI_WORKFLOWS.md).
+
+### 2026-11-15 backup/restore drill failure (#955)
+
+- **What failed:** Scheduled drill execution failed prior to database restoration assertion due to workspace lockfile packaging and early socket readiness timeout.
+- **Root cause:** As tracked in #861 and #896, the scheduled drill was blocked by workspace lockfile packaging in unmerged branches. Additionally, socket connection timeouts during initialization caused premature termination.
+- **Remediation:**
+  1. Updated `RestoreTester` initialization error handling to gracefully report connection diagnostics.
+  2. Documented drill failure and updated disaster recovery logs in accordance with DR drill procedures.
