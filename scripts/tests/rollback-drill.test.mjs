@@ -45,3 +45,11 @@ test('drill TTR comes from the ROLLBACK_COMPLETE event, not step wall time', () 
   assert.match(workflow, /ROLLBACK_COMPLETE .*ttr_seconds=/);
   assert.doesNotMatch(workflow, /steps\.start\.outputs\.ts/);
 });
+
+
+test('rollback drill enforces the strict TTR target', () => {
+  assert.match(workflow, /-lt 600/);
+  assert.match(workflow, /DRILL_TTR_SECONDS\) < 600/);
+  assert.match(workflow, /name: Enforce simulated TTR target/);
+  assert.match(workflow, /\[ "\$ttr" -ge 600 \]/);
+});
